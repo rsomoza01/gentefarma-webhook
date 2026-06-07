@@ -88,7 +88,6 @@ async function handleEvent(event, data) {
 
   console.log('ℹ️ Evento ignorado:', event);
 }
-
 async function processIncomingMessage(payload) {
   try {
     console.log('📨 Payload del mensaje:', JSON.stringify(payload, null, 2));
@@ -109,22 +108,20 @@ async function processIncomingMessage(payload) {
       return;
     }
 
-    const autoResponse = await generateAutoResponse(body, from);
-
-    if (!autoResponse) {
-      console.log('⚠️ No se generó respuesta automática.');
+    if (!body) {
+      console.log('⚠️ No se pudo obtener el texto del mensaje.');
       return;
     }
 
-    console.log('➡️ Enviando respuesta a:', from);
-    console.log('✉️ Respuesta:', autoResponse);
+    const autoResponse = await generateAutoResponse(body, from);
 
-    await sendWhatsAppMessage(from, autoResponse);
+    if (autoResponse) {
+      await sendWhatsAppMessage(from, autoResponse);
+    }
   } catch (error) {
     console.error('❌ Error procesando mensaje:', error);
   }
 }
-
 async function processMessageUpdate(messageUpdate) {
   try {
     console.log('📊 Actualización de mensaje:', JSON.stringify(messageUpdate, null, 2));
@@ -134,33 +131,35 @@ async function processMessageUpdate(messageUpdate) {
 }
 
 function extractFrom(payload) {
-  return (
-    payload?.from ||
+  const jid =
+    payload?.Info?.Sender ||
+    payload?.Info?.Chat ||
+    payload?.Sender ||
     payload?.sender ||
+    payload?.from ||
     payload?.key?.remoteJid ||
-    payload?.data?.from ||
-    payload?.message?.remoteJid ||
-    payload?.remoteJid ||
-    ''
-  );
+    '';
+
+  // Convierte "584128009482@s.whatsapp.net" -> "584128009482"
+  return String(jid).replace(/@s\.whatsapp\.net$/, '').trim();
 }
 
 function extractBody(payload) {
   return (
+    payload?.Message?.conversation ||
+    payload?.Message?.extendedTextMessage?.text ||
+    payload?.Message?.text ||
     payload?.body ||
     payload?.text ||
-    payload?.message?.conversation ||
-payload?.message?.extendedTextMessage?.text ||
     payload?.data?.body ||
-    payload?.data?.text ||
-    payload?.message?.text ||
     ''
   );
 }
 
 function extractFromMe(payload) {
   return Boolean(
-    payload?.fromMe ??
+    payload?.Info?.IsFromMe ??
+      payload?.fromMe ??
       payload?.key?.fromMe ??
       payload?.data?.fromMe ??
       false
