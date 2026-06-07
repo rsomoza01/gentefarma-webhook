@@ -279,21 +279,27 @@ async function sendWhatsAppMessage(phone, text) {
   }
 }
 
-async function generateAutoResponse(message) {
+async function generateAutoResponse(message, phone) {
   const query = normalizeText(message);
 
   if (!query) {
-    return `🤖 *Asistente Gentefarma*\n\nEscribe el nombre de un medicamento o *auxiliar*.`;
+    return `🤖 *Asistente Gentefarma*\n\nNo recibí texto para procesar. ¿Podrías escribir el nombre del medicamento?`;
   }
 
   if (query.match(/\b(hola|buenos|buenas|hi|hey)\b/)) {
     return `Gracias por comunicarte con el Agente IA de Gentefarma. Si buscas un medicamento específico, simplemente escribe el nombre (por ejemplo: atamel). Si necesitas hablar con uno de nuestros auxiliares, escribe ‘auxiliar’`;
   }
 
-  if (query === 'auxiliar' || query.match(/\b(quiero\s+hablar\s+con\s+un\s+auxiliar|hablar\s+con\s+un\s+auxiliar|me\s+atiende\s+un\s+humano|hablar\s+con\s+alguien|quiero\s+un\s+humano|necesito\s+un\s+humano|auxiliar|humano|asesor|operador)\b/)) {
+  if (query.match(/\b(auxiliar|humano|agente|asesor|operador)\b/)) {
+    return `👩‍⚕️ Un auxiliar te atenderá en breve.
+
+Por favor envía tu consulta o escribe el nombre del medicamento que necesitas.`;
+  }
+
+  if (query.match(/\b(quiero\s+hablar\s+con\s+un\s+auxiliar|hablar\s+con\s+un\s+auxiliar|me\s+atiende\s+un\s+humano|hablar\s+con\s+alguien|quiero\s+un\s+humano|necesito\s+un\s+humano)\b/)) {
     return `👩‍⚕️ Claro, te conectamos con un auxiliar.
 
-Escribe tu consulta o el nombre del medicamento.`;
+Escribe tu consulta o el nombre del medicamento y te ayudaremos enseguida.`;
   }
 
   if (query.match(/\b(gracias|hasta|adios|adiós)\b/)) {
@@ -302,6 +308,7 @@ Escribe tu consulta o el nombre del medicamento.`;
 Si necesitas algo más, escribe el nombre del medicamento o *auxiliar*.`;
   }
 
+  // Detectar consultas reales de medicamentos
   const productQuery = extractMedicineQuery(query);
   if (productQuery) {
     try {
@@ -310,7 +317,7 @@ Si necesitas algo más, escribe el nombre del medicamento o *auxiliar*.`;
       if (!scored.length) {
         return `⚠️ No encontré resultados para *${productQuery}*.
 
-Prueba con un nombre más corto, por ejemplo: *oxacilina*, *atamel*, *fulgram*.`;
+Prueba con un nombre más corto o exacto, por ejemplo: *oxacilina*, *atamel*, *fulgram*.`;
       }
 
       return buildProductResultsMessage(productQuery, rate, scored);
@@ -321,12 +328,34 @@ Prueba con un nombre más corto, por ejemplo: *oxacilina*, *atamel*, *fulgram*.`
   }
 
   if (query.match(/\b(producto|medicamento|farmacia)\b/)) {
-    return `📦 *PRODUCTOS DISPONIBLES*\n\nEscribe el nombre del medicamento y te mostraré los resultados.\n\nEjemplos:\n• *atamel*\n• *fulgram*\n• *oxacilina 1gr*`;
+    return `📦 *PRODUCTOS DISPONIBLES*\n\nEscríbeme el nombre del medicamento y te mostraré los resultados.\n\nEjemplos:\n• *atamel*\n• *fulgram*\n• *oxacilina 1gr*`;
   }
 
-  return `🤖 *Asistente Gentefarma*\n\nEscribe el nombre de un medicamento o *auxiliar*.`;
+  return `🤖 *Asistente Gentefarma*
+
+No estoy seguro de entenderte. ¿Podrías aclararme?
+
+¿En qué puedo ayudarte?
+1️⃣ Consultar productos
+2️⃣ Realizar pedido
+3️⃣ Información general`;
 }
 
+function extractMedicineQuery(text) {
+  const tokens = tokenize(text)
+    .filter((token) => token.length > 1)
+    .filter((token) => !STOPWORDS.has(token));
+
+  if (!tokens.length) return null;
+
+  const joined = tokens.join(' ');
+
+  // Si el texto incluye palabras de contexto pero también un nombre de medicamento,
+  // devolvemos solo las keywords útiles.
+  if (joined.length >= 3) return joined;
+
+  return null;
+}
 
 app.get('/health', (req, res) => {
   res.json({
