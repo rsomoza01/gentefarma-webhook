@@ -1,4 +1,4 @@
-require('dotenv').config();
+equire('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -454,8 +454,7 @@ function computeMatchScore(query, queryTokens, docText, doc) {
   if (queryTokens.some((t) => productTitle.includes(t))) score += 20;
   if (queryTokens.some((t) => titleArrayText.includes(t))) score += 16;
 
-  if (getPrice(doc) !== null) score += 1;
-
+  // No dar puntaje por tener precio; solo deben aparecer productos con coincidencia real.
   return score;
 }
 
