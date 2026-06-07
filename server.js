@@ -165,50 +165,33 @@ function extractFromMe(payload) {
       false
   );
 }
-
 async function sendWhatsAppMessage(phone, text) {
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: EVOLUTION_API_KEY
-  };
-
-  const payload = {
-    number: phone,
-    textMessage: {
-      text
-    }
-  };
-
-  const endpoints = [
-    `${EVOLUTION_API_URL}/message/sendText/${encodeURIComponent(INSTANCE_NAME)}`,
-    `${EVOLUTION_API_URL}/message/sendText`,
-    `${EVOLUTION_API_URL}/api/v1/message/sendText/${encodeURIComponent(INSTANCE_NAME)}`,
-    `${EVOLUTION_API_URL}/api/v1/message/sendText`
-  ];
-
-  let lastError = null;
-
-  for (const endpoint of endpoints) {
-    try {
-      console.log('📡 Intentando envío por:', endpoint);
-
-      const response = await axios.post(endpoint, payload, {
-        headers,
+  try {
+    const response = await axios.post(
+      `${EVOLUTION_API_URL}/send/text`,
+      {
+        number: phone,
+        text: text,
+        formatJid: false
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: EVOLUTION_API_KEY
+        },
         timeout: 30000
-      });
+      }
+    );
 
-      console.log('✅ Mensaje enviado por WhatsApp:', response.data);
-      return response.data;
-    } catch (error) {
-      lastError = error;
-      console.error(
-        `❌ Error enviando por ${endpoint}:`,
-        error.response?.data || error.message
-      );
-    }
+    console.log('✅ Mensaje enviado por WhatsApp:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error(
+      '❌ Error enviando WhatsApp:',
+      error.response?.data || error.message
+    );
+    throw error;
   }
-
-  throw lastError || new Error('No se pudo enviar el mensaje por ningún endpoint');
 }
 
 async function generateAutoResponse(message, phone) {
