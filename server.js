@@ -70,6 +70,8 @@ function getSession(phone) {
     sessions.set(phone, {
       mode: 'idle',
       lastSearch: null,
+      pendingSelectionResults: null,
+      selectedProducts: [],
       pendingOrder: null,
       updatedAt: Date.now()
     });
@@ -81,9 +83,135 @@ function resetSession(phone) {
   sessions.set(phone, {
     mode: 'idle',
     lastSearch: null,
+    pendingSelectionResults: null,
+    selectedProducts: [],
     pendingOrder: null,
     updatedAt: Date.now()
   });
+}
+
+function touchSession(session) {
+  if (session) session.updatedAt = Date.now();
+}
+
+function ensureSelectedProducts(session) {
+  if (!session.selectedProducts) session.selectedProducts = [];
+  return session.selectedProducts;
+}
+
+function clearPendingSearch(session) {
+  session.pendingSelectionResults = null;
+  if (session.mode === 'awaiting_choice') session.mode = 'idle';
+}
+
+function getCartTotals(session) {
+  const items = ensureSelectedProducts(session);
+  const totalUsd = items.reduce((sum, item) => sum + (Number(item.priceUsd) || 0) * (Number(item.quantity) || 0), 0);
+  const totalBs = items.reduce((sum, item) => sum + (Number(item.priceBs) || 0) * (Number(item.quantity) || 0), 0);
+  return { totalUsd, totalBs };
+}
+
+function parseSelectionAndQuantity(text) {
+  const normalized = normalizeText(text)
+    .replace(/\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|elegir|elige|escoger|escoje|de)\b/g, ' ')
+    .replace(/x|por|cantidad/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const numbers = normalized.match(/\d+/g) || [];
+  if (!numbers.length) return null;
+
+  const option = Number(numbers[0]);
+  const quantity = numbers.length >= 2 ? Number(numbers[1]) : 1;
+
+  if (!Number.isInteger(option) || option <= 0) return null;
+  if (!Number.isInteger(quantity) || quantity <= 0) return null;
+
+  return { option, quantity };
+}
+
+function parseQuantityOnly(text) {
+  const normalized = normalizeText(text);
+  const match = normalized.match(/\b(\d+)\b/);
+  if (!match) return null;
+  const qty = Number(match[1]);
+  return Number.isInteger(qty) && qty > 0 ? qty : null;
+}
+
+function formatSelectionSavedMessage(item, quantity, session) {
+  const title = item.title || 'Medicamento';
+  const usdUnit = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+  const bsUnit = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+  const totalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUsd) || 0) * quantity)}` : 'No disponible';
+  const totalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs) || 0) * quantity)}` : 'No disponible';
+  const { totalUsd: cartUsd, totalBs: cartBs } = getCartTotals(session);
+
+  return [
+    `✅ *Agregado a tu selección*`,
+    `💊 *${title}*`,
+    `Cantidad: *${quantity}*`,
+    `Unitario: ${usdUnit}  |  ${bsUnit}`,
+    `Subtotal: ${totalUsd}  |  ${totalBs}`,
+    '',
+    `🧾 Tu carrito actual: *$${formatPrice(cartUsd)}*  |  *Bs ${formatPrice(cartBs)}*`,
+    'Escribe *RESUMEN* para ver el pedido completo o continúa buscando otro medicamento.'
+  ].join('\n');
+}
+
+function buildSelectedProductsSummary(session) {
+  const items = ensureSelectedProducts(session);
+  if (!items.length) {
+    return '🧾 Aún no has agregado medicamentos a tu pedido.';
+  }
+
+  const lines = [];
+  const { totalUsd, totalBs } = getCartTotals(session);
+
+  lines.push('🧾 *Resumen de medicamentos seleccionados*');
+  lines.push('');
+
+  items.forEach((item, idx) => {
+    const title = item.title || 'Medicamento';
+    const qty = Number(item.quantity) || 1;
+    const unitUsd = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+    const unitBs = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+    const subtotalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUsd) || 0) * qty)}` : 'No disponible';
+    const subtotalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs) || 0) * qty)}` : 'No disponible';
+
+    lines.push(`${idx + 1}. ${title}`);
+    lines.push(`   Cantidad: ${qty}`);
+    lines.push(`   Unitario: ${unitUsd} | ${unitBs}`);
+    lines.push(`   Subtotal: ${subtotalUsd} | ${subtotalBs}`);
+    lines.push('');
+  });
+
+  lines.push(`💰 *Total pedido:* $${formatPrice(totalUsd)}  |  Bs ${formatPrice(totalBs)}`);
+  lines.push('');
+  lines.push('👤 *Pronto te atenderá un Auxiliar* para finalizar la compra y confirmar tu pedido.');
+
+  return lines.join('\n').trim();
+}
+
+function addItemToCart(session, item, quantity) {
+  const cart = ensureSelectedProducts(session);
+  const existingIndex = cart.findIndex((x) => normalizeText(x.title) === normalizeText(item.title));
+  const cartItem = {
+    title: item.title,
+    quantity,
+    priceUsd: item.priceUsd,
+    priceBs: item.priceBs,
+    raw: item.raw
+  };
+
+  if (existingIndex >= 0) {
+    cart[existingIndex].quantity += quantity;
+    cart[existingIndex].priceUsd = item.priceUsd;
+    cart[existingIndex].priceBs = item.priceBs;
+    return cart[existingIndex];
+  }
+
+  cart.push(cartItem);
+  return cartItem;
 }
 
 setInterval(() => {
@@ -232,17 +360,52 @@ async function routeMessage(phone, text, session) {
     return buildHumanAgentMessage();
   }
 
-  if (isGreetingOrMenu(normalized)) {
-    session.mode = 'idle';
-    return buildMenuMessage();
+  if (/^resumen\b/.test(normalized)) {
+    return buildSelectedProductsSummary(session);
   }
 
-  if (isMenuOption(normalized)) {
-    return await handleMenuOption(phone, normalized, session);
+  if (session.mode === 'awaiting_choice') {
+    const parsed = parseSelectionAndQuantity(normalized);
+    if (!parsed) {
+      return '⚠️ Escribe la opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+    }
+
+    const results = session.pendingSelectionResults || [];
+    const selected = results[parsed.option - 1];
+    if (!selected) {
+      return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *RESUMEN* o busca otro medicamento.`;
+    }
+
+    addItemToCart(session, selected, parsed.quantity);
+    session.updatedAt = Date.now();
+    clearPendingSearch(session);
+
+    return formatSelectionSavedMessage(selected, parsed.quantity, session);
   }
 
   if (session.mode === 'awaiting_quantity') {
+    const qtyOnly = parseQuantityOnly(normalized);
+    if (qtyOnly && session.pendingOrder?.productName) {
+      session.pendingOrder.quantity = qtyOnly;
+      session.mode = 'awaiting_address';
+      session.updatedAt = Date.now();
+      return `📍 Perfecto. Ahora envíame tu *dirección de entrega* para continuar con el pedido de:\n\n*${session.pendingOrder.productName}*\nCantidad: *${qtyOnly}*`;
+    }
+
     const qty = parsePositiveInteger(normalized);
+    if (!qty) {
+      return '⚠️ Indícame una cantidad válida, por favor. Ejemplo: *2*';
+    }
+
+    session.pendingOrder.quantity = qty;
+    session.mode = 'awaiting_address';
+    session.updatedAt = Date.now();
+
+    return `📍 Perfecto. Ahora envíame tu *dirección de entrega* para continuar con el pedido de:\n\n*${session.pendingOrder.productName}*\nCantidad: *${qty}*`;
+  }
+
+  if (session.mode === 'awaiting_quantity') {
+    const qty = parseQuantityOnly(normalized) || parsePositiveInteger(normalized);
     if (!qty) {
       return '⚠️ Indícame una cantidad válida, por favor. Ejemplo: *2*';
     }
@@ -289,8 +452,35 @@ async function routeMessage(phone, text, session) {
     return buildCatalogResponse(searchResult) + '\n\n🛒 Si deseas pedirlo, respóndeme con la cantidad.';
   }
 
+  if (isGreetingOrMenu(normalized)) {
+    session.mode = 'idle';
+    return buildMenuMessage();
+  }
+
   if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized)) {
-    return await searchAndBuildCatalogResponse(text, session);
+    const searchResult = await searchMedicinesByName(text);
+
+    if (!searchResult || !searchResult.matches.length) {
+      session.mode = 'awaiting_product_name';
+      return '⚠️ No encontré coincidencias. Prueba con otro nombre de medicamento.';
+    }
+
+    session.pendingSelectionResults = searchResult.matches;
+    session.mode = 'awaiting_choice';
+    session.updatedAt = Date.now();
+
+    const resultText = buildCatalogResponse(searchResult);
+    const choiceHint = [
+      '',
+      '➡️ Responde con la *opción y cantidad* que deseas agregar.',
+      'Ejemplos:',
+      '• *1 2*  = opción 1, cantidad 2',
+      '• *3 1*  = opción 3, cantidad 1',
+      '',
+      'Cuando termines, escribe *RESUMEN* para ver tu pedido total.'
+    ].join('\n');
+
+    return `${resultText}\n\n${choiceHint}`;
   }
 
   return buildMenuMessage();
@@ -389,7 +579,10 @@ async function searchMedicinesByName(userQuery) {
     })
     .filter((item) => item.score > 0)
     .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
+      const scoreA = a.score ?? 0;
+      const scoreB = b.score ?? 0;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+
       const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
       const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
       return priceA - priceB;
@@ -423,15 +616,33 @@ function buildCatalogResponse(result) {
   lines.push('');
 
   result.matches.forEach((item, index) => {
-    lines.push(`╭────────────────────────`);
-    lines.push(`*${index + 1}. ${item.title}*`);
-    lines.push(item.priceUsd !== null ? `💵 *$${formatPrice(item.priceUsd)}*` : '💵 *No disponible*');
-    lines.push(item.priceBs !== null ? `💠 *Bs ${formatPrice(item.priceBs)}*` : '💠 *No disponible*');
-    lines.push(`╰────────────────────────`);
+    const title = shortenText(item.title || 'Medicamento', 52);
+    const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+    const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+    const icon = getProductIcon(title);
+
+    lines.push(`${icon} *${index + 1}. ${title}*`);
+    lines.push(`💵 ${usdText}  |  💠 ${bsText}`);
     lines.push('');
   });
 
   return lines.join('\n').trim();
+}
+
+function shortenText(value, maxLength = 52) {
+  const text = String(value || '').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function getProductIcon(title) {
+  const text = normalizeText(title);
+  if (/ampolla|inyeccion|injectable/.test(text)) return '💉';
+  if (/suspension|jarabe|gotas|solucion/.test(text)) return '🧴';
+  if (/tableta|capsula|capsulas|comprimido|pastilla/.test(text)) return '💊';
+  if (/crema|unguento|gel|pomada/.test(text)) return '🧪';
+  if (/polvo|sobres/.test(text)) return '📦';
+  return '💊';
 }
 
 function computeMatchScore(query, queryTokens, docText, doc) {
