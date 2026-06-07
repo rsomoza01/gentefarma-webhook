@@ -408,9 +408,8 @@ Ejemplos:
 
 function isMenuOption(value) {
   const text = normalizeText(value);
-  return text === '1'  text === '2'  text === '3'  text === '4';
+  return text === '1' || text === '2' || text === '3' || text === '4';
 }
-
 async function handleMenuOption(phone, option, session) {
   switch (option) {
     case '1':
