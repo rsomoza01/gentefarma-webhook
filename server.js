@@ -7,28 +7,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Configuración de Evolution API
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go-dd3c.onrender.com';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
 
-// Endpoint principal del webhook
 app.post('/webhook', async (req, res) => {
     try {
         const { event, data } = req.body;
 
         console.log('📩 Evento recibido:', event);
 
-        // Procesar mensajes entrantes
         if (event === 'messages.upsert') {
             await processIncomingMessage(data);
         }
 
-        // Procesar actualizaciones de mensajes
         if (event === 'messages.update') {
             await processMessageUpdate(data);
         }
 
-        // Respuesta exitosa
         res.status(200).json({
             status: 'success',
             message: 'Webhook processado correctamente',
@@ -49,12 +44,10 @@ async function processIncomingMessage(message) {
     try {
         const { from, body, fromMe, id } = message;
 
-        // Solo procesar mensajes entrantes
         if (fromMe) return;
 
         console.log('📨 Nuevo mensaje entrante:', { from, body });
 
-        // Generar respuesta automática
         const autoResponse = await generateAutoResponse(body, from);
         if (autoResponse) {
             await sendWhatsAppMessage(from, autoResponse);
@@ -72,8 +65,8 @@ async function processMessageUpdate(messageUpdate) {
 
 async function sendWhatsAppMessage(phone, text) {
     try {
-        await axios.post(
-            `${EVOLUTION_API_URL}/message/sendText/Gentefarma`,
+        const response = await axios.post(
+            `${EVOLUTION_API_URL}/message/sendText`,
             {
                 number: phone,
                 textMessage: { text }
@@ -81,13 +74,35 @@ async function sendWhatsAppMessage(phone, text) {
             {
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': EVOLUTION_API_KEY
-                }
+                    'Authorization': `Bearer ${EVOLUTION_API_KEY}`
+                },
+                timeout: 30000
             }
         );
-        console.log('✅ Mensaje enviado por WhatsApp');
+
+        console.log('✅ Mensaje enviado por WhatsApp:', response.data);
     } catch (error) {
-        console.error('❌ Error enviando WhatsApp:', error.message);
+        console.error('❌ Error enviando WhatsApp (intento 1):', error.message);
+
+        try {
+            const altResponse = await axios.post(
+                `${EVOLUTION_API_URL}/api/v1/message/sendText`,
+                {
+                    number: phone,
+                    textMessage: { text }
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${EVOLUTION_API_KEY}`
+                    },
+                    timeout: 30000
+                }
+            );
+            console.log('✅ Mensaje enviado (vía fallback):', altResponse.data);
+        } catch (altError) {
+            console.error('❌ Fallback también falló:', altError.message);
+        }
     }
 }
 
@@ -126,8 +141,7 @@ Tenemos una amplia variedad de productos farmacéuticos:
 
     if (lowerMsg.match(/gracias|hasta|adios/)) {
         return `👋 ¡Gracias por contactar a Gentefarma!
-
-Tu pedido será procesado en breve.
+    Tu pedido será procesado en breve.
 ¿Hay algo más en lo que pueda ayudarte?`;
     }
 
