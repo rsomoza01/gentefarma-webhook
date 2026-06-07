@@ -227,24 +227,20 @@ async function processMessageUpdate(messageUpdate) {
 async function routeMessage(phone, text, session) {
   const normalized = normalizeText(text);
 
-  // 1) Human handoff
   if (isHumanRequest(normalized)) {
     resetSession(phone);
     return buildHumanAgentMessage();
   }
 
-  // 2) Menu / greetings
   if (isGreetingOrMenu(normalized)) {
     session.mode = 'idle';
     return buildMenuMessage();
   }
 
-  // 3) Menu options
   if (isMenuOption(normalized)) {
     return await handleMenuOption(phone, normalized, session);
   }
 
-  // 4) Order flow: quantity
   if (session.mode === 'awaiting_quantity') {
     const qty = parsePositiveInteger(normalized);
     if (!qty) {
@@ -258,7 +254,6 @@ async function routeMessage(phone, text, session) {
     return `📍 Perfecto. Ahora envíame tu *dirección de entrega* para continuar con el pedido de:\n\n*${session.pendingOrder.productName}*\nCantidad: *${qty}*`;
   }
 
-  // 5) Order flow: address
   if (session.mode === 'awaiting_address') {
     const address = text.trim();
     if (address.length < 6) {
@@ -270,33 +265,22 @@ async function routeMessage(phone, text, session) {
     return orderSummary;
   }
 
-  // 6) Awaiting product name / clarification
   if (session.mode === 'awaiting_product_name') {
     return await searchAndBuildCatalogResponse(text, session);
   }
 
-  // 7) Order intent
   if (isOrderRequest(normalized)) {
     const searchResult = await searchMedicinesByName(text);
 
-    if (!searchResult) {
+    if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
       return '🛒 Claro. ¿Qué medicamento deseas pedir? Escríbeme el nombre del medicamento.';
     }
 
-    if (searchResult.needsClarification) {
-      session.mode = 'awaiting_product_name';
-      return searchResult.clarificationText;
-    }
-
     session.lastSearch = searchResult;
     session.pendingOrder = {
-      productName: searchResult.bestProductName,
-      bestPrice: searchResult.bestPrice,
-      bestProviderName: searchResult.bestProviderName,
-      bestProviderId: searchResult.bestProviderId,
-      otherProviders: searchResult.otherProviders,
-      matchedProduct: searchResult.bestProductName,
+      productName: searchResult.matches[0].title,
+      bestPrice: searchResult.matches[0].priceUsd,
       quantity: 1
     };
     session.mode = 'awaiting_quantity';
@@ -305,12 +289,10 @@ async function routeMessage(phone, text, session) {
     return buildCatalogResponse(searchResult) + '\n\n🛒 Si deseas pedirlo, respóndeme con la cantidad.';
   }
 
-  // 8) Product search / price inquiry
   if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized)) {
     return await searchAndBuildCatalogResponse(text, session);
   }
 
-  // 9) Default fallback
   return buildMenuMessage();
 }
 
@@ -322,19 +304,15 @@ function isMenuOption(value) {
 async function handleMenuOption(phone, option, session) {
   switch (option) {
     case '1':
-      session.mode = 'awaiting_product_name';
-      session.updatedAt = Date.now();
-      return '💊 Escribe el nombre del medicamento que deseas buscar.\n\nEjemplo: *atamel forte*';
-
     case '2':
       session.mode = 'awaiting_product_name';
       session.updatedAt = Date.now();
-      return '🏷️ Escribe el nombre del medicamento para ver el mejor precio.\n\nEjemplo: *ibuprofeno*';
+      return '🔎 Escribe el nombre del medicamento que deseas buscar.\n\nEjemplo: *atamel*';
 
     case '3':
       session.mode = 'awaiting_product_name';
       session.updatedAt = Date.now();
-      return '🛒 Escribe el nombre del medicamento que deseas pedir.\n\nEjemplo: *amoxicilina 500 mg suspensión*';
+      return '🛒 Escribe el nombre del medicamento que deseas pedir.\n\nEjemplo: *amoxicilina*';
 
     case '4':
       resetSession(phone);
@@ -346,11 +324,11 @@ async function handleMenuOption(phone, option, session) {
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\nHola, soy tu asistente virtual.\n\nResponde con una opción:\n\n1️⃣ Buscar un medicamento\n2️⃣ Ver mejor precio\n3️⃣ Hacer un pedido\n4️⃣ Hablar con un humano\n\nO escríbeme directamente el nombre del medicamento.\n\nEjemplos:\n• *atamel forte*\n• *amoxicilina 500 mg*\n• *diclofenac ampollas*`;
+  return `🏥 *GENTEFARMA*\n\nHola, soy tu asistente virtual.\n\nResponde con una opción:\n\n1️⃣ Buscar un medicamento\n2️⃣ Ver mejor precio\n3️⃣ Hacer un pedido\n4️⃣ Hablar con un humano\n\nO escríbeme directamente el nombre del medicamento.\n\nEjemplos:\n• *atamel*\n• *amoxicilina*\n• *histaler ped*`;
 }
 
 function buildHumanAgentMessage() {
-  return `👤 *Te voy a pasar con un asesor*\n\nUn agente de Gentefarma te atenderá en breve.\n\nMientras tanto, si quieres, puedo ayudarte a buscar un medicamento, ver su mejor precio o iniciar un pedido.`;
+  return `👤 *Te voy a pasar con un asesor*\n\nUn agente de Gentefarma te atenderá en breve.\n\nMientras tanto, si quieres, puedo ayudarte a buscar un medicamento o ver su mejor precio.`;
 }
 
 function buildOrderConfirmationMessage(orderId, orderData) {
@@ -367,21 +345,23 @@ async function searchAndBuildCatalogResponse(text, session) {
 
   const result = await searchMedicinesByName(text);
 
-  if (!result) {
+  if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para *${text.trim()}*.\n\nIntenta con el nombre del medicamento.\nEjemplos:\n• *atamel forte*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno 400*`;
-  }
+    return `⚠️ No encontré coincidencias para *${text.trim()}*.
 
-  if (result.needsClarification) {
-    session.mode = 'awaiting_product_name';
-    return result.clarificationText;
+Intenta con el nombre del medicamento.
+Ejemplos:
+• *atamel*
+• *histaler ped*
+• *desloratadina*
+• *ibuprofeno*`;
   }
 
   session.lastSearch = result;
   session.mode = 'idle';
   session.updatedAt = Date.now();
 
-  return buildCatalogResponse(result) + '\n\nSi quieres, responde *PEDIR* para iniciar un pedido.';
+  return buildCatalogResponse(result);
 }
 
 async function searchMedicinesByName(userQuery) {
@@ -391,184 +371,90 @@ async function searchMedicinesByName(userQuery) {
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
   if (!queryTokens.length) return null;
 
-  const products = await fetchCollectionDocuments('products-market', 1000);
-  const providers = await fetchCollectionDocuments('providers-products', 2000);
+  const exchangeRate = await getBcvRate();
+  const products = await fetchCollectionDocuments('products-market', 2000);
 
   const scoredProducts = products
     .map((doc) => {
+      const title = buildShortProductLabel(doc);
       const searchableText = normalizeText(buildProductSearchText(doc));
       const score = computeMatchScore(query, queryTokens, searchableText, doc);
       return {
         doc,
+        title,
         score,
-        price: getPrice(doc)
+        priceUsd: getPrice(doc),
+        priceBs: getPriceBs(doc, exchangeRate)
       };
     })
     .filter((item) => item.score > 0)
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      const priceA = a.price ?? Number.MAX_SAFE_INTEGER;
-      const priceB = b.price ?? Number.MAX_SAFE_INTEGER;
+      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
       return priceA - priceB;
     });
 
   if (!scoredProducts.length) return null;
 
-  const top = scoredProducts[0];
-  const second = scoredProducts[1];
-
-  const hasSpecificForm = hasDosageSpecificity(query);
-  if (!hasSpecificForm && second && second.score >= top.score - 5 && top.score < 35) {
-    const options = scoredProducts.slice(0, 3).map((item, index) => {
-      const label = buildShortProductLabel(item.doc);
-      const price = item.price;
-      return `${index + 1}. ${label}${price !== null ? ` - $${formatPrice(price)}` : ''}`;
-    });
-
-    return {
-      needsClarification: true,
-      clarificationText:
-        `Encontré varias coincidencias parecidas. ¿Cuál buscas?\n\n${options.join('\n')}\n\nResponde con el número o escríbeme el nombre exacto.`,
-      candidates: scoredProducts.slice(0, 3).map((item) => item.doc)
-    };
-  }
-
-  const bestProduct = top.doc;
-  const bestProductName = buildShortProductLabel(bestProduct);
-  const bestPrice = getPrice(bestProduct);
-  const bestProviderName = buildProviderName(bestProduct);
-  const bestProviderId = buildProviderId(bestProduct);
-
-  const matchingProviders = providers
-    .map((doc) => {
-      const searchableText = normalizeText(buildProviderSearchText(doc));
-      const score = computeProviderMatchScore(query, queryTokens, searchableText, doc, bestProductName);
-      return {
-        doc,
-        score,
-        price: getPrice(doc)
-      };
-    })
-    .filter((item) => item.score > 0)
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      const priceA = a.price ?? Number.MAX_SAFE_INTEGER;
-      const priceB = b.price ?? Number.MAX_SAFE_INTEGER;
-      return priceA - priceB;
-    });
-
-  const otherProviders = matchingProviders
-    .map((item) => item.doc)
-    .filter((doc) => {
-      const providerName = buildProviderName(doc);
-      const providerId = buildProviderId(doc);
-
-      if (bestProviderId && providerId && providerId === bestProviderId) return false;
-      if (bestProviderName && providerName && normalizeText(providerName) === normalizeText(bestProviderName)) return false;
-      return true;
-    });
-
   return {
-    needsClarification: false,
-    bestProductName,
-    bestPrice,
-    bestProviderName,
-    bestProviderId,
-    otherProviders,
-    product: bestProduct,
-    matches: scoredProducts.slice(0, 5).map((item) => item.doc)
+    query,
+    queryTokens,
+    exchangeRate,
+    matches: scoredProducts.slice(0, 15).map((item) => ({
+      title: item.title,
+      priceUsd: item.priceUsd,
+      priceBs: item.priceBs,
+      raw: item.doc
+    }))
   };
 }
 
 function buildCatalogResponse(result) {
-  if (!result || result.needsClarification) {
-    return result?.clarificationText || '⚠️ Necesito un poco más de detalle para ayudarte.';
+  if (!result || !result.matches || !result.matches.length) {
+    return '⚠️ Necesito un poco más de detalle para ayudarte.';
   }
 
   const lines = [];
-  lines.push(`💊 *${result.bestProductName}*`);
-
-  if (result.bestPrice !== null && result.bestPrice !== undefined) {
-    lines.push(`🏷️ Mejor precio: *$${formatPrice(result.bestPrice)}*`);
-  } else {
-    lines.push('🏷️ Mejor precio: *No disponible*');
+  lines.push(`🔎 *Resultados para: ${result.query}*`);
+  if (result.exchangeRate) {
+    lines.push(`💱 Tasa BCV: *Bs ${formatPrice(result.exchangeRate)}* por *$1*`);
   }
+  lines.push('');
 
-  if (result.otherProviders && result.otherProviders.length) {
+  result.matches.forEach((item, index) => {
+    lines.push(`╭────────────────────────`);
+    lines.push(`*${index + 1}. ${item.title}*`);
+    lines.push(item.priceUsd !== null ? `💵 *$${formatPrice(item.priceUsd)}*` : '💵 *No disponible*');
+    lines.push(item.priceBs !== null ? `💠 *Bs ${formatPrice(item.priceBs)}*` : '💠 *No disponible*');
+    lines.push(`╰────────────────────────`);
     lines.push('');
-    lines.push('🏥 Otras farmacias que también lo tienen:');
+  });
 
-    result.otherProviders.slice(0, 5).forEach((doc) => {
-      const providerName = buildProviderName(doc) || 'Farmacia';
-      const price = getPrice(doc);
-      const availability = buildAvailabilityText(doc);
-
-      lines.push(`• ${providerName}${price !== null ? ` - $${formatPrice(price)}` : ''}${availability ? ` (${availability})` : ''}`);
-    });
-  } else {
-    lines.push('');
-    lines.push('ℹ️ No encontré otras farmacias con este mismo medicamento.');
-  }
-
-  return lines.join('\n');
+  return lines.join('\n').trim();
 }
 
 function computeMatchScore(query, queryTokens, docText, doc) {
   let score = 0;
   if (!docText) return 0;
 
-  const productName = normalizeText(buildShortProductLabel(doc));
+  const productTitle = normalizeText(buildShortProductLabel(doc));
   const titleArrayText = Array.isArray(doc?.productTitleArray)
     ? normalizeText(doc.productTitleArray.join(' '))
     : '';
-  const activeIngredient = normalizeText(doc?.activeIngredient || doc?.ingredient || doc?.principle || '');
-  const brand = normalizeText(doc?.brand || doc?.commercialName || '');
-  const description = normalizeText(doc?.description || '');
-  const presentation = normalizeText(buildDosageForm(doc));
-  const strength = normalizeText(buildStrength(doc));
 
-  if (docText.includes(query)) score += 60;
+  if (docText.includes(query)) score += 80;
 
   for (const token of queryTokens) {
-    if (docText.includes(token)) score += 12;
-    if (productName.includes(token)) score += 15;
+    if (docText.includes(token)) score += 15;
+    if (productTitle.includes(token)) score += 18;
     if (titleArrayText.includes(token)) score += 14;
-    if (activeIngredient.includes(token)) score += 10;
-    if (brand.includes(token)) score += 8;
-    if (description.includes(token)) score += 4;
   }
 
-  if (productName && query.includes(productName)) score += 25;
-  if (queryTokens.some((t) => productName.includes(t))) score += 15;
-  if (queryTokens.some((t) => titleArrayText.includes(t))) score += 18;
-  if (queryTokens.some((t) => activeIngredient.includes(t))) score += 10;
-  if (queryTokens.some((t) => brand.includes(t))) score += 8;
+  if (queryTokens.some((t) => productTitle.includes(t))) score += 20;
+  if (queryTokens.some((t) => titleArrayText.includes(t))) score += 16;
 
-  if (presentation && query.includes(presentation)) score += 8;
-  if (strength && query.includes(strength)) score += 8;
-
-  return score;
-}
-
-function computeProviderMatchScore(query, queryTokens, docText, doc, productNameHint) {
-  let score = 0;
-  if (!docText) return 0;
-
-  const providerName = normalizeText(buildProviderName(doc));
-  const providerProductName = normalizeText(buildShortProductLabel(doc));
-
-  if (docText.includes(query)) score += 30;
-
-  for (const token of queryTokens) {
-    if (docText.includes(token)) score += 6;
-    if (providerName.includes(token)) score += 6;
-    if (providerProductName.includes(token)) score += 8;
-  }
-
-  if (productNameHint) {
-    const hint = normalizeText(productNameHint);
-    if (hint && docText.includes(hint)) score += 20;
-  }
+  if (getPrice(doc) !== null) score += 1;
 
   return score;
 }
@@ -616,92 +502,13 @@ function buildProductSearchText(doc) {
     .join(' ');
 }
 
-function buildProviderSearchText(doc) {
-  const titleArray = Array.isArray(doc?.productTitleArray) ? doc.productTitleArray.join(' ') : '';
-
-  return [
-    doc?.ProductTitle,
-    doc?.productTitle,
-    titleArray,
-    doc?.name,
-    doc?.productName,
-    doc?.medicineName,
-    doc?.medication,
-    doc?.brand,
-    doc?.commercialName,
-    doc?.activeIngredient,
-    doc?.description,
-    doc?.presentation,
-    doc?.form,
-    doc?.dosage,
-    doc?.strength,
-    doc?.concentration,
-    doc?.category,
-    doc?.aliases,
-    doc?.keywords,
-    doc?.ProviderName,
-    doc?.providerName,
-    doc?.pharmacyName,
-    doc?.storeName,
-    doc?.ProviderCity,
-    doc?.providerCity,
-    doc?.city
-  ]
-    .flat()
-    .filter(Boolean)
-    .join(' ');
-}
-
-function buildProviderName(doc) {
-  return (
-    doc?.ProviderName ||
-    doc?.providerName ||
-    doc?.pharmacyName ||
-    doc?.storeName ||
-    doc?.name ||
-    doc?.company ||
-    ''
-  );
-}
-
-function buildProviderId(doc) {
-  return (
-    doc?.ProviderId ||
-    doc?.providerId ||
-    doc?.pharmacyId ||
-    doc?.storeId ||
-    doc?.id ||
-    ''
-  );
-}
-
-function buildAvailabilityText(doc) {
-  if (doc?.availability !== undefined && doc?.availability !== null) {
-    return String(doc.availability);
-  }
-  if (doc?.stock !== undefined && doc?.stock !== null) {
-    return `stock ${doc.stock}`;
-  }
-  if (doc?.inStock !== undefined && doc?.inStock !== null) {
-    return doc.inStock ? 'disponible' : 'sin stock';
-  }
-  return '';
-}
-
-function buildDosageForm(doc) {
-  return doc?.form || doc?.dosageForm || doc?.presentationForm || doc?.presentation || '';
-}
-
-function buildStrength(doc) {
-  return doc?.strength || doc?.concentration || doc?.dosage || doc?.dose || '';
-}
-
 function getPrice(doc) {
   const raw =
+    doc?.ProductPrice ??
+    doc?.productPrice ??
     doc?.price ??
     doc?.Price ??
     doc?.bestPrice ??
-    doc?.BestPrice ??
     doc?.amount ??
     doc?.salePrice ??
     doc?.unitPrice ??
@@ -717,6 +524,35 @@ function getPrice(doc) {
     .match(/-?\d+(\.\d+)?/);
 
   return normalized ? Number(normalized[0]) : null;
+}
+
+async function getBcvRate() {
+  if (!db) return null;
+
+  try {
+    const snapshot = await db.collection('divisabcv').limit(1).get();
+    if (snapshot.empty) return null;
+
+    const doc = snapshot.docs[0];
+    const data = doc.data() || {};
+    const candidate = data?.DivisaBs;
+
+    const rate = candidate !== null && candidate !== undefined
+      ? Number(String(candidate).replace(',', '.'))
+      : null;
+
+    if (!rate || rate <= 0) return null;
+    return rate;
+  } catch (error) {
+    console.error('❌ Error leyendo tasa BCV:', error.message);
+    return null;
+  }
+}
+
+function getPriceBs(doc, exchangeRate) {
+  const usd = getPrice(doc);
+  if (usd === null || !exchangeRate) return null;
+  return usd * exchangeRate;
 }
 
 function formatPrice(value) {
@@ -828,7 +664,6 @@ const STOPWORDS = new Set([
   'precios',
   'costo',
   'cuanto',
-  'cuanto',
   'cuánto',
   'medicamento',
   'medicamentos',
@@ -890,7 +725,6 @@ function isGreetingOrMenu(value) {
     text === 'buenas tardes' ||
     text === 'buenas noches' ||
     text === 'menu' ||
-    text === 'menu' ||
     text === 'ayuda' ||
     /^(hola|menu|menú|ayuda)\b/.test(text)
   );
@@ -914,11 +748,6 @@ function isProductSearchRequest(value) {
 function looksLikeMedicineName(value) {
   const text = normalizeText(value);
   return text.length >= 4;
-}
-
-function hasDosageSpecificity(value) {
-  const text = normalizeText(value);
-  return /\b(mg|ml|suspension|ampollas|tabletas|capsulas|capsula|jarabe|gotas|solucion|inyeccion)\b/.test(text);
 }
 
 function isMenuOption(value) {
@@ -950,8 +779,6 @@ async function createOrderFromSession(phone, deliveryAddress, pendingOrder) {
       unitPrice,
       total,
       deliveryAddress,
-      providerHint: pendingOrder.bestProviderName || null,
-      otherProvidersCount: pendingOrder.otherProviders ? pendingOrder.otherProviders.length : 0,
       status: 'pending',
       source: 'whatsapp',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
