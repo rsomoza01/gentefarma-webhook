@@ -150,3 +150,119 @@ function extractBody(payload) {
     payload?.body ||
     payload?.text ||
     payload?.message?.conversation ||
+payload?.message?.extendedTextMessage?.text ||
+    payload?.data?.body ||
+    payload?.data?.text ||
+    payload?.message?.text ||
+    ''
+  );
+}
+
+function extractFromMe(payload) {
+  return Boolean(
+    payload?.fromMe ??
+      payload?.key?.fromMe ??
+      payload?.data?.fromMe ??
+      false
+  );
+}
+
+async function sendWhatsAppMessage(phone, text) {
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: EVOLUTION_API_KEY
+  };
+
+  const payload = {
+    number: phone,
+    textMessage: {
+      text
+    }
+  };
+
+  const endpoints = [
+    `${EVOLUTION_API_URL}/message/sendText/${encodeURIComponent(INSTANCE_NAME)}`,
+    `${EVOLUTION_API_URL}/message/sendText`,
+    `${EVOLUTION_API_URL}/api/v1/message/sendText/${encodeURIComponent(INSTANCE_NAME)}`,
+    `${EVOLUTION_API_URL}/api/v1/message/sendText`
+  ];
+
+  let lastError = null;
+
+  for (const endpoint of endpoints) {
+    try {
+      console.log('📡 Intentando envío por:', endpoint);
+
+      const response = await axios.post(endpoint, payload, {
+        headers,
+        timeout: 30000
+      });
+
+      console.log('✅ Mensaje enviado por WhatsApp:', response.data);
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      console.error(
+        `❌ Error enviando por ${endpoint}:`,
+        error.response?.data || error.message
+      );
+    }
+  }
+
+  throw lastError || new Error('No se pudo enviar el mensaje por ningún endpoint');
+}
+
+async function generateAutoResponse(message, phone) {
+  const lowerMsg = String(message || '').toLowerCase().trim();
+
+  if (lowerMsg.match(/hola|buenos|buenas|hi|hey/)) {
+    return `🏥 *GENTEFARMA* - Tu Farmacia Virtual 💊
+
+¡Hola! Bienvenido a Gentefarma 🎉
+
+Soy tu asistente virtual y puedo ayudarte con:
+
+🔍 Consultar productos y medicamentos
+📦 Realizar pedidos
+💰 Ver precios y disponibilidad
+📍 Horarios y ubicación
+👤 Hablar con un humano
+
+¿En qué puedo ayudarte hoy?`;
+  }
+
+  if (lowerMsg.match(/producto|medicamento|farmacia/)) {
+    return `📦 *PRODUCTOS DISPONIBLES*
+
+Tenemos una amplia variedad de productos farmacéuticos:
+
+💊 Medicamentos
+🧴 Cuidado personal
+🍎 Vitaminas y suplementos
+👶 Productos infantiles
+🩺 Material médico
+
+¿Qué medicamento o producto necesitas?`;
+  }
+
+  if (lowerMsg.match(/gracias|hasta|adios|adiós/)) {
+    return `👋 ¡Gracias por contactar a Gentefarma!
+
+Tu pedido será procesado en breve.
+¿Hay algo más en lo que pueda ayudarte?`;
+  }
+
+  return `🤖 *Asistente Gentefarma*
+
+No estoy seguro de entenderte. ¿Podrías aclararme?
+
+¿En qué puedo ayudarte?
+1️⃣ Consultar productos
+2️⃣ Realizar pedido
+3️⃣ Información general`;
+}
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Gentefarma Webhook Service running on port ${PORT}`);
+});
