@@ -373,7 +373,7 @@ Cantidad: *${qty}*`;
   // --------------------------------------------------
   // 8. Búsqueda de producto / precio
   // --------------------------------------------------
-  if (isProductSearchRequest(normalized)  looksLikeMedicineName(normalized)) {
+  if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized)) {
     const catalogResponse = await searchAndBuildCatalogResponse(text, session);
     return catalogResponse;
   }
