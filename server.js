@@ -70,6 +70,7 @@ function getSession(phone) {
   if (!sessions.has(phone)) {
     sessions.set(phone, {
       mode: 'idle',
+      humanHandoff: false,
       lastSearch: null,
       pendingSelectionResults: null,
       selectedProducts: [],
@@ -82,11 +83,25 @@ function getSession(phone) {
 function resetSession(phone) {
   sessions.set(phone, {
     mode: 'idle',
+    humanHandoff: false,
     lastSearch: null,
     pendingSelectionResults: null,
     selectedProducts: [],
     updatedAt: Date.now()
   });
+}
+
+function enableHumanHandoff(session) {
+  session.humanHandoff = true;
+  session.mode = 'human_handoff';
+  session.pendingSelectionResults = null;
+  touchSession(session);
+}
+
+function disableHumanHandoff(session) {
+  session.humanHandoff = false;
+  if (session.mode === 'human_handoff') session.mode = 'idle';
+  touchSession(session);
 }
 
 function touchSession(session) {
@@ -343,9 +358,18 @@ async function processMessageUpdate(messageUpdate) {
 async function routeMessage(phone, text, session) {
   const normalized = normalizeText(text);
 
+  if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
+    disableHumanHandoff(session);
+    return '🤖 *Asistente reactivado*\n\nYa puedo ayudarte nuevamente con medicamentos y pedidos.';
+  }
+
   if (isHumanRequest(normalized)) {
-    resetSession(phone);
+    enableHumanHandoff(session);
     return buildHumanAgentMessage();
+  }
+
+  if (session.humanHandoff) {
+    return null;
   }
 
   if (shouldSendInstagramReel(normalized, session)) {
@@ -419,7 +443,7 @@ async function routeMessage(phone, text, session) {
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\nHola, soy el asistente virtual de Gentefarma.\n\nPuedo ayudarte a buscar medicamentos o conectarte con un *auxiliar* para atención humana.\n\nEscribe el nombre del medicamento que necesitas.\nSi prefieres hablar con un humano, escribe *auxiliar*.\n\nEjemplos:\n• *atamel*\n• *amoxicilina*\n• *histaler ped*`;
+  return `🏥 *GENTEFARMA*\n\nHola, soy el asistente virtual de Gentefarma.\n\nPuedo ayudarte a buscar medicamentos o conectarte con un *auxiliar* para atención humana.\n\nEscribe el nombre del medicamento que necesitas.\nSi prefieres hablar con un humano, escribe *auxiliar*.\nSi quieres volver a la atención automática, escribe *bot*.\n\nEjemplos:\n• *atamel*\n• *amoxicilina*\n• *histaler ped*`;
 }
 
 function buildHumanAgentMessage() {
