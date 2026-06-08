@@ -1,3 +1,6 @@
+
+
+
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -9,8 +12,10 @@ app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go-dd3c.onrender.com';
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go
+-dd3c.onrender.com';
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9
+cfc-a8eff38385f9';
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------
@@ -120,14 +125,17 @@ function clearPendingSearch(session) {
 
 function getCartTotals(session) {
   const items = ensureSelectedProducts(session);
-  const totalUsd = items.reduce((sum, item) => sum + (Number(item.priceUsd) || 0) * (Number(item.quantity) || 0), 0);
-  const totalBs = items.reduce((sum, item) => sum + (Number(item.priceBs) || 0) * (Number(item.quantity) || 0), 0);
+  const totalUsd = items.reduce((sum, item) => sum + (Number(item.priceUsd) || 0
+) * (Number(item.quantity) || 0), 0);
+  const totalBs = items.reduce((sum, item) => sum + (Number(item.priceBs) || 0) 
+* (Number(item.quantity) || 0), 0);
   return { totalUsd, totalBs };
 }
 
 function parseSelectionAndQuantity(text) {
   const normalized = normalizeText(text)
-    .replace(/\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|elegir|elige|escoger|escoje|de)\b/g, ' ')
+    .replace(/\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|elegir|el
+ige|escoger|escoje|de)\b/g, ' ')
     .replace(/\b(x|por|cantidad)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -144,12 +152,17 @@ function parseSelectionAndQuantity(text) {
   return { option, quantity };
 }
 
+
 function formatSelectionSavedMessage(item, quantity, session) {
   const title = item.title || 'Medicamento';
-  const usdUnit = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
-  const bsUnit = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-  const totalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUsd) || 0) * quantity)}` : 'No disponible';
-  const totalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs) || 0) * quantity)}` : 'No disponible';
+  const usdUnit = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'N
+o disponible';
+  const bsUnit = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No
+ disponible';
+  const totalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUs
+d) || 0) * quantity)}` : 'No disponible';
+  const totalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs
+) || 0) * quantity)}` : 'No disponible';
   const { totalUsd: cartUsd, totalBs: cartBs } = getCartTotals(session);
 
   return [
@@ -159,8 +172,10 @@ function formatSelectionSavedMessage(item, quantity, session) {
     `Unitario: ${usdUnit}  |  ${bsUnit}`,
     `Subtotal: ${totalUsd}  |  ${totalBs}`,
     '',
-    `🧾 Tu carrito actual: *$${formatPrice(cartUsd)}*  |  *Bs ${formatPrice(cartBs)}*`,
-    'Escribe *RESUMEN* para ver el pedido completo o continúa buscando otro medicamento.'
+    `🧾 Tu carrito actual: *$${formatPrice(cartUsd)}*  |  *Bs ${formatPrice(cartBs
+)}*`,
+    'Escribe *LISTO* para ver el pedido completo o continúa buscando otro medicam
+ento.'
   ].join('\n');
 }
 
@@ -175,10 +190,14 @@ function buildSelectedProductsSummary(session) {
 
   items.forEach((item, idx) => {
     const qty = Number(item.quantity) || 1;
-    const unitUsd = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
-    const unitBs = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-    const subtotalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUsd) || 0) * qty)}` : 'No disponible';
-    const subtotalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs) || 0) * qty)}` : 'No disponible';
+    const unitUsd = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 
+'No disponible';
+    const unitBs = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : '
+No disponible';
+    const subtotalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.pr
+iceUsd) || 0) * qty)}` : 'No disponible';
+    const subtotalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.pr
+iceBs) || 0) * qty)}` : 'No disponible';
 
     lines.push(`${idx + 1}. ${item.title || 'Medicamento'}`);
     lines.push(`   Cantidad: ${qty}`);
@@ -187,16 +206,21 @@ function buildSelectedProductsSummary(session) {
     lines.push('');
   });
 
-  lines.push(`💰 *Total pedido:* $${formatPrice(totalUsd)}  |  Bs ${formatPrice(totalBs)}`);
+  lines.push(`💰 *Total pedido:* $${formatPrice(totalUsd)}  |  Bs ${formatPrice(to
+talBs)}`);
   lines.push('');
-  lines.push('👤 *Pronto te atenderá un Auxiliar* para finalizar la compra y confirmar tu pedido.');
+  lines.push('Perfecto! 🎉 Hemos recibido tu pedido.');
+  lines.push('');
+  lines.push('En breve, uno de nuestros colaboradores de Gentefarma se pondrá en 
+contacto contigo para tramitarlo. 😊');
 
   return lines.join('\n').trim();
 }
 
 function addItemToCart(session, item, quantity) {
   const cart = ensureSelectedProducts(session);
-  const existingIndex = cart.findIndex((x) => normalizeText(x.title) === normalizeText(item.title));
+  const existingIndex = cart.findIndex((x) => normalizeText(x.title) === normali
+zeText(item.title));
   const cartItem = {
     title: item.title,
     quantity,
@@ -255,7 +279,8 @@ app.post('/webhook', async (req, res) => {
   try {
     console.log('📦 Body recibido:', JSON.stringify(req.body, null, 2));
 
-    const event = req.body?.event || req.body?.type || req.body?.data?.event || 'Message';
+    const event = req.body?.event || req.body?.type || req.body?.data?.event || 
+'Message';
     const data = req.body?.data || req.body;
 
     console.log('📩 Evento recibido:', event);
@@ -353,7 +378,8 @@ async function processIncomingMessage(payload) {
 
 async function processMessageUpdate(messageUpdate) {
   try {
-    console.log('📊 Actualización de mensaje:', JSON.stringify(messageUpdate, null, 2));
+    console.log('📊 Actualización de mensaje:', JSON.stringify(messageUpdate, null,
+ 2));
   } catch (error) {
     console.error('❌ Error en processMessageUpdate:', error);
   }
@@ -387,7 +413,7 @@ async function routeMessage(phone, text, session) {
     return buildInstagramReelMessage();
   }
 
-  if (/^resumen\b/.test(normalized)) {
+  if (/^(resumen|listo)\b/.test(normalized)) {
     return buildSelectedProductsSummary(session);
   }
 
@@ -400,7 +426,7 @@ async function routeMessage(phone, text, session) {
     const results = session.pendingSelectionResults || [];
     const selected = results[parsed.option - 1];
     if (!selected) {
-      return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *RESUMEN* o busca otro medicamento.`;
+      return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
     }
 
     addItemToCart(session, selected, parsed.quantity);
@@ -414,13 +440,9 @@ async function routeMessage(phone, text, session) {
     return await searchAndBuildCatalogResponse(text, session);
   }
 
-  if (isGreetingOrMenu(normalized)) {
-    session.mode = 'idle';
-    return buildMenuMessage();
-  }
-
-  if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized)) {
-    const productQuery = extractMedicineQuery(text) || text;
+  const medicineQuery = extractMedicineQuery(text);
+  if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized) || medicineQuery) {
+    const productQuery = medicineQuery || text;
     const searchResult = await searchMedicinesByName(productQuery);
 
     if (!searchResult || !searchResult.matches.length) {
@@ -435,15 +457,20 @@ async function routeMessage(phone, text, session) {
     return buildCatalogResponse(searchResult);
   }
 
+  if (isGreetingOrMenu(normalized)) {
+    session.mode = 'idle';
+    return buildMenuMessage();
+  }
+
   return buildMenuMessage();
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\nHola, soy el asistente virtual de Gentefarma.\n\nPuedo ayudarte a buscar medicamentos o conectarte con un *auxiliar* para atención humana.\n\nEscribe el nombre del medicamento que necesitas.\nSi prefieres hablar con un humano, escribe *auxiliar*.\nSi quieres volver a la atención automática, escribe *bot*.\n\nEjemplos:\n• *atamel*\n• *amoxicilina*\n• *histaler ped*`;
+  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
 }
 
 function buildHumanAgentMessage() {
-  return `👤 *Atención de un auxiliar*\n\nUn auxiliar de Gentefarma te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.`;
+  return `👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.`;
 }
 
 function buildInstagramReelMessage() {
@@ -503,6 +530,8 @@ async function searchMedicinesByName(userQuery) {
     .filter((token) => !/^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/.test(token))
     .join(' ')
     .trim();
+  const vitaminPhrases = extractVitaminFocusPhrases(query);
+  const vitaminFocusWord = extractVitaminFocusTokens(query)[0] || '';
 
   const scoredProducts = products
     .map((doc) => {
@@ -515,7 +544,7 @@ async function searchMedicinesByName(userQuery) {
       const ingredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
       const score = computeMatchScore(query, queryTokens, productText, doc);
 
-      const variants = [exactQuery, exactRoot, dosageLessQuery].filter(Boolean);
+      const variants = [exactQuery, exactRoot, dosageLessQuery, ...vitaminPhrases].filter(Boolean);
       const exactHit = variants.some((variant) => {
         if (!variant) return false;
         const variantTokens = tokenize(variant).filter((t) => !STOPWORDS.has(t) && t.length > 1);
@@ -537,6 +566,27 @@ async function searchMedicinesByName(userQuery) {
         );
       });
 
+      const focusTitleHit = Boolean(vitaminFocusWord) && (
+        productTitle.includes(vitaminFocusWord) ||
+        titleArrayText.includes(vitaminFocusWord) ||
+        ingredient.includes(vitaminFocusWord)
+      );
+
+      const phraseHit = queryTokens.length > 1 && (
+        productTitle.includes(query) ||
+        titleArrayText.includes(query) ||
+        ingredient.includes(query) ||
+        productTitle.includes(exactRoot) ||
+        titleArrayText.includes(exactRoot) ||
+        ingredient.includes(exactRoot) ||
+        vitaminPhrases.some((phrase) => productTitle.includes(phrase) || titleArrayText.includes(phrase) || ingredient.includes(phrase))
+      );
+
+      const tokenCoverageTitle = queryTokens.filter((t) => productTitle.includes(t)).length;
+      const tokenCoverageArray = queryTokens.filter((t) => titleArrayText.includes(t)).length;
+      const tokenCoverageIngredient = queryTokens.filter((t) => ingredient.includes(t)).length;
+      const tokenCoverage = Math.max(tokenCoverageTitle, tokenCoverageArray, tokenCoverageIngredient);
+
       const basePriceUsd = getPrice(doc);
       const basePriceBs = getPriceBs(doc, exchangeRate);
       const pricing = applySalesPricing(basePriceUsd, exchangeRate);
@@ -544,8 +594,11 @@ async function searchMedicinesByName(userQuery) {
       return {
         doc,
         title,
-        score,
+        score: score + (phraseHit ? 220 : 0) + (queryTokens.length > 1 ? tokenCoverage * 12 : 0) + (focusTitleHit ? 250 : 0),
         exactHit,
+        phraseHit,
+        focusTitleHit,
+        tokenCoverage,
         basePriceUsd,
         basePriceBs,
         priceUsd: pricing.displayUsd,
@@ -555,6 +608,14 @@ async function searchMedicinesByName(userQuery) {
       };
     })
     .sort((a, b) => {
+      const focusA = a.focusTitleHit ? 1 : 0;
+      const focusB = b.focusTitleHit ? 1 : 0;
+      if (focusA !== focusB) return focusB - focusA;
+
+      const phraseA = a.phraseHit ? 1 : 0;
+      const phraseB = b.phraseHit ? 1 : 0;
+      if (phraseA !== phraseB) return phraseB - phraseA;
+
       const scoreA = a.score ?? 0;
       const scoreB = b.score ?? 0;
       if (scoreA !== scoreB) return scoreB - scoreA;
@@ -564,16 +625,31 @@ async function searchMedicinesByName(userQuery) {
       return priceA - priceB;
     });
 
-  const exactMatches = scoredProducts.filter((item) => item.exactHit);
-  const candidateMatches = exactMatches.length
+  const exactMatches = scoredProducts.filter((item) => item.exactHit || item.focusTitleHit);
+  let candidateMatches = exactMatches.length
     ? exactMatches
     : scoredProducts.filter((item) => (item.score ?? 0) >= 60);
 
   if (!candidateMatches.length) return null;
 
+  const focusCandidates = vitaminFocusWord
+    ? candidateMatches.filter((item) => {
+        const itemText = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
+        return itemText.includes(vitaminFocusWord);
+      })
+    : [];
+
+  if (vitaminFocusWord && focusCandidates.length) {
+    candidateMatches = focusCandidates;
+  }
+
   const topMatches = candidateMatches
     .slice(0, 5)
     .sort((a, b) => {
+      const focusA = a.focusTitleHit ? 1 : 0;
+      const focusB = b.focusTitleHit ? 1 : 0;
+      if (focusA !== focusB) return focusB - focusA;
+
       const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
       const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
       if (priceA !== priceB) return priceA - priceB;
@@ -605,6 +681,27 @@ function buildCatalogResponse(result) {
     return '⚠️ Necesito un poco más de detalle para ayudarte.';
   }
 
+  const multipleWordQuery = queryHasMultipleWords(result.query);
+  const prioritizedMatches = multipleWordQuery
+    ? [...result.matches].sort((a, b) => {
+        const aPhrase = a.phraseHit ? 1 : 0;
+        const bPhrase = b.phraseHit ? 1 : 0;
+        if (aPhrase !== bPhrase) return bPhrase - aPhrase;
+
+        const aTokenCoverage = a.tokenCoverage ?? 0;
+        const bTokenCoverage = b.tokenCoverage ?? 0;
+        if (aTokenCoverage !== bTokenCoverage) return bTokenCoverage - aTokenCoverage;
+
+        const aScore = a.score ?? 0;
+        const bScore = b.score ?? 0;
+        if (aScore !== bScore) return bScore - aScore;
+
+        const aPrice = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+        const bPrice = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+        return aPrice - bPrice;
+      })
+    : result.matches;
+
   const lines = [];
   lines.push(`🔎 *Resultados para: ${result.query}*`);
   if (result.exchangeRate) {
@@ -612,27 +709,28 @@ function buildCatalogResponse(result) {
   }
   lines.push('');
 
-  result.matches.forEach((item, index) => {
+  prioritizedMatches.forEach((item, index) => {
     const title = shortenText(item.title || 'Medicamento', 52);
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-    const baseUsdText = item.basePriceUsd !== null ? `$${formatPrice(item.basePriceUsd)}` : null;
-    const baseBsText = item.basePriceBs !== null ? `Bs ${formatPrice(item.basePriceBs)}` : null;
     const icon = getProductIcon(title);
 
     lines.push(`${icon} *${index + 1}. ${title}*`);
     lines.push(`   ${usdText}  |  ${bsText}`);
-    if (baseUsdText || baseBsText) {
-      lines.push(`   Fee incluido sobre base: ${baseUsdText || 'No disponible'} | ${baseBsText || 'No disponible'}`);
+    if (queryHasMultipleWords(result.query) && index === 0) {
+      lines.push('   *Mejor coincidencia para tu búsqueda*');
     }
     lines.push('');
   });
 
   lines.push('');
-  lines.push('➡️ Responde con opción y cantidad.');
-  lines.push('Ejemplos: `1 2` / `3 1`');
+  lines.push('👉 Para agregar al pedido, escríbeme así:');
+  lines.push('“quiero X cajas de la opción Z”');
+  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
   lines.push('');
-  lines.push('Cuando termines, escribe *RESUMEN*.');
+  lines.push('¿Luego necesitas buscar otro medicamento? Escríbeme el nombre y lo agrego a tu lista. 🛒');
+  lines.push('');
+  lines.push('Cuando termines con todo, escribe *LISTO* y te muestro el resumen de tu pedido.');
 
   return lines.join('\n').trim();
 }
@@ -664,6 +762,8 @@ function computeMatchScore(query, queryTokens, docText, doc) {
   const activeIngredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
   const searchArea = [docText, productTitle, titleArrayText, activeIngredient].filter(Boolean).join(' | ');
   const searchTokens = tokenize(searchArea).filter((t) => t.length > 1);
+  const phraseQuery = queryTokens.join(' ');
+  const multiWord = queryTokens.length > 1;
 
   // Prioridad alta: coincidencia exacta o casi exacta del nombre consultado.
   if (productTitle === query) score += 400;
@@ -673,6 +773,12 @@ function computeMatchScore(query, queryTokens, docText, doc) {
   if (productTitle.includes(query) || query.includes(productTitle)) score += 220;
   if (titleArrayText.includes(query) || query.includes(titleArrayText)) score += 180;
   if (activeIngredient && (activeIngredient.includes(query) || query.includes(activeIngredient))) score += 160;
+
+  if (multiWord && phraseQuery) {
+    if (productTitle.includes(phraseQuery)) score += 260;
+    if (titleArrayText.includes(phraseQuery)) score += 220;
+    if (activeIngredient.includes(phraseQuery)) score += 200;
+  }
 
   // Si todos los tokens aparecen en el título o principio activo, subir prioridad fuerte.
   const tokenMatchCountTitle = queryTokens.filter((t) => productTitle.includes(t)).length;
@@ -707,6 +813,13 @@ function computeMatchScore(query, queryTokens, docText, doc) {
       else if (bestDistance === 2) score += 24;
       else if (bestDistance === 3) score += 12;
     }
+  }
+
+  if (multiWord) {
+    const titleStartsWithPhrase = productTitle.startsWith(phraseQuery);
+    const arrayStartsWithPhrase = titleArrayText.startsWith(phraseQuery);
+    const ingredientStartsWithPhrase = activeIngredient.startsWith(phraseQuery);
+    if (titleStartsWithPhrase || arrayStartsWithPhrase || ingredientStartsWithPhrase) score += 90;
   }
 
   return score;
@@ -1071,6 +1184,53 @@ function isGreetingOrMenu(value) {
     text === 'ayuda' ||
     /^(hola|menu|menú|ayuda)\b/.test(text)
   );
+}
+
+function extractVitaminFocusTokens(query) {
+  const tokens = tokenize(query);
+  const focusTokens = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== 'vitamina') continue;
+
+    const next = tokens[i + 1];
+    const next2 = tokens[i + 2];
+
+    if (next && !STOPWORDS.has(next) && next.length >= 1 && next !== 'vitamina') {
+      if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
+        focusTokens.push(`${next}${next2}`);
+      } else {
+        focusTokens.push(next);
+      }
+    }
+  }
+
+  return [...new Set(focusTokens.filter(Boolean))];
+}
+
+function extractVitaminFocusPhrases(query) {
+  const tokens = tokenize(query);
+  const phrases = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== 'vitamina') continue;
+
+    const next = tokens[i + 1];
+    const next2 = tokens[i + 2];
+    if (!next) continue;
+
+    if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
+      phrases.push(`vitamina ${next}${next2}`);
+    } else {
+      phrases.push(`vitamina ${next}`);
+    }
+  }
+
+  return [...new Set(phrases.filter(Boolean))];
+}
+
+function queryHasMultipleWords(query) {
+  const meaningful = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  const vitaminFocus = extractVitaminFocusTokens(query);
+  return meaningful.length + vitaminFocus.length > 1;
 }
 
 function isHumanRequest(value) {
