@@ -1,4 +1,4 @@
-require('dotenv').config();
+equire('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -348,6 +348,14 @@ async function routeMessage(phone, text, session) {
     return buildHumanAgentMessage();
   }
 
+  if (shouldSendInstagramReel(normalized, session)) {
+    return buildInstagramReelMessage();
+  }
+
+  if (isInstagramInfoRequest(normalized)) {
+    return buildInstagramReelMessage();
+  }
+
   if (/^resumen\b/.test(normalized)) {
     return buildSelectedProductsSummary(session);
   }
@@ -416,6 +424,24 @@ function buildMenuMessage() {
 
 function buildHumanAgentMessage() {
   return `👤 *Atención de un auxiliar*\n\nUn auxiliar de Gentefarma te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.`;
+}
+
+function buildInstagramReelMessage() {
+  return `Claro, aquí tienes más información:\n\nhttps://www.instagram.com/reel/DU3hPpJDquf/?igsh=MWJnczFxMDgyMTh3aQ==`;
+}
+
+function shouldSendInstagramReel(value) {
+  const text = normalizeText(value);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas informacion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
+  const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
+  const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
+
+  return Boolean((isGentefarmaContext && wantsInfo) || asksForMedia);
+}
+
+function isInstagramInfoRequest(value) {
+  const text = normalizeText(value);
+  return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
 
 // ----------------------------------------------------
