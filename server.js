@@ -539,7 +539,6 @@ async function searchMedicinesByName(userQuery) {
         priceBs: getPriceBs(doc, exchangeRate)
       };
     })
-    .filter((item) => item.exactHit)
     .sort((a, b) => {
       const scoreA = a.score ?? 0;
       const scoreB = b.score ?? 0;
@@ -550,9 +549,14 @@ async function searchMedicinesByName(userQuery) {
       return priceA - priceB;
     });
 
-  if (!scoredProducts.length) return null;
+  const exactMatches = scoredProducts.filter((item) => item.exactHit);
+  const candidateMatches = exactMatches.length
+    ? exactMatches
+    : scoredProducts.filter((item) => (item.score ?? 0) >= 60);
 
-  const topMatches = scoredProducts
+  if (!candidateMatches.length) return null;
+
+  const topMatches = candidateMatches
     .slice(0, 5)
     .sort((a, b) => {
       const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
@@ -632,6 +636,7 @@ function computeMatchScore(query, queryTokens, docText, doc) {
     : '';
   const activeIngredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
   const searchArea = [docText, productTitle, titleArrayText, activeIngredient].filter(Boolean).join(' | ');
+  const searchTokens = tokenize(searchArea).filter((t) => t.length > 1);
 
   // Prioridad alta: coincidencia exacta o casi exacta del nombre consultado.
   if (productTitle === query) score += 400;
@@ -656,9 +661,56 @@ function computeMatchScore(query, queryTokens, docText, doc) {
     if (productTitle.includes(token)) score += 18;
     if (titleArrayText.includes(token)) score += 14;
     if (activeIngredient.includes(token)) score += 16;
+
+    // Tolerancia a errores de escritura: diclofeanc -> diclofenac.
+    if (!searchArea.includes(token)) {
+      let bestDistance = Infinity;
+      for (const candidate of searchTokens) {
+        if (candidate === token) {
+          bestDistance = 0;
+          break;
+        }
+        if (Math.abs(candidate.length - token.length) > 3) continue;
+        const distance = levenshteinDistance(token, candidate);
+        if (distance < bestDistance) bestDistance = distance;
+        if (bestDistance <= 1) break;
+      }
+
+      if (bestDistance <= 1) score += 36;
+      else if (bestDistance === 2) score += 24;
+      else if (bestDistance === 3) score += 12;
+    }
   }
 
   return score;
+}
+
+function levenshteinDistance(a, b) {
+  const s = String(a || '');
+  const t = String(b || '');
+  const m = s.length;
+  const n = t.length;
+
+  if (!m) return n;
+  if (!n) return m;
+
+  const prev = Array.from({ length: n + 1 }, (_, i) => i);
+  const curr = new Array(n + 1);
+
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    for (let j = 0; j <= n; j++) prev[j] = curr[j];
+  }
+
+  return prev[n];
 }
 
 function buildShortProductLabel(doc) {
