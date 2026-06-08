@@ -9,8 +9,10 @@ app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go-dd3c.onrender.com';
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go
+-dd3c.onrender.com';
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9
+cfc-a8eff38385f9';
 const PORT = process.env.PORT || 3000;
 
 // ----------------------------------------------------
@@ -868,14 +870,43 @@ async function sendWhatsAppMessage(phone, text) {
 // ----------------------------------------------------
 // Evolution payload extractors
 // ----------------------------------------------------
+function unwrapMessagePayload(payload) {
+  if (!payload) return null;
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = unwrapMessagePayload(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (payload.Info || payload.Message || payload.key || payload.message) return payload;
+  if (payload.data) {
+    const data = payload.data;
+    if (Array.isArray(data)) return unwrapMessagePayload(data);
+    if (data.Info || data.Message || data.key || data.message) return data;
+    if (Array.isArray(data.messages) && data.messages.length) return unwrapMessagePayload(data.messages[0]);
+    if (data.value) return unwrapMessagePayload(data.value);
+    return unwrapMessagePayload(data);
+  }
+
+  if (Array.isArray(payload.messages) && payload.messages.length) return unwrapMessagePayload(payload.messages[0]);
+  if (payload.value) return unwrapMessagePayload(payload.value);
+
+  return payload;
+}
+
 function extractFrom(payload) {
+  const node = unwrapMessagePayload(payload) || {};
   const jid =
-    payload?.Info?.Sender ||
-    payload?.Info?.Chat ||
-    payload?.Sender ||
-    payload?.sender ||
-    payload?.from ||
-    payload?.key?.remoteJid ||
+    node?.Info?.Sender ||
+    node?.Info?.Chat ||
+    node?.Sender ||
+    node?.sender ||
+    node?.from ||
+    node?.key?.remoteJid ||
+    node?.message?.key?.remoteJid ||
+    node?.data?.key?.remoteJid ||
     '';
 
   return String(jid)
@@ -885,24 +916,34 @@ function extractFrom(payload) {
 }
 
 function extractBody(payload) {
+  const node = unwrapMessagePayload(payload) || {};
   return (
-    payload?.Message?.conversation ||
-    payload?.Message?.extendedTextMessage?.text ||
-    payload?.Message?.text ||
-    payload?.body ||
-    payload?.text ||
-    payload?.data?.body ||
-    payload?.data?.text ||
+    node?.Message?.conversation ||
+    node?.Message?.extendedTextMessage?.text ||
+    node?.Message?.text ||
+    node?.message?.conversation ||
+    node?.message?.extendedTextMessage?.text ||
+    node?.message?.text ||
+    node?.body ||
+    node?.text ||
+    node?.data?.body ||
+    node?.data?.text ||
+    node?.messages?.[0]?.message?.conversation ||
+    node?.messages?.[0]?.message?.extendedTextMessage?.text ||
+    node?.messages?.[0]?.message?.text ||
     ''
   );
 }
 
 function extractFromMe(payload) {
+  const node = unwrapMessagePayload(payload) || {};
   return Boolean(
-    payload?.Info?.IsFromMe ??
-    payload?.fromMe ??
-    payload?.key?.fromMe ??
-    payload?.data?.fromMe ??
+    node?.Info?.IsFromMe ??
+    node?.fromMe ??
+    node?.key?.fromMe ??
+    node?.message?.key?.fromMe ??
+    node?.data?.fromMe ??
+    node?.messages?.[0]?.key?.fromMe ??
     false
   );
 }
