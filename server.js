@@ -386,7 +386,7 @@ async function routeMessage(phone, text, session) {
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return `⚠️ No encontré coincidencias para *${productQuery.trim()}*.\n\nPrueba con el nombre del medicamento, por ejemplo: *oxacilina*, *atamel*, *fulgram*.`;
+      return `⚠️ No encontré *oxacilina 1gr* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
     }
 
     session.pendingSelectionResults = searchResult.matches;
@@ -450,20 +450,35 @@ async function searchMedicinesByName(userQuery) {
   const exchangeRate = await getBcvRate();
   const products = await fetchCollectionDocuments('products-market', 2000);
 
+  const exactQuery = query;
+  const exactRoot = queryTokens.join(' ');
+
   const scoredProducts = products
     .map((doc) => {
       const title = buildShortProductLabel(doc);
       const searchableText = normalizeText(buildProductSearchText(doc));
       const score = computeMatchScore(query, queryTokens, searchableText, doc);
+      const productTitle = normalizeText(title);
+      const productText = normalizeText(buildProductSearchText(doc));
+      const ingredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
+      const exactHit =
+        productTitle === exactQuery ||
+        productTitle.includes(exactQuery) ||
+        ingredient === exactQuery ||
+        ingredient.includes(exactQuery) ||
+        productText.includes(exactRoot) ||
+        ingredient.includes(exactRoot);
+
       return {
         doc,
         title,
         score,
+        exactHit,
         priceUsd: getPrice(doc),
         priceBs: getPriceBs(doc, exchangeRate)
       };
     })
-    .filter((item) => item.score > 0)
+    .filter((item) => item.exactHit)
     .sort((a, b) => {
       const scoreA = a.score ?? 0;
       const scoreB = b.score ?? 0;
