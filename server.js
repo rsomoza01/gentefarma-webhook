@@ -12,18 +12,20 @@ const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
 
 // Endpoint principal del webhook
+// Endpoint principal del webhook
 app.post('/webhook', async (req, res) => {
   try {
-    const { event, data } = req.body;
+    const { event, data } = req.body || {};
 
     console.log('📩 Evento recibido:', event);
 
-    if (event === 'messages.upsert') {
-      await processIncomingMessage(data);
+    const normalizedEvent = String(event || '').toLowerCase();
+    if (normalizedEvent === 'messages.upsert' || normalizedEvent === 'message') {
+      await processIncomingMessage(data || req.body);
     }
 
-    if (event === 'messages.update') {
-      await processMessageUpdate(data);
+    if (normalizedEvent === 'messages.update') {
+      await processMessageUpdate(data || req.body);
     }
 
     res.status(200).json({
@@ -57,6 +59,32 @@ function tokenize(value) {
   return text.split(' ').filter(Boolean);
 }
 
+function extractFrom(payload) {
+  return String(
+    payload?.Info?.Sender ||
+    payload?.Info?.Chat ||
+    payload?.key?.remoteJid ||
+    payload?.from ||
+    ''
+  ).replace(/@s\.whatsapp\.net$/,'');
+}
+
+function extractBody(payload) {
+  return String(
+    payload?.Message?.conversation ||
+    payload?.Message?.extendedTextMessage?.text ||
+    payload?.message?.conversation ||
+    payload?.text ||
+    payload?.body ||
+    ''
+  );
+}
+
+function extractFromMe(payload) {
+  const value = payload?.Info?.IsFromMe ?? payload?.key?.fromMe ?? payload?.fromMe;
+  return Boolean(value);
+}
+
 const STOPWORDS = new Set([
   'por','favor','me','puede','puedes','informar','informe','informacion','información','dime','decime','quiero','necesito',
   'ver','buscar','consulta','consultar','disponibilidad','hay','tienen','tienes','tiene','precio','coste','costo','stock',
@@ -69,7 +97,6 @@ function extractMedicineQuery(text) {
   const cleaned = normalizeText(text);
   if (!cleaned) return '';
 
-  // 1) Intenta recortar la frase por la intención más común.
   const extractionPatterns = [
     /(?:^|\s)(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?)\s+(.+)$/i,
     /(?:^|\s)(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
@@ -84,7 +111,6 @@ function extractMedicineQuery(text) {
     }
   }
 
-  // 2) Limpia ruido al inicio que a veces queda pegado al medicamento.
   candidate = candidate
     .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?)\s+/i, '')
     .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
@@ -96,11 +122,9 @@ function extractMedicineQuery(text) {
 
   if (!tokens.length) return '';
 
-  // 3) Conserva números/unidades útiles y acota si la frase quedó demasiado larga.
   const normalized = tokens.join(' ').trim();
   if (tokens.length <= 5) return normalized;
 
-  // Si todavía quedó muy largo, prioriza el final porque allí suele venir el nombre exacto.
   return tokens.slice(-5).join(' ').trim();
 }
 
@@ -208,21 +232,24 @@ function buildProductResultsMessage(query, rate, scored) {
   return lines.join('\n').trim();
 }
 
-async function processIncomingMessage(message) {
+async function processIncomingMessage(payload) {
   try {
-    const { from, body, fromMe, id } = message;
-    
-    // Solo procesar mensajes entrantes
+    const from = extractFrom(payload);
+    const body = extractBody(payload);
+    const fromMe = extractFromMe(payload);
+
     if (fromMe) return;
-    
+    if (!from || !body) {
+      console.log('⚠️ Payload sin from/body útil:', JSON.stringify(payload));
+      return;
+    }
+
     console.log('📨 Nuevo mensaje entrante:', { from, body });
-    
-    // Generar respuesta automática
-    const autoResponse = await generateAutoResponse(body, from);
+
+    const autoResponse = await generateAutoResponse(body);
     if (autoResponse) {
       await sendWhatsAppMessage(from, autoResponse);
     }
-    
   } catch (error) {
     console.error('❌ Error procesando mensaje:', error);
   }
@@ -235,89 +262,55 @@ async function processMessageUpdate(messageUpdate) {
 
 async function sendWhatsAppMessage(phone, text) {
   try {
-    // Intento 1: Endpoint sin instancia en la URL
     const response = await axios.post(
-      `${EVOLUTION_API_URL}/message/sendText`,
+      `${EVOLUTION_API_URL}/send/text`,
       {
         number: phone,
-        textMessage: { text }
+        text,
+        formatJid: false
       },
       {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${EVOLUTION_API_KEY}`
+          apikey: EVOLUTION_API_KEY
         },
         timeout: 30000
       }
     );
-    
+
     console.log('✅ Mensaje enviado por WhatsApp:', response.data);
   } catch (error) {
-    console.error('❌ Error enviando WhatsApp (intento 1):', error.message);
+    console.error('❌ Error enviando WhatsApp:', error.message);
     console.error('Detalle:', error.response?.data);
-    
-    // Intento 2: Fallback con otro formato
-    try {
-      const altResponse = await axios.post(
-        `${EVOLUTION_API_URL}/api/v1/message/sendText`,
-        {
-          number: phone,
-          textMessage: { text }
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${EVOLUTION_API_KEY}`
-          },
-          timeout: 30000
-        }
-      );
-      console.log('✅ Mensaje enviado (vía fallback):', altResponse.data);
-    } catch (altError) {
-      console.error('❌ Fallback también falló:', altError.message);
-    }
   }
 }
 
-async function generateAutoResponse(message, phone) {
+async function generateAutoResponse(message) {
   const query = normalizeText(message);
 
   if (!query) {
-    return `🤖 *Asistente Gentefarma*\n\nNo recibí texto para procesar. ¿Podrías escribir el nombre del medicamento?`;
+    return `🤖 *Asistente Gentefarma*\n\nEscribe el nombre de un medicamento o *auxiliar*.`;
   }
 
   if (query.match(/\b(hola|buenos|buenas|hi|hey)\b/)) {
     return `Gracias por comunicarte con el Agente IA de Gentefarma. Si buscas un medicamento específico, simplemente escribe el nombre (por ejemplo: atamel). Si necesitas hablar con uno de nuestros auxiliares, escribe ‘auxiliar’`;
   }
 
-  if (query.match(/\b(auxiliar|humano|agente|asesor|operador)\b/)) {
-    return `👩‍⚕️ Un auxiliar te atenderá en breve.
-
-Por favor envía tu consulta o escribe el nombre del medicamento que necesitas.`;
-  }
-
-  if (query.match(/\b(quiero\s+hablar\s+con\s+un\s+auxiliar|hablar\s+con\s+un\s+auxiliar|me\s+atiende\s+un\s+humano|hablar\s+con\s+alguien|quiero\s+un\s+humano|necesito\s+un\s+humano)\b/)) {
-    return `👩‍⚕️ Claro, te conectamos con un auxiliar.
-
-Escribe tu consulta o el nombre del medicamento y te ayudaremos enseguida.`;
+  if (query === 'auxiliar' || query.match(/\b(quiero\s+hablar\s+con\s+un\s+auxiliar|hablar\s+con\s+un\s+auxiliar|me\s+atiende\s+un\s+humano|hablar\s+con\s+alguien|quiero\s+un\s+humano|necesito\s+un\s+humano|auxiliar|humano|asesor|operador)\b/)) {
+    return `👩‍⚕️ Claro, te conectamos con un auxiliar.\n\nEscribe tu consulta o el nombre del medicamento.`;
   }
 
   if (query.match(/\b(gracias|hasta|adios|adiós)\b/)) {
-    return `👋 ¡Gracias por contactar a Gentefarma!
-
-Si necesitas algo más, escribe el nombre del medicamento o *auxiliar*.`;
+    return `👋 ¡Gracias por contactar a Gentefarma!\n\nSi necesitas algo más, escribe el nombre del medicamento o *auxiliar*.`;
   }
 
-  // Detectar consultas reales de medicamentos
   const productQuery = extractMedicineQuery(query);
   if (productQuery) {
     try {
       const { rate, scored } = await searchProducts(productQuery);
 
       if (!scored.length) {
-        return `⚠️ No encontré resultados para *${productQuery}*.
-
-Prueba con un nombre más corto o exacto, por ejemplo: *oxacilina*, *atamel*, *fulgram*.`;
+        return `⚠️ No encontré resultados para *${productQuery}*.\n\nPrueba con un nombre más corto, por ejemplo: *oxacilina*, *atamel*, *fulgram*.`;
       }
 
       return buildProductResultsMessage(productQuery, rate, scored);
@@ -328,17 +321,10 @@ Prueba con un nombre más corto o exacto, por ejemplo: *oxacilina*, *atamel*, *f
   }
 
   if (query.match(/\b(producto|medicamento|farmacia)\b/)) {
-    return `📦 *PRODUCTOS DISPONIBLES*\n\nEscríbeme el nombre del medicamento y te mostraré los resultados.\n\nEjemplos:\n• *atamel*\n• *fulgram*\n• *oxacilina 1gr*`;
+    return `📦 *PRODUCTOS DISPONIBLES*\n\nEscribe el nombre del medicamento y te mostraré los resultados.\n\nEjemplos:\n• *atamel*\n• *fulgram*\n• *oxacilina 1gr*`;
   }
 
-  return `🤖 *Asistente Gentefarma*
-
-No estoy seguro de entenderte. ¿Podrías aclararme?
-
-¿En qué puedo ayudarte?
-1️⃣ Consultar productos
-2️⃣ Realizar pedido
-3️⃣ Información general`;
+  return `🤖 *Asistente Gentefarma*\n\nEscribe el nombre de un medicamento o *auxiliar*.`;
 }
 
 function extractMedicineQuery(text) {
