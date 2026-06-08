@@ -381,11 +381,12 @@ async function routeMessage(phone, text, session) {
   }
 
   if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized)) {
-    const searchResult = await searchMedicinesByName(text);
+    const productQuery = extractMedicineQuery(text) || text;
+    const searchResult = await searchMedicinesByName(productQuery);
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return '⚠️ No encontré coincidencias. Prueba con otro nombre de medicamento.';
+      return `⚠️ No encontré coincidencias para *${productQuery.trim()}*.\n\nPrueba con el nombre del medicamento, por ejemplo: *oxacilina*, *atamel*, *fulgram*.`;
     }
 
     session.pendingSelectionResults = searchResult.matches;
@@ -475,11 +476,20 @@ async function searchMedicinesByName(userQuery) {
 
   if (!scoredProducts.length) return null;
 
+  const topMatches = scoredProducts
+    .slice(0, 5)
+    .sort((a, b) => {
+      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      if (priceA !== priceB) return priceA - priceB;
+      return (b.score ?? 0) - (a.score ?? 0);
+    });
+
   return {
     query,
     queryTokens,
     exchangeRate,
-    matches: scoredProducts.slice(0, 15).map((item) => ({
+    matches: topMatches.map((item) => ({
       title: item.title,
       priceUsd: item.priceUsd,
       priceBs: item.priceBs,
@@ -538,17 +548,33 @@ function computeMatchScore(query, queryTokens, docText, doc) {
   const titleArrayText = Array.isArray(doc?.productTitleArray)
     ? normalizeText(doc.productTitleArray.join(' '))
     : '';
+  const activeIngredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
+  const searchArea = [docText, productTitle, titleArrayText, activeIngredient].filter(Boolean).join(' | ');
 
-  if (docText.includes(query)) score += 80;
+  // Prioridad alta: coincidencia exacta o casi exacta del nombre consultado.
+  if (productTitle === query) score += 400;
+  if (titleArrayText === query) score += 320;
+  if (activeIngredient && activeIngredient === query) score += 300;
+
+  if (productTitle.includes(query) || query.includes(productTitle)) score += 220;
+  if (titleArrayText.includes(query) || query.includes(titleArrayText)) score += 180;
+  if (activeIngredient && (activeIngredient.includes(query) || query.includes(activeIngredient))) score += 160;
+
+  // Si todos los tokens aparecen en el título o principio activo, subir prioridad fuerte.
+  const tokenMatchCountTitle = queryTokens.filter((t) => productTitle.includes(t)).length;
+  const tokenMatchCountArray = queryTokens.filter((t) => titleArrayText.includes(t)).length;
+  const tokenMatchCountIngredient = queryTokens.filter((t) => activeIngredient.includes(t)).length;
+
+  if (tokenMatchCountTitle === queryTokens.length && queryTokens.length > 0) score += 140;
+  if (tokenMatchCountArray === queryTokens.length && queryTokens.length > 0) score += 120;
+  if (tokenMatchCountIngredient === queryTokens.length && queryTokens.length > 0) score += 130;
 
   for (const token of queryTokens) {
-    if (docText.includes(token)) score += 15;
+    if (searchArea.includes(token)) score += 8;
     if (productTitle.includes(token)) score += 18;
     if (titleArrayText.includes(token)) score += 14;
+    if (activeIngredient.includes(token)) score += 16;
   }
-
-  if (queryTokens.some((t) => productTitle.includes(t))) score += 20;
-  if (queryTokens.some((t) => titleArrayText.includes(t))) score += 16;
 
   return score;
 }
@@ -848,22 +874,22 @@ function extractMedicineQuery(text) {
   const cleaned = normalizeText(text);
   if (!cleaned) return '';
 
-  const extractionPatterns = [
-    /(?:^|\s)(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?)\s+(.+)$/i,
+  const patterns = [
+    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
     /(?:^|\s)(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
   ];
 
   let candidate = cleaned;
-  for (const pattern of extractionPatterns) {
+  for (const pattern of patterns) {
     const match = cleaned.match(pattern);
-    if (match && match[1]) {
+    if (match?.[1]) {
       candidate = normalizeText(match[1]);
       break;
     }
   }
 
   candidate = candidate
-    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?)\s+/i, '')
+    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
     .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
     .trim();
 
@@ -873,10 +899,21 @@ function extractMedicineQuery(text) {
 
   if (!tokens.length) return '';
 
-  const normalized = tokens.join(' ').trim();
-  if (tokens.length <= 5) return normalized;
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?))\b/i;
+  const dosageMatch = candidate.match(dosagePattern);
+  if (dosageMatch) {
+    const dose = normalizeText(dosageMatch[1]);
+    const beforeDose = candidate.slice(0, dosageMatch.index).trim();
+    const beforeTokens = tokenize(beforeDose).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+    if (beforeTokens.length) {
+      return `${beforeTokens.slice(-3).join(' ')} ${dose}`.trim();
+    }
+    return dose;
+  }
 
-  return tokens.slice(-5).join(' ').trim();
+  if (tokens.length <= 4) return tokens.join(' ').trim();
+
+  return tokens.slice(-4).join(' ').trim();
 }
 
 // ----------------------------------------------------
