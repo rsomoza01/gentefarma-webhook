@@ -502,22 +502,44 @@ async function searchMedicinesByName(userQuery) {
 
   const exactQuery = query;
   const exactRoot = queryTokens.join(' ');
+  const dosageLessQuery = queryTokens
+    .filter((token) => !/^(\d+(?:[.,]\d+)?)$/.test(token))
+    .filter((token) => !/^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/.test(token))
+    .join(' ')
+    .trim();
 
   const scoredProducts = products
     .map((doc) => {
       const title = buildShortProductLabel(doc);
-      const searchableText = normalizeText(buildProductSearchText(doc));
-      const score = computeMatchScore(query, queryTokens, searchableText, doc);
       const productTitle = normalizeText(title);
       const productText = normalizeText(buildProductSearchText(doc));
+      const titleArrayText = Array.isArray(doc?.productTitleArray)
+        ? normalizeText(doc.productTitleArray.join(' '))
+        : '';
       const ingredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
-      const exactHit =
-        productTitle === exactQuery ||
-        productTitle.includes(exactQuery) ||
-        ingredient === exactQuery ||
-        ingredient.includes(exactQuery) ||
-        productText.includes(exactRoot) ||
-        ingredient.includes(exactRoot);
+      const score = computeMatchScore(query, queryTokens, productText, doc);
+
+      const variants = [exactQuery, exactRoot, dosageLessQuery].filter(Boolean);
+      const exactHit = variants.some((variant) => {
+        if (!variant) return false;
+        const variantTokens = tokenize(variant).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+        const tokenCoverageTitle = variantTokens.filter((t) => productTitle.includes(t)).length;
+        const tokenCoverageArray = variantTokens.filter((t) => titleArrayText.includes(t)).length;
+        const tokenCoverageIngredient = variantTokens.filter((t) => ingredient.includes(t)).length;
+
+        return (
+          productTitle === variant ||
+          productTitle.includes(variant) ||
+          titleArrayText === variant ||
+          titleArrayText.includes(variant) ||
+          ingredient === variant ||
+          ingredient.includes(variant) ||
+          productText.includes(variant) ||
+          tokenCoverageTitle === variantTokens.length ||
+          tokenCoverageArray === variantTokens.length ||
+          tokenCoverageIngredient === variantTokens.length
+        );
+      });
 
       return {
         doc,
