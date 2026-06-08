@@ -144,7 +144,6 @@ function parseSelectionAndQuantity(text) {
   return { option, quantity };
 }
 
-
 function formatSelectionSavedMessage(item, quantity, session) {
   const title = item.title || 'Medicamento';
   const usdUnit = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
@@ -203,6 +202,10 @@ function addItemToCart(session, item, quantity) {
     quantity,
     priceUsd: item.priceUsd,
     priceBs: item.priceBs,
+    basePriceUsd: item.basePriceUsd,
+    basePriceBs: item.basePriceBs,
+    feeRate: item.feeRate,
+    feeAmountUsd: item.feeAmountUsd,
     raw: item.raw
   };
 
@@ -210,6 +213,10 @@ function addItemToCart(session, item, quantity) {
     cart[existingIndex].quantity += quantity;
     cart[existingIndex].priceUsd = item.priceUsd;
     cart[existingIndex].priceBs = item.priceBs;
+    cart[existingIndex].basePriceUsd = item.basePriceUsd;
+    cart[existingIndex].basePriceBs = item.basePriceBs;
+    cart[existingIndex].feeRate = item.feeRate;
+    cart[existingIndex].feeAmountUsd = item.feeAmountUsd;
     return cart[existingIndex];
   }
 
@@ -530,13 +537,21 @@ async function searchMedicinesByName(userQuery) {
         );
       });
 
+      const basePriceUsd = getPrice(doc);
+      const basePriceBs = getPriceBs(doc, exchangeRate);
+      const pricing = applySalesPricing(basePriceUsd, exchangeRate);
+
       return {
         doc,
         title,
         score,
         exactHit,
-        priceUsd: getPrice(doc),
-        priceBs: getPriceBs(doc, exchangeRate)
+        basePriceUsd,
+        basePriceBs,
+        priceUsd: pricing.displayUsd,
+        priceBs: pricing.displayBs,
+        feeRate: pricing.feeRate,
+        feeAmountUsd: pricing.feeAmountUsd
       };
     })
     .sort((a, b) => {
@@ -569,12 +584,19 @@ async function searchMedicinesByName(userQuery) {
     query,
     queryTokens,
     exchangeRate,
-    matches: topMatches.map((item) => ({
-      title: item.title,
-      priceUsd: item.priceUsd,
-      priceBs: item.priceBs,
-      raw: item.doc
-    }))
+    matches: topMatches.map((item) => {
+      const pricing = applySalesPricing(item.priceUsd, exchangeRate);
+      return {
+        title: item.title,
+        basePriceUsd: item.priceUsd,
+        basePriceBs: item.priceBs,
+        priceUsd: pricing.displayUsd,
+        priceBs: pricing.displayBs,
+        feeRate: pricing.feeRate,
+        feeAmountUsd: pricing.feeAmountUsd,
+        raw: item.doc
+      };
+    })
   };
 }
 
@@ -594,10 +616,15 @@ function buildCatalogResponse(result) {
     const title = shortenText(item.title || 'Medicamento', 52);
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+    const baseUsdText = item.basePriceUsd !== null ? `$${formatPrice(item.basePriceUsd)}` : null;
+    const baseBsText = item.basePriceBs !== null ? `Bs ${formatPrice(item.basePriceBs)}` : null;
     const icon = getProductIcon(title);
 
     lines.push(`${icon} *${index + 1}. ${title}*`);
     lines.push(`   ${usdText}  |  ${bsText}`);
+    if (baseUsdText || baseBsText) {
+      lines.push(`   Fee incluido sobre base: ${baseUsdText || 'No disponible'} | ${baseBsText || 'No disponible'}`);
+    }
     lines.push('');
   });
 
@@ -801,6 +828,29 @@ async function getBcvRate() {
     console.error('❌ Error leyendo tasa BCV:', error.message);
     return null;
   }
+}
+
+// Estrategia comercial fácil de ajustar en el futuro.
+const SALES_FEE_RULES = {
+  thresholdUsd: 20,
+  feeUnderThreshold: 0.03,
+  feeAtOrAboveThreshold: 0.05
+};
+
+function applySalesPricing(baseUsd, exchangeRate) {
+  if (baseUsd === null || baseUsd === undefined || Number.isNaN(Number(baseUsd))) {
+    return { baseUsd: null, feeRate: null, feeAmountUsd: null, displayUsd: null, displayBs: null };
+  }
+
+  const amount = Number(baseUsd);
+  const feeRate = amount < SALES_FEE_RULES.thresholdUsd
+    ? SALES_FEE_RULES.feeUnderThreshold
+    : SALES_FEE_RULES.feeAtOrAboveThreshold;
+  const feeAmountUsd = amount * feeRate;
+  const displayUsd = amount + feeAmountUsd;
+  const displayBs = exchangeRate ? displayUsd * exchangeRate : null;
+
+  return { baseUsd: amount, feeRate, feeAmountUsd, displayUsd, displayBs };
 }
 
 function getPriceBs(doc, exchangeRate) {
