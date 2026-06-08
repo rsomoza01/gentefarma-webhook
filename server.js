@@ -1,4 +1,4 @@
-require('dotenv').config();
+equire('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -425,18 +425,7 @@ async function routeMessage(phone, text, session) {
     session.mode = 'awaiting_choice';
     touchSession(session);
 
-    const resultText = buildCatalogResponse(searchResult);
-    const choiceHint = [
-      '',
-      '➡️ Responde con la *opción y cantidad* que deseas agregar.',
-      'Ejemplos:',
-      '• *1 2*  = opción 1, cantidad 2',
-      '• *3 1*  = opción 3, cantidad 1',
-      '',
-      'Cuando termines, escribe *RESUMEN* para ver tu pedido total.'
-    ].join('\n');
-
-    return `${resultText}\n\n${choiceHint}`;
+    return buildCatalogResponse(searchResult);
   }
 
   return buildMenuMessage();
@@ -609,11 +598,10 @@ function buildCatalogResponse(result) {
   });
 
   lines.push('');
-  lines.push('➡️ Responde con la *opción y cantidad* que deseas agregar.');
-  lines.push('• `1 2` = opción 1, cantidad 2');
-  lines.push('• `3 1` = opción 3, cantidad 1');
+  lines.push('➡️ Responde con opción y cantidad.');
+  lines.push('Ejemplos: `1 2` / `3 1`');
   lines.push('');
-  lines.push('Cuando termines de buscar, escribe *RESUMEN* para ver tu pedido total.');
+  lines.push('Cuando termines, escribe *RESUMEN*.');
 
   return lines.join('\n').trim();
 }
