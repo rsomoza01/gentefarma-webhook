@@ -7,11 +7,32 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Configuración de Evolution API
+// Configuración de Firebase y Evolution API
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go-dd3c.onrender.com';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
 
-// Endpoint principal del webhook
+let db = null;
+try {
+  const admin = require('firebase-admin');
+  if (!admin.apps.length) {
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    } else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: String(process.env.FIREBASE_PRIVATE_KEY).replace(/\\n/g, '\n')
+        })
+      });
+    }
+  }
+  db = admin.firestore();
+} catch (error) {
+  console.error('❌ Firebase no inicializado:', error.message);
+}
+
 // Endpoint principal del webhook
 app.post('/webhook', async (req, res) => {
   try {
@@ -173,6 +194,7 @@ function getPriceUsd(item) {
 }
 
 async function getBcvRate() {
+  if (!db) throw new Error('Firestore no está inicializado');
   try {
     const snap = await db.collection('divisabcv').limit(1).get();
     if (snap.empty) return null;
@@ -186,6 +208,7 @@ async function getBcvRate() {
 }
 
 async function searchProducts(query) {
+  if (!db) throw new Error('Firestore no está inicializado');
   const rate = await getBcvRate();
   const snap = await db.collection('products-market').limit(2000).get();
   const items = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
