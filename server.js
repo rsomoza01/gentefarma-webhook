@@ -411,11 +411,11 @@ async function routeMessage(phone, text, session) {
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\nGracias por comunicarte con el Agente IA de Gentefarma.\n\nEscribe el nombre de un medicamento o *auxiliar*.\n\nEjemplos:\n• *atamel*\n• *amoxicilina*\n• *histaler ped*`;
+  return `🏥 *GENTEFARMA*\n\nHola, soy el asistente virtual de Gentefarma.\n\nPuedo ayudarte a buscar medicamentos o conectarte con un *auxiliar* para atención humana.\n\nEscribe el nombre del medicamento que necesitas.\nSi prefieres hablar con un humano, escribe *auxiliar*.\n\nEjemplos:\n• *atamel*\n• *amoxicilina*\n• *histaler ped*`;
 }
 
 function buildHumanAgentMessage() {
-  return `👤 *Te voy a pasar con un auxiliar*\n\nUn auxiliar de Gentefarma te atenderá en breve.`;
+  return `👤 *Atención de un auxiliar*\n\nUn auxiliar de Gentefarma te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.`;
 }
 
 // ----------------------------------------------------
@@ -532,9 +532,16 @@ function buildCatalogResponse(result) {
     const icon = getProductIcon(title);
 
     lines.push(`${icon} *${index + 1}. ${title}*`);
-    lines.push(`💵 ${usdText}  |  💠 ${bsText}`);
+    lines.push(`   ${usdText}  |  ${bsText}`);
     lines.push('');
   });
+
+  lines.push('');
+  lines.push('➡️ Responde con la *opción y cantidad* que deseas agregar.');
+  lines.push('• `1 2` = opción 1, cantidad 2');
+  lines.push('• `3 1` = opción 3, cantidad 1');
+  lines.push('');
+  lines.push('Cuando termines de buscar, escribe *RESUMEN* para ver tu pedido total.');
 
   return lines.join('\n').trim();
 }
