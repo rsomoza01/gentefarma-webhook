@@ -26,7 +26,7 @@ function initFirebase() {
       const serviceAccount = JSON.parse(serviceAccountJson);
       if (!admin.apps.length) {
         admin.initializeApp({
-...back 1 page
+
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -55,7 +55,7 @@ function initFirebase() {
       const serviceAccount = JSON.parse(serviceAccountJson);
       if (!admin.apps.length) {
         admin.initializeApp({
-...back 1 page
+
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
@@ -84,7 +84,7 @@ function initFirebase() {
       const serviceAccount = JSON.parse(serviceAccountJson);
       if (!admin.apps.length) {
         admin.initializeApp({
-...back 1 page
+
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
