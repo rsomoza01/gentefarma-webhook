@@ -115,7 +115,14 @@ function ensureSelectedProducts(session) {
 
 function clearPendingSearch(session) {
   session.pendingSelectionResults = null;
-  if (session.mode === 'awaiting_choice') session.mode = 'idle';
+  if (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global') session.mode = 'idle';
+}
+
+function clearSelectionState(session) {
+  session.pendingSelectionResults = null;
+  if (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global') {
+    session.mode = 'idle';
+  }
 }
 
 function getCartTotals(session) {
@@ -412,6 +419,11 @@ async function routeMessage(phone, text, session) {
     return 'Con gusto. Estoy aquí para ayudarte cuando necesites buscar otro medicamento.';
   }
 
+  if (isGreetingOrMenu(normalized)) {
+    clearSelectionState(session);
+    return buildMenuMessage();
+  }
+
   if (shouldSendInstagramReel(normalized, session)) {
     return buildInstagramReelMessage();
   }
@@ -425,50 +437,65 @@ async function routeMessage(phone, text, session) {
   }
 
   if (session.mode === 'awaiting_choice') {
+    const medicineRequests = extractMedicineRequests(text);
+    if (medicineRequests.length > 0 || isProductSearchRequest(normalized)) {
+      clearSelectionState(session);
+      return await searchAndBuildCatalogResponse(text, session);
+    }
+
     const parsed = parseSelectionAndQuantity(normalized);
-    if (!parsed) {
+    if (parsed) {
+      const results = session.pendingSelectionResults || [];
+      const selected = results[parsed.option - 1];
+      if (!selected) {
+        return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+      }
+
+      addItemToCart(session, selected, parsed.quantity);
+      touchSession(session);
+      clearSelectionState(session);
+
+      return formatSelectionSavedMessage(selected, parsed.quantity, session);
+    }
+
+    if (!isSelectionIntent(normalized)) {
+      clearSelectionState(session);
+    } else {
       return '⚠️ Escribe el número de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
-
-    const results = session.pendingSelectionResults || [];
-    const selected = results[parsed.option - 1];
-    if (!selected) {
-      return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
-    }
-
-    addItemToCart(session, selected, parsed.quantity);
-    touchSession(session);
-    clearPendingSearch(session);
-
-    return formatSelectionSavedMessage(selected, parsed.quantity, session);
   }
 
   if (session.mode === 'awaiting_choice_global') {
+    const medicineRequests = extractMedicineRequests(text);
+    if (medicineRequests.length > 0 || isProductSearchRequest(normalized)) {
+      clearSelectionState(session);
+      return await searchAndBuildCatalogResponse(text, session);
+    }
+
     const parsed = parseSelectionAndQuantity(normalized);
-    if (!parsed) {
+    if (parsed) {
+      const results = session.pendingSelectionResults || [];
+      const selected = results[parsed.option - 1];
+      if (!selected) {
+        return `⚠️ La opción global *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+      }
+
+      addItemToCart(session, selected, parsed.quantity);
+      touchSession(session);
+      clearSelectionState(session);
+
+      return formatSelectionSavedMessage(selected, parsed.quantity, session);
+    }
+
+    if (!isSelectionIntent(normalized)) {
+      clearSelectionState(session);
+    } else {
       return '⚠️ Escribe el número global de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
-
-    const results = session.pendingSelectionResults || [];
-    const selected = results[parsed.option - 1];
-    if (!selected) {
-      return `⚠️ La opción global *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
-    }
-
-    addItemToCart(session, selected, parsed.quantity);
-    touchSession(session);
-    clearPendingSearch(session);
-
-    return formatSelectionSavedMessage(selected, parsed.quantity, session);
   }
 
   if (session.mode === 'awaiting_product_name') {
     return await searchAndBuildCatalogResponse(text, session);
-  }
-
-  if (isGreetingOrMenu(normalized)) {
-    session.mode = 'idle';
-    return buildMenuMessage();
   }
 
   const multiMedicineRequests = extractMedicineRequests(text);
@@ -483,7 +510,8 @@ async function routeMessage(phone, text, session) {
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
+      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del me
+dicamento*`;
     }
 
     session.pendingSelectionResults = searchResult.matches;
@@ -497,7 +525,8 @@ async function routeMessage(phone, text, session) {
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
+  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el n
+ombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
 }
 
 function buildHumanAgentMessage() {
@@ -522,6 +551,7 @@ function isInstagramInfoRequest(value) {
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
 
+
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
@@ -531,13 +561,18 @@ async function searchAndBuildCatalogResponse(text, session) {
   }
 
   const requestedMedicines = extractMedicineRequests(text);
+  const fallbackMedicines = extractMedicineRequestsFromSegments(text);
+  const candidateMedicines = dedupeStrings([
+    ...requestedMedicines,
+    ...fallbackMedicines
+  ]);
 
-  if (requestedMedicines.length > 1) {
+  if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCollectionDocuments('products-market', 2000);
     const groups = [];
 
-    for (const medicineQuery of requestedMedicines) {
+    for (const medicineQuery of candidateMedicines) {
       const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate });
       if (result && result.matches && result.matches.length) groups.push(result);
     }
@@ -560,11 +595,12 @@ Prueba enviándolos de nuevo, uno por línea, por ejemplo:
 • Omeprazol 20mg`;
   }
 
-  const result = await searchMedicinesByName(text);
+  const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text;
+  const result = await searchMedicinesByName(singleQuery);
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para *${text.trim()}*.
+    return `⚠️ No encontré coincidencias para *${singleQuery.trim()}*.
 
 Intenta con el nombre del medicamento.
 Ejemplos:
@@ -757,13 +793,8 @@ function buildCatalogResponse(result) {
   });
 
   lines.push('');
-  lines.push('👉 Para agregar al pedido, escríbeme así:');
-  lines.push('“quiero X cajas de la opción Z”');
-  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
-  lines.push('');
-  lines.push('¿Luego necesitas buscar otro medicamento? Escríbeme el nombre y lo agrego a tu lista. 🛒');
-  lines.push('');
-  lines.push('Cuando termines con todo, escribe *LISTO* y te muestro el resumen de tu pedido.');
+  lines.push('Para agregar al pedido: *1 2*');
+  lines.push('Luego escribe otro medicamento o *LISTO* para el resumen.');
 
   return lines.join('\n').trim();
 }
@@ -794,13 +825,8 @@ function buildMultiCatalogResponse(results, flatOptions = []) {
   });
 
   lines.push('');
-  lines.push('👉 Para agregar al pedido, escríbeme así:');
-  lines.push('“quiero X cajas de la opción Z”');
-  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
-  lines.push('');
-  lines.push('¿Luego necesitas buscar otro medicamento? Escríbeme el nombre y lo agrego a tu lista. 🛒');
-  lines.push('');
-  lines.push('Cuando termines con todo, escribe *LISTO* y te muestro el resumen de tu pedido.');
+  lines.push('Para agregar al pedido: *1 2*');
+  lines.push('Luego escribe otro medicamento o *LISTO* para el resumen.');
 
   return lines.join('\n').trim();
 }
@@ -907,6 +933,32 @@ function splitSingleLineMedicineList(text) {
 
   if (!chunks.length) return [raw];
   return chunks;
+}
+
+function extractMedicineRequestsFromSegments(text) {
+  const rawText = String(text || '').trim();
+  if (!rawText) return [];
+
+  const segments = splitMedicineSegments(rawText);
+  const pieces = segments.length > 1 ? segments : splitSingleLineMedicineList(rawText);
+  const results = [];
+
+  for (const piece of pieces) {
+    const cleaned = normalizeText(piece);
+    if (!cleaned) continue;
+    if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina)/.test(cleaned)) continue;
+
+    const query = extractMedicineQuery(piece) || cleaned;
+    if (!query) continue;
+    if (!results.includes(query)) results.push(query);
+  }
+
+  return results;
+}
+
+function dedupeStrings(values) {
+  return [...new Set((values || []).map((value) => normalizeText(value)).filter(Boolean))];
 }
 
 function looksLikeListToken(token) {
@@ -1452,7 +1504,9 @@ function extractMedicineQuery(text) {
   if (!cleaned) return '';
 
   const patterns = [
-    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
+    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|dispon
+ibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoce
+s|vendes|venden)\s+(.+)$/i,
     /(?:^|\s)(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
   ];
 
@@ -1466,7 +1520,9 @@ function extractMedicineQuery(text) {
   }
 
   candidate = candidate
-    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
+    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disp
+onibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|cono
+ces|vendes|venden)\s+/i, '')
     .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
     .trim();
 
