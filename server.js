@@ -26,6 +26,93 @@ function initFirebase() {
       const serviceAccount = JSON.parse(serviceAccountJson);
       if (!admin.apps.length) {
         admin.initializeApp({
+...back 1 page
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+const admin = require('firebase-admin');
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go-dd3c.onrender.com';
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
+const PORT = process.env.PORT || 3000;
+
+// ----------------------------------------------------
+// Firebase init
+// ----------------------------------------------------
+let db = null;
+
+function initFirebase() {
+  try {
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+
+    if (serviceAccountJson) {
+      const serviceAccount = JSON.parse(serviceAccountJson);
+      if (!admin.apps.length) {
+        admin.initializeApp({
+...back 1 page
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+const admin = require('firebase-admin');
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go-dd3c.onrender.com';
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
+const PORT = process.env.PORT || 3000;
+
+// ----------------------------------------------------
+// Firebase init
+// ----------------------------------------------------
+let db = null;
+
+function initFirebase() {
+  try {
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+
+    if (serviceAccountJson) {
+      const serviceAccount = JSON.parse(serviceAccountJson);
+      if (!admin.apps.length) {
+        admin.initializeApp({
+...back 1 page
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+const admin = require('firebase-admin');
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go-dd3c.onrender.com';
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
+const PORT = process.env.PORT || 3000;
+
+// ----------------------------------------------------
+// Firebase init
+// ----------------------------------------------------
+let db = null;
+
+function initFirebase() {
+  try {
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+
+    if (serviceAccountJson) {
+      const serviceAccount = JSON.parse(serviceAccountJson);
+      if (!admin.apps.length) {
+        admin.initializeApp({
           credential: admin.credential.cert(serviceAccount)
         });
       }
@@ -120,19 +207,29 @@ function clearPendingSearch(session) {
 
 function getCartTotals(session) {
   const items = ensureSelectedProducts(session);
-  const totalUsd = items.reduce((sum, item) => sum + (Number(item.priceUsd) || 0
-) * (Number(item.quantity) || 0), 0);
-  const totalBs = items.reduce((sum, item) => sum + (Number(item.priceBs) || 0) 
-* (Number(item.quantity) || 0), 0);
+  const totalUsd = items.reduce((sum, item) => sum + (Number(item.priceUsd) || 0) * (Number(item.quantity) || 0), 0);
+  const totalBs = items.reduce((sum, item) => sum + (Number(item.priceBs) || 0) * (Number(item.quantity) || 0), 0);
   return { totalUsd, totalBs };
 }
 
 function parseSelectionAndQuantity(text) {
   const normalized = normalizeText(text)
-    .replace(/\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|elegir|elige|escoger|escoje|de)\b/g, ' ')
-    .replace(/\b(x|por|cantidad)\b/g, ' ')
+    .replace(/\b(quiero|quisiera|dame|agregar|agrega|sumar|sumame|añadir|anadir|seleccionar|selecciona|elegir|elige|escoger|escoje|de|la|el|las|los)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+  if (!normalized) return null;
+
+  const optionMatch = normalized.match(/\b(?:opcion|opci[oó]n)\s*(\d+)\b/i);
+  const quantityMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
+
+  if (optionMatch) {
+    const option = Number(optionMatch[1]);
+    const quantity = quantityMatch ? Number(quantityMatch[1]) : 1;
+    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
+      return { option, quantity };
+    }
+  }
 
   const numbers = normalized.match(/\d+/g) || [];
   if (!numbers.length) return null;
@@ -145,6 +242,7 @@ function parseSelectionAndQuantity(text) {
 
   return { option, quantity };
 }
+
 
 function formatSelectionSavedMessage(item, quantity, session) {
   const title = item.title || 'Medicamento';
@@ -357,8 +455,7 @@ async function processIncomingMessage(payload) {
 
 async function processMessageUpdate(messageUpdate) {
   try {
-    console.log('📊 Actualización de mensaje:', JSON.stringify(messageUpdate, null,
- 2));
+    console.log('📊 Actualización de mensaje:', JSON.stringify(messageUpdate, null, 2));
   } catch (error) {
     console.error('❌ Error en processMessageUpdate:', error);
   }
@@ -419,6 +516,11 @@ async function routeMessage(phone, text, session) {
     return await searchAndBuildCatalogResponse(text, session);
   }
 
+  if (isGreetingOrMenu(normalized)) {
+    session.mode = 'idle';
+    return buildMenuMessage();
+  }
+
   const medicineQuery = extractMedicineQuery(text);
   if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized) || medicineQuery) {
     const productQuery = medicineQuery || text;
@@ -434,11 +536,6 @@ async function routeMessage(phone, text, session) {
     touchSession(session);
 
     return buildCatalogResponse(searchResult);
-  }
-
-  if (isGreetingOrMenu(normalized)) {
-    session.mode = 'idle';
-    return buildMenuMessage();
   }
 
   return buildMenuMessage();
@@ -1152,17 +1249,29 @@ function parsePositiveInteger(value) {
   return match ? Number(match[1]) : null;
 }
 
+const GREETING_PHRASES = new Set([
+  'hola',
+  'hola bot',
+  'buen dia',
+  'buenos dias',
+  'buenas',
+  'buenas tardes',
+  'buenas noches',
+  'ey',
+  'alo',
+  'aló',
+  'menu',
+  'menú',
+  'ayuda',
+]);
+
 function isGreetingOrMenu(value) {
   const text = normalizeText(value);
-  return (
-    text === 'hola' ||
-    text === 'buenos dias' ||
-    text === 'buenas tardes' ||
-    text === 'buenas noches' ||
-    text === 'menu' ||
-    text === 'ayuda' ||
-    /^(hola|menu|menú|ayuda)\b/.test(text)
-  );
+  if (!text) return false;
+
+  if (GREETING_PHRASES.has(text)) return true;
+
+  return /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/.test(text);
 }
 
 function extractVitaminFocusTokens(query) {
