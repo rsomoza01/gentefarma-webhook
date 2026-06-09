@@ -1,4 +1,4 @@
-require('dotenv').config();
+equire('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
@@ -421,7 +421,12 @@ async function routeMessage(phone, text, session) {
 
   if (isGreetingOrMenu(normalized)) {
     clearSelectionState(session);
-    return buildMenuMessage();
+    if (session.mode === 'awaiting_product_name') {
+      return buildMenuMessage();
+    }
+    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized)) {
+      return buildMenuMessage();
+    }
   }
 
   if (shouldSendInstagramReel(normalized, session)) {
@@ -539,7 +544,8 @@ function buildInstagramReelMessage() {
 
 function shouldSendInstagramReel(value) {
   const text = normalizeText(value);
-  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas informacion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas infor
+macion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
   const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
   const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
 
@@ -550,6 +556,7 @@ function isInstagramInfoRequest(value) {
   const text = normalizeText(value);
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
+
 
 
 // ----------------------------------------------------
@@ -730,8 +737,21 @@ async function searchMedicinesByName(userQuery, options = {}) {
     });
 
   const exactMatches = scoredProducts.filter((item) => item.exactHit || item.focusTitleHit);
-  let candidateMatches = exactMatches.length ? exactMatches : scoredProducts.filter((item) => (item.score ?? 0) >= 60);
-  if (!candidateMatches.length) return null;
+  let candidateMatches = exactMatches.length
+    ? exactMatches
+    : scoredProducts.filter((item) => (item.score ?? 0) >= 25 || item.phraseHit || item.focusTitleHit || (item.tokenCoverage ?? 0) > 0);
+
+  if (!candidateMatches.length) {
+    candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) >= 15);
+  }
+
+  if (!candidateMatches.length) {
+    candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) > 0);
+  }
+
+  if (!candidateMatches.length) {
+    candidateMatches = scoredProducts.slice(0, 5);
+  }
 
   const focusCandidates = vitaminFocusWord
     ? candidateMatches.filter((item) => {
