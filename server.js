@@ -129,8 +129,7 @@ function getCartTotals(session) {
 
 function parseSelectionAndQuantity(text) {
   const normalized = normalizeText(text)
-    .replace(/\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|elegir|el
-ige|escoger|escoje|de)\b/g, ' ')
+    .replace(/\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|elegir|elige|escoger|escoje|de)\b/g, ' ')
     .replace(/\b(x|por|cantidad)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
