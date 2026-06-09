@@ -562,8 +562,7 @@ function buildInstagramReelMessage() {
 
 function shouldSendInstagramReel(value) {
   const text = normalizeText(value);
-  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas infor
-macion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas informacion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
   const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
   const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
 
