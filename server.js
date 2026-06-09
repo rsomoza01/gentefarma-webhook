@@ -146,7 +146,6 @@ function parseSelectionAndQuantity(text) {
   return { option, quantity };
 }
 
-
 function formatSelectionSavedMessage(item, quantity, session) {
   const title = item.title || 'Medicamento';
   const usdUnit = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
