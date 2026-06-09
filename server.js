@@ -149,8 +149,7 @@ function parseSelectionAndQuantity(text) {
 
 function formatSelectionSavedMessage(item, quantity, session) {
   const title = item.title || 'Medicamento';
-  const usdUnit = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'N
-o disponible';
+  const usdUnit = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
   const bsUnit = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No
  disponible';
   const totalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUs
@@ -200,8 +199,7 @@ iceBs) || 0) * qty)}` : 'No disponible';
     lines.push('');
   });
 
-  lines.push(`💰 *Total pedido:* $${formatPrice(totalUsd)}  |  Bs ${formatPrice(to
-talBs)}`);
+  lines.push(`💰 *Total pedido:* $${formatPrice(totalUsd)}  |  Bs ${formatPrice(totalBs)}`);
   lines.push('');
   lines.push('Perfecto! 🎉 Hemos recibido tu pedido.');
   lines.push('');
@@ -213,8 +211,7 @@ contacto contigo para tramitarlo. 😊');
 
 function addItemToCart(session, item, quantity) {
   const cart = ensureSelectedProducts(session);
-  const existingIndex = cart.findIndex((x) => normalizeText(x.title) === normali
-zeText(item.title));
+  const existingIndex = cart.findIndex((x) => normalizeText(x.title) === normalizeText(item.title));
   const cartItem = {
     title: item.title,
     quantity,
@@ -273,8 +270,7 @@ app.post('/webhook', async (req, res) => {
   try {
     console.log('📦 Body recibido:', JSON.stringify(req.body, null, 2));
 
-    const event = req.body?.event || req.body?.type || req.body?.data?.event || 
-'Message';
+    const event = req.body?.event || req.body?.type || req.body?.data?.event || 'Message';
     const data = req.body?.data || req.body;
 
     console.log('📩 Evento recibido:', event);
