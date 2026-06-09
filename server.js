@@ -61,8 +61,6 @@ function initFirebase() {
 
 initFirebase();
 
-initFirebase();
-
 // ----------------------------------------------------
 // Session memory
 // ----------------------------------------------------
@@ -129,20 +127,29 @@ function getCartTotals(session) {
 
 function parseSelectionAndQuantity(text) {
   const normalized = normalizeText(text)
-    .replace(/\b(quiero|quisiera|dame|agregar|agrega|sumar|sumame|añadir|anadir|seleccionar|selecciona|elegir|elige|escoger|escoje|de|la|el|las|los)\b/g, ' ')
+    .replace(/\b(quiero|quisiera|dame|agregar|agrega|sumar|sumame|añadir|anadir|seleccionar|selecciona|elegir|elige|escoger|escoje|de|la|el|las|los|porfavor|por favor)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
   if (!normalized) return null;
 
-  const optionMatch = normalized.match(/\b(?:opcion|opci[oó]n)\s*(\d+)\b/i);
+  const optionMatch = normalized.match(/\b(?:opcion|opci[oó]n)\s*(?:nro\.?|numero|número)?\s*(\d+)\b/i);
   const quantityMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
+  const optionAfter = normalized.match(/\b(\d+)\s*(?:de\s+la\s+)?(?:opcion|opci[oó]n)\b/i);
 
-  if (optionMatch) {
-    const option = Number(optionMatch[1]);
+  if (optionMatch || optionAfter) {
+    const option = Number((optionMatch || optionAfter)[1]);
     const quantity = quantityMatch ? Number(quantityMatch[1]) : 1;
     if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
       return { option, quantity };
+    }
+  }
+
+  const quantityOnlyMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
+  if (quantityOnlyMatch) {
+    const quantity = Number(quantityOnlyMatch[1]);
+    if (Number.isInteger(quantity) && quantity > 0) {
+      return { option: 1, quantity };
     }
   }
 
@@ -156,6 +163,11 @@ function parseSelectionAndQuantity(text) {
   if (!Number.isInteger(quantity) || quantity <= 0) return null;
 
   return { option, quantity };
+}
+
+function isSelectionIntent(value) {
+  const text = normalizeText(value);
+  return /\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|quiero|quisiera|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/.test(text) && /\d+/.test(text);
 }
 
 
