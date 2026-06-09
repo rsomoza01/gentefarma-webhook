@@ -1510,5 +1510,3 @@ process.on('uncaughtException', (error) => {
 app.listen(PORT, () => {
   console.log(`🚀 Gentefarma Webhook Service running on port ${PORT}`);
 });
-root@srv-d8hdi028pkls73cb02sg-77677bdb5d-g6m5f:/tmp# cat server.js | more
-});
