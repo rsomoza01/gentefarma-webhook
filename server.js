@@ -408,6 +408,10 @@ async function routeMessage(phone, text, session) {
     return null;
   }
 
+  if (isThanksMessage(normalized)) {
+    return 'Con gusto. Estoy aquí para ayudarte cuando necesites buscar otro medicamento.';
+  }
+
   if (shouldSendInstagramReel(normalized, session)) {
     return buildInstagramReelMessage();
   }
@@ -455,7 +459,8 @@ async function routeMessage(phone, text, session) {
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
+      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del me
+dicamento*`;
     }
 
     session.pendingSelectionResults = searchResult.matches;
@@ -469,7 +474,8 @@ async function routeMessage(phone, text, session) {
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
+  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el n
+ombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
 }
 
 function buildHumanAgentMessage() {
@@ -482,7 +488,8 @@ function buildInstagramReelMessage() {
 
 function shouldSendInstagramReel(value) {
   const text = normalizeText(value);
-  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas informacion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas infor
+macion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
   const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
   const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
 
@@ -494,6 +501,7 @@ function isInstagramInfoRequest(value) {
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
 
+
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
@@ -502,11 +510,39 @@ async function searchAndBuildCatalogResponse(text, session) {
     return '⚠️ No tengo conexión al catálogo en este momento. Intenta de nuevo más tarde.';
   }
 
+  const requestedMedicines = extractMedicineRequests(text);
+
+  if (requestedMedicines.length > 1) {
+    const exchangeRate = await getBcvRate();
+    const products = await fetchCollectionDocuments('products-market', 2000);
+    const groups = [];
+
+    for (const medicineQuery of requestedMedicines) {
+      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate });
+      if (result && result.matches && result.matches.length) groups.push(result);
+    }
+
+    if (groups.length > 1) {
+      session.lastSearch = groups[0];
+      session.mode = 'idle';
+      clearPendingSearch(session);
+      touchSession(session);
+      return buildMultiCatalogResponse(groups);
+    }
+  }
+
   const result = await searchMedicinesByName(text);
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para *${text.trim()}*.\n\nIntenta con el nombre del medicamento.\nEjemplos:\n• *atamel*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno*`;
+    return `⚠️ No encontré coincidencias para *${text.trim()}*.
+
+Intenta con el nombre del medicamento.
+Ejemplos:
+• *atamel*
+• *histaler ped*
+• *desloratadina*
+• *ibuprofeno*`;
   }
 
   session.lastSearch = result;
@@ -516,15 +552,15 @@ async function searchAndBuildCatalogResponse(text, session) {
   return buildCatalogResponse(result);
 }
 
-async function searchMedicinesByName(userQuery) {
+async function searchMedicinesByName(userQuery, options = {}) {
   if (!db) return null;
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
   if (!queryTokens.length) return null;
 
-  const exchangeRate = await getBcvRate();
-  const products = await fetchCollectionDocuments('products-market', 2000);
+  const exchangeRate = options.exchangeRate ?? await getBcvRate();
+  const products = options.products ?? await fetchCollectionDocuments('products-market', 2000);
 
   const exactQuery = query;
   const exactRoot = queryTokens.join(' ');
@@ -629,10 +665,7 @@ async function searchMedicinesByName(userQuery) {
     });
 
   const exactMatches = scoredProducts.filter((item) => item.exactHit || item.focusTitleHit);
-  let candidateMatches = exactMatches.length
-    ? exactMatches
-    : scoredProducts.filter((item) => (item.score ?? 0) >= 60);
-
+  let candidateMatches = exactMatches.length ? exactMatches : scoredProducts.filter((item) => (item.score ?? 0) >= 60);
   if (!candidateMatches.length) return null;
 
   const focusCandidates = vitaminFocusWord
@@ -642,40 +675,34 @@ async function searchMedicinesByName(userQuery) {
       })
     : [];
 
-  if (vitaminFocusWord && focusCandidates.length) {
-    candidateMatches = focusCandidates;
-  }
+  if (vitaminFocusWord && focusCandidates.length) candidateMatches = focusCandidates;
 
-  const topMatches = candidateMatches
-    .slice(0, 5)
-    .sort((a, b) => {
-      const focusA = a.focusTitleHit ? 1 : 0;
-      const focusB = b.focusTitleHit ? 1 : 0;
-      if (focusA !== focusB) return focusB - focusA;
-
-      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
-      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
-      if (priceA !== priceB) return priceA - priceB;
-      return (b.score ?? 0) - (a.score ?? 0);
-    });
+  const topMatches = candidateMatches.slice(0, 5).sort((a, b) => {
+    const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+    const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+    if (priceA !== priceB) return priceA - priceB;
+    return (b.score ?? 0) - (a.score ?? 0);
+  });
 
   return {
     query,
     queryTokens,
     exchangeRate,
-    matches: topMatches.map((item) => {
-      const pricing = applySalesPricing(item.priceUsd, exchangeRate);
-      return {
-        title: item.title,
-        basePriceUsd: item.priceUsd,
-        basePriceBs: item.priceBs,
-        priceUsd: pricing.displayUsd,
-        priceBs: pricing.displayBs,
-        feeRate: pricing.feeRate,
-        feeAmountUsd: pricing.feeAmountUsd,
-        raw: item.doc
-      };
-    })
+    matches: topMatches.map((item) => ({
+      title: item.title,
+      basePriceUsd: item.priceUsd,
+      basePriceBs: item.priceBs,
+      priceUsd: item.priceUsd,
+      priceBs: item.priceBs,
+      feeRate: item.feeRate,
+      feeAmountUsd: item.feeAmountUsd,
+      raw: item.doc,
+      score: item.score,
+      phraseHit: item.phraseHit,
+      tokenCoverage: item.tokenCoverage,
+      exactHit: item.exactHit,
+      focusTitleHit: item.focusTitleHit
+    }))
   };
 }
 
@@ -684,46 +711,18 @@ function buildCatalogResponse(result) {
     return '⚠️ Necesito un poco más de detalle para ayudarte.';
   }
 
-  const multipleWordQuery = queryHasMultipleWords(result.query);
-  const prioritizedMatches = multipleWordQuery
-    ? [...result.matches].sort((a, b) => {
-        const aPhrase = a.phraseHit ? 1 : 0;
-        const bPhrase = b.phraseHit ? 1 : 0;
-        if (aPhrase !== bPhrase) return bPhrase - aPhrase;
-
-        const aTokenCoverage = a.tokenCoverage ?? 0;
-        const bTokenCoverage = b.tokenCoverage ?? 0;
-        if (aTokenCoverage !== bTokenCoverage) return bTokenCoverage - aTokenCoverage;
-
-        const aScore = a.score ?? 0;
-        const bScore = b.score ?? 0;
-        if (aScore !== bScore) return bScore - aScore;
-
-        const aPrice = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
-        const bPrice = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
-        return aPrice - bPrice;
-      })
-    : result.matches;
-
   const lines = [];
-  lines.push(`🔎 *Resultados para: ${result.query}*`);
+  lines.push(`🔎 *${result.query}*`);
   if (result.exchangeRate) {
     lines.push(`💱 Tasa BCV: *Bs ${formatPrice(result.exchangeRate)}* por *$1*`);
   }
   lines.push('');
 
-  prioritizedMatches.forEach((item, index) => {
+  result.matches.forEach((item, index) => {
     const title = shortenText(item.title || 'Medicamento', 52);
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-    const icon = getProductIcon(title);
-
-    lines.push(`${icon} *${index + 1}. ${title}*`);
-    lines.push(`   ${usdText}  |  ${bsText}`);
-    if (queryHasMultipleWords(result.query) && index === 0) {
-      lines.push('   *Mejor coincidencia para tu búsqueda*');
-    }
-    lines.push('');
+    lines.push(`${index + 1}. ${title} — ${bsText} — ${usdText}`);
   });
 
   lines.push('');
@@ -738,22 +737,67 @@ function buildCatalogResponse(result) {
   return lines.join('\n').trim();
 }
 
-function shortenText(value, maxLength = 52) {
-  const text = String(value || '').trim();
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+function buildMultiCatalogResponse(results) {
+  if (!Array.isArray(results) || !results.length) {
+    return '⚠️ Necesito un poco más de detalle para ayudarte.';
+  }
+
+  const lines = [];
+  lines.push('🔎 *Resultados encontrados*');
+  lines.push('');
+
+  results.forEach((result, idx) => {
+    const title = shortenText(result.query || `Medicamento ${idx + 1}`, 52);
+    lines.push(`*${title}*`);
+
+    (result.matches || []).forEach((item, optionIndex) => {
+      const name = shortenText(item.title || 'Medicamento', 52);
+      const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+      const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+      lines.push(`${optionIndex + 1}. ${name} — ${bsText} — ${usdText}`);
+    });
+
+    if (idx < results.length - 1) lines.push('');
+  });
+
+  lines.push('');
+  lines.push('👉 Para agregar al pedido, escríbeme así:');
+  lines.push('“quiero X cajas de la opción Z”');
+  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
+  lines.push('');
+  lines.push('¿Luego necesitas buscar otro medicamento? Escríbeme el nombre y lo agrego a tu lista. 🛒');
+  lines.push('');
+  lines.push('Cuando termines con todo, escribe *LISTO* y te muestro el resumen de tu pedido.');
+
+  return lines.join('\n').trim();
 }
 
-function getProductIcon(title) {
-  const text = normalizeText(title);
-  if (/ampolla|inyeccion|injectable/.test(text)) return '💉';
-  if (/suspension|jarabe|gotas|solucion/.test(text)) return '🧴';
-  if (/tableta|capsula|capsulas|comprimido|pastilla/.test(text)) return '💊';
-  if (/crema|unguento|gel|pomada/.test(text)) return '🧪';
-  if (/polvo|sobres/.test(text)) return '📦';
-  return '💊';
-}
+function extractMedicineRequests(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return [];
 
+  const rawParts = String(text)
+    .split(/\n+|[•·●\-|;]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const segments = rawParts.length > 1 ? rawParts : [text];
+  const results = [];
+
+  for (const segment of segments) {
+    const cleaned = normalizeText(segment);
+    if (!cleaned) continue;
+    if (isGreetingOrMenu(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina)/.test(cleaned)) continue;
+
+    const query = extractMedicineQuery(segment) || cleaned;
+    if (!query) continue;
+
+    if (!results.includes(query)) results.push(query);
+  }
+
+  return results;
+}
 function computeMatchScore(query, queryTokens, docText, doc) {
   let score = 0;
   if (!docText) return 0;
@@ -768,7 +812,6 @@ function computeMatchScore(query, queryTokens, docText, doc) {
   const phraseQuery = queryTokens.join(' ');
   const multiWord = queryTokens.length > 1;
 
-  // Prioridad alta: coincidencia exacta o casi exacta del nombre consultado.
   if (productTitle === query) score += 400;
   if (titleArrayText === query) score += 320;
   if (activeIngredient && activeIngredient === query) score += 300;
@@ -783,7 +826,6 @@ function computeMatchScore(query, queryTokens, docText, doc) {
     if (activeIngredient.includes(phraseQuery)) score += 200;
   }
 
-  // Si todos los tokens aparecen en el título o principio activo, subir prioridad fuerte.
   const tokenMatchCountTitle = queryTokens.filter((t) => productTitle.includes(t)).length;
   const tokenMatchCountArray = queryTokens.filter((t) => titleArrayText.includes(t)).length;
   const tokenMatchCountIngredient = queryTokens.filter((t) => activeIngredient.includes(t)).length;
@@ -798,7 +840,6 @@ function computeMatchScore(query, queryTokens, docText, doc) {
     if (titleArrayText.includes(token)) score += 14;
     if (activeIngredient.includes(token)) score += 16;
 
-    // Tolerancia a errores de escritura: diclofeanc -> diclofenac.
     if (!searchArea.includes(token)) {
       let bestDistance = Infinity;
       for (const candidate of searchTokens) {
@@ -1256,6 +1297,11 @@ function isHumanRequest(value) {
 function isProductSearchRequest(value) {
   const text = normalizeText(value);
   return /\b(precio|costo|cuanto cuesta|cuanto vale|catalogo|catalogo de productos|medicamento|producto|buscar)\b/.test(text);
+}
+
+function isThanksMessage(value) {
+  const text = normalizeText(value);
+  return /^(ok\s+)?gracias(\s+.*)?$/.test(text) || /\b(gracias|mil gracias|muchas gracias|thanks|thank you)\b/.test(text);
 }
 
 function looksLikeMedicineName(value) {
