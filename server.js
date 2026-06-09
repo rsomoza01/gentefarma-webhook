@@ -149,12 +149,9 @@ function parseSelectionAndQuantity(text) {
 function formatSelectionSavedMessage(item, quantity, session) {
   const title = item.title || 'Medicamento';
   const usdUnit = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
-  const bsUnit = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No
- disponible';
-  const totalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUs
-d) || 0) * quantity)}` : 'No disponible';
-  const totalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs
-) || 0) * quantity)}` : 'No disponible';
+  const bsUnit = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+  const totalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUsd) || 0) * quantity)}` : 'No disponible';
+  const totalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs) || 0) * quantity)}` : 'No disponible';
   const { totalUsd: cartUsd, totalBs: cartBs } = getCartTotals(session);
 
   return [
@@ -164,10 +161,8 @@ d) || 0) * quantity)}` : 'No disponible';
     `Unitario: ${usdUnit}  |  ${bsUnit}`,
     `Subtotal: ${totalUsd}  |  ${totalBs}`,
     '',
-    `🧾 Tu carrito actual: *$${formatPrice(cartUsd)}*  |  *Bs ${formatPrice(cartBs
-)}*`,
-    'Escribe *LISTO* para ver el pedido completo o continúa buscando otro medicam
-ento.'
+    `🧾 Tu carrito actual: *$${formatPrice(cartUsd)}*  |  *Bs ${formatPrice(cartBs)}*`,
+    'Escribe *LISTO* para ver el pedido completo o continúa buscando otro medicamento.'
   ].join('\n');
 }
 
@@ -182,14 +177,10 @@ function buildSelectedProductsSummary(session) {
 
   items.forEach((item, idx) => {
     const qty = Number(item.quantity) || 1;
-    const unitUsd = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 
-'No disponible';
-    const unitBs = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : '
-No disponible';
-    const subtotalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.pr
-iceUsd) || 0) * qty)}` : 'No disponible';
-    const subtotalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.pr
-iceBs) || 0) * qty)}` : 'No disponible';
+    const unitUsd = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+    const unitBs = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+    const subtotalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUsd) || 0) * qty)}` : 'No disponible';
+    const subtotalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs) || 0) * qty)}` : 'No disponible';
 
     lines.push(`${idx + 1}. ${item.title || 'Medicamento'}`);
     lines.push(`   Cantidad: ${qty}`);
@@ -202,8 +193,7 @@ iceBs) || 0) * qty)}` : 'No disponible';
   lines.push('');
   lines.push('Perfecto! 🎉 Hemos recibido tu pedido.');
   lines.push('');
-  lines.push('En breve, uno de nuestros colaboradores de Gentefarma se pondrá en 
-contacto contigo para tramitarlo. 😊');
+  lines.push('En breve, uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo para tramitarlo. 😊');
 
   return lines.join('\n').trim();
 }
