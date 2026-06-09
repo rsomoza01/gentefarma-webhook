@@ -1243,6 +1243,12 @@ function formatPrice(value) {
   }).format(num);
 }
 
+function shortenText(value, maxLength = 52) {
+  const text = String(value || '').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
 // ----------------------------------------------------
 // Firestore helpers
 // ----------------------------------------------------
