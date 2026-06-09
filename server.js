@@ -427,13 +427,32 @@ async function routeMessage(phone, text, session) {
   if (session.mode === 'awaiting_choice') {
     const parsed = parseSelectionAndQuantity(normalized);
     if (!parsed) {
-      return '⚠️ Escribe la opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+      return '⚠️ Escribe el número de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
 
     const results = session.pendingSelectionResults || [];
     const selected = results[parsed.option - 1];
     if (!selected) {
       return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+    }
+
+    addItemToCart(session, selected, parsed.quantity);
+    touchSession(session);
+    clearPendingSearch(session);
+
+    return formatSelectionSavedMessage(selected, parsed.quantity, session);
+  }
+
+  if (session.mode === 'awaiting_choice_global') {
+    const parsed = parseSelectionAndQuantity(normalized);
+    if (!parsed) {
+      return '⚠️ Escribe el número global de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+    }
+
+    const results = session.pendingSelectionResults || [];
+    const selected = results[parsed.option - 1];
+    if (!selected) {
+      return `⚠️ La opción global *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
     }
 
     addItemToCart(session, selected, parsed.quantity);
@@ -452,6 +471,11 @@ async function routeMessage(phone, text, session) {
     return buildMenuMessage();
   }
 
+  const multiMedicineRequests = extractMedicineRequests(text);
+  if (multiMedicineRequests.length > 1) {
+    return await searchAndBuildCatalogResponse(text, session);
+  }
+
   const medicineQuery = extractMedicineQuery(text);
   if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized) || medicineQuery) {
     const productQuery = medicineQuery || text;
@@ -459,23 +483,21 @@ async function routeMessage(phone, text, session) {
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del me
-dicamento*`;
+      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
     }
 
     session.pendingSelectionResults = searchResult.matches;
     session.mode = 'awaiting_choice';
     touchSession(session);
 
-    return buildCatalogResponse(searchResult);
+      return buildCatalogResponse(searchResult);
   }
 
   return buildMenuMessage();
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el n
-ombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
+  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
 }
 
 function buildHumanAgentMessage() {
@@ -488,7 +510,8 @@ function buildInstagramReelMessage() {
 
 function shouldSendInstagramReel(value) {
   const text = normalizeText(value);
-  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas informacion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas infor
+macion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
   const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
   const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
 
@@ -499,7 +522,6 @@ function isInstagramInfoRequest(value) {
   const text = normalizeText(value);
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
-
 
 // ----------------------------------------------------
 // Catalog search
@@ -521,13 +543,22 @@ async function searchAndBuildCatalogResponse(text, session) {
       if (result && result.matches && result.matches.length) groups.push(result);
     }
 
-    if (groups.length > 1) {
+    if (groups.length > 0) {
+      const flattenedOptions = flattenCatalogResults(groups);
       session.lastSearch = groups[0];
-      session.mode = 'idle';
-      clearPendingSearch(session);
+      session.pendingSelectionResults = flattenedOptions;
+      session.mode = 'awaiting_choice_global';
       touchSession(session);
-      return buildMultiCatalogResponse(groups);
+      return buildMultiCatalogResponse(groups, flattenedOptions);
     }
+
+    session.mode = 'awaiting_product_name';
+    return `⚠️ No encontré coincidencias para esa lista de medicamentos.
+
+Prueba enviándolos de nuevo, uno por línea, por ejemplo:
+• Candesartan 160mg
+• Clopidogrel 75mg
+• Omeprazol 20mg`;
   }
 
   const result = await searchMedicinesByName(text);
@@ -721,7 +752,9 @@ function buildCatalogResponse(result) {
     const title = shortenText(item.title || 'Medicamento', 52);
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-    lines.push(`${index + 1}. ${title} — ${bsText} — ${usdText}`);
+    lines.push(`*${title}*`);
+    lines.push(`Opción ${index + 1} — ${bsText} — ${usdText}`);
+    lines.push('');
   });
 
   lines.push('');
@@ -736,7 +769,7 @@ function buildCatalogResponse(result) {
   return lines.join('\n').trim();
 }
 
-function buildMultiCatalogResponse(results) {
+function buildMultiCatalogResponse(results, flatOptions = []) {
   if (!Array.isArray(results) || !results.length) {
     return '⚠️ Necesito un poco más de detalle para ayudarte.';
   }
@@ -745,18 +778,20 @@ function buildMultiCatalogResponse(results) {
   lines.push('🔎 *Resultados encontrados*');
   lines.push('');
 
-  results.forEach((result, idx) => {
-    const title = shortenText(result.query || `Medicamento ${idx + 1}`, 52);
+  let optionNumber = 1;
+  results.forEach((result) => {
+    const title = shortenText(result.query || 'Medicamento', 52);
     lines.push(`*${title}*`);
 
-    (result.matches || []).forEach((item, optionIndex) => {
+    (result.matches || []).forEach((item) => {
       const name = shortenText(item.title || 'Medicamento', 52);
       const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
       const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-      lines.push(`${optionIndex + 1}. ${name} — ${bsText} — ${usdText}`);
+      lines.push(`${optionNumber}. ${name} — ${bsText} — ${usdText}`);
+      optionNumber += 1;
     });
 
-    if (idx < results.length - 1) lines.push('');
+    lines.push('');
   });
 
   lines.push('');
@@ -775,18 +810,17 @@ function extractMedicineRequests(text) {
   const normalized = normalizeText(text);
   if (!normalized) return [];
 
-  const rawParts = String(text)
-    .split(/\n+|[•·●\-|;]+/g)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const rawText = String(text || '').trim();
+  if (!rawText) return [];
 
-  const segments = rawParts.length > 1 ? rawParts : [text];
+  const explicitSegments = splitMedicineSegments(rawText);
+  const segments = explicitSegments.length > 1 ? explicitSegments : splitSingleLineMedicineList(rawText);
   const results = [];
 
   for (const segment of segments) {
     const cleaned = normalizeText(segment);
     if (!cleaned) continue;
-    if (isGreetingOrMenu(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
     if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina)/.test(cleaned)) continue;
 
     const query = extractMedicineQuery(segment) || cleaned;
@@ -797,6 +831,107 @@ function extractMedicineRequests(text) {
 
   return results;
 }
+
+function splitMedicineSegments(text) {
+  return String(text)
+    .split(/\n+|[•·●\-|;]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function splitSingleLineMedicineList(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+
+  const tokens = [...raw.matchAll(/\S+/g)].map((match) => ({
+    token: match[0],
+    start: match.index,
+    end: match.index + match[0].length
+  }));
+
+  const anchors = [...raw.matchAll(/\b\d+(?:[.,]\d+)?(?:\s*(?:mg|mcg|g|gr|ml|mL|ui|iu))?\b/gi)]
+    .map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length
+    }));
+
+  if (anchors.length < 2 || tokens.length < 2) return [raw];
+
+  const starts = anchors.map((anchor) => {
+    let tokenIndex = -1;
+
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].start <= anchor.start && tokens[i].end >= anchor.start) {
+        tokenIndex = i;
+        break;
+      }
+      if (tokens[i].start > anchor.start) break;
+    }
+
+    if (tokenIndex < 0) {
+      for (let i = tokens.length - 1; i >= 0; i--) {
+        if (tokens[i].end <= anchor.start) {
+          tokenIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (tokenIndex < 1) return null;
+
+    let startIndex = tokenIndex - 1;
+    const prevToken = tokens[startIndex];
+    const prevPrevToken = tokens[startIndex - 1];
+
+    if (
+      startIndex > 0 &&
+      /^[A-ZÁÉÍÓÚÑ]$/.test(prevToken.token) &&
+      prevPrevToken &&
+      /^[A-ZÁÉÍÓÚÑ]/.test(prevPrevToken.token)
+    ) {
+      startIndex -= 1;
+    }
+
+    return tokens[startIndex].start;
+  }).filter((value) => Number.isInteger(value) && value >= 0);
+
+  const uniqueStarts = [...new Set(starts)].sort((a, b) => a - b);
+  if (uniqueStarts.length < 2) return [raw];
+
+  const chunks = [];
+  for (let i = 0; i < uniqueStarts.length; i++) {
+    const start = uniqueStarts[i];
+    const end = i + 1 < uniqueStarts.length ? uniqueStarts[i + 1] : raw.length;
+    const chunk = raw.slice(start, end).trim().replace(/^[,;\-–—]+\s*/, '').trim();
+    if (chunk) chunks.push(chunk);
+  }
+
+  if (!chunks.length) return [raw];
+  return chunks;
+}
+
+function looksLikeListToken(token) {
+  const value = String(token || '').trim();
+  if (!value) return false;
+  if (/^[A-ZÁÉÍÓÚÑ]/.test(value)) return true;
+  if (/^\d/.test(value)) return true;
+  return /^(mg|mcg|g|gr|ml|mL|ui|iu)$/i.test(value);
+}
+
+function flattenCatalogResults(results) {
+  const flattened = [];
+  for (const group of Array.isArray(results) ? results : []) {
+    for (const item of group?.matches || []) {
+      flattened.push({
+        groupQuery: group?.query || '',
+        groupTitle: group?.query || 'Medicamento',
+        ...item
+      });
+    }
+  }
+  return flattened;
+}
+
 function computeMatchScore(query, queryTokens, docText, doc) {
   let score = 0;
   if (!docText) return 0;
@@ -1318,7 +1453,8 @@ function extractMedicineQuery(text) {
   if (!cleaned) return '';
 
   const patterns = [
-    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
+    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+
+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
     /(?:^|\s)(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
   ];
 
@@ -1332,7 +1468,8 @@ function extractMedicineQuery(text) {
   }
 
   candidate = candidate
-    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
+    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\
+s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
     .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
     .trim();
 
@@ -1375,4 +1512,6 @@ process.on('uncaughtException', (error) => {
 // ----------------------------------------------------
 app.listen(PORT, () => {
   console.log(`🚀 Gentefarma Webhook Service running on port ${PORT}`);
+});
+root@srv-d8hdi028pkls73cb02sg-77677bdb5d-g6m5f:/tmp# cat server.js | more
 });
