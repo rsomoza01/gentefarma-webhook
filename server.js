@@ -82,12 +82,12 @@ function setBotEnabled(enabled) {
 
 function isBotDeactivateRequest(value) {
   const text = normalizeText(value);
-  return /\b(bot\s*off|desactivar\s+bot|apagar\s+bot|pausar\s+bot|stop\s+bot|bot\s+pause|pausar\s+asistente)\b/.test(text);
+  return text === 'bot off';
 }
 
 function isBotReactivateRequest(value) {
   const text = normalizeText(value);
-  return /\b(volver al bot|retomar bot|activar bot|activar asistente|reactivar bot|bot on)\b/.test(text);
+  return text === 'bot on';
 }
 
 function buildBotStatusMessage(enabled) {
@@ -100,8 +100,9 @@ function buildAdminHelpMessage() {
   return [
     '🔐 *Controles de administrador*',
     '',
-    'Para desactivar el bot escribe: *bot off*',
-    'Para activarlo de nuevo escribe: *bot on*'
+    'Solo desde el número *584128840350*:',
+    '• *bot off* → apaga el bot',
+    '• *bot on* → enciende el bot'
   ].join('\n');
 }
 
@@ -446,25 +447,27 @@ async function processMessageUpdate(messageUpdate) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session) {
   const normalized = normalizeText(text);
+  const isAdmin = isAdminPhone(phone);
+  const isBotOffCommand = isBotDeactivateRequest(normalized);
+  const isBotOnCommand = isBotReactivateRequest(normalized);
 
-  if (isAdminPhone(phone) && isBotDeactivateRequest(normalized)) {
-    setBotEnabled(false);
-    sessions.forEach((item) => disableHumanHandoff(item));
-    return buildBotStatusMessage(false);
-  }
+  if (isBotOffCommand || isBotOnCommand) {
+    if (!isAdmin) {
+      return null;
+    }
 
-  if (isAdminPhone(phone) && isBotReactivateRequest(normalized)) {
+    if (isBotOffCommand) {
+      setBotEnabled(false);
+      sessions.forEach((item) => disableHumanHandoff(item));
+      return buildBotStatusMessage(false);
+    }
+
     setBotEnabled(true);
     return buildBotStatusMessage(true);
   }
 
   if (!botEnabled) {
     return null;
-  }
-
-  if (isBotReactivateRequest(normalized)) {
-    disableHumanHandoff(session);
-    return '🤖 *Asistente reactivado*\n\nYa puedo ayudarte nuevamente con medicamentos y pedidos.';
   }
 
   if (isHumanRequest(normalized)) {
@@ -631,9 +634,6 @@ function isInstagramInfoRequest(value) {
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
 
-// ----------------------------------------------------
-// Catalog search
-// ----------------------------------------------------
 async function searchAndBuildCatalogResponse(text, session) {
   if (!db) {
     return '⚠️ No tengo conexión al catálogo en este momento. Intenta de nuevo más tarde.';
@@ -1184,8 +1184,6 @@ function levenshteinDistance(a, b) {
 
   return prev[n];
 }
-
-
 
 function buildShortProductLabel(doc) {
   return (
