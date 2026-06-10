@@ -62,9 +62,53 @@ function initFirebase() {
 initFirebase();
 
 // ----------------------------------------------------
-// Session memory
+// Session memory / bot controls
 // ----------------------------------------------------
 const sessions = new Map();
+const ADMIN_PHONE = String(process.env.ADMIN_PHONE || '584128840350').replace(/\D/g, '');
+let botEnabled = String(process.env.BOT_ENABLED || 'true').toLowerCase() !== 'false';
+
+function normalizePhoneNumber(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function isAdminPhone(phone) {
+  return normalizePhoneNumber(phone) === ADMIN_PHONE;
+}
+
+function setBotEnabled(enabled) {
+  botEnabled = Boolean(enabled);
+}
+
+function isBotDeactivateRequest(value) {
+  const text = normalizeText(value);
+  return /\b(bot\s*off|desactivar\s+bot|apagar\s+bot|pausar\s+bot|stop\s+bot|bot\s+pause|pausar\s+asistente)\b/.test(text);
+}
+
+function isBotReactivateRequest(value) {
+  const text = normalizeText(value);
+  return /\b(volver al bot|retomar bot|activar bot|activar asistente|reactivar bot|bot on)\b/.test(text);
+}
+
+function buildBotStatusMessage(enabled) {
+  return enabled
+    ? '🤖 *Bot activado*\n\nYa está respondiendo automáticamente.'
+    : '🛑 *Bot desactivado*\n\nNo responderá a los chats hasta que lo vuelvas a activar.';
+}
+
+function buildAdminHelpMessage() {
+  return [
+    '🔐 *Controles de administrador*',
+    '',
+    'Para desactivar el bot escribe: *bot off*',
+    'Para activarlo de nuevo escribe: *bot on*'
+  ].join('\n');
+}
+
+function isBotControlMessage(value) {
+  return isBotDeactivateRequest(value) || isBotReactivateRequest(value);
+}
+
 
 function getSession(phone) {
   if (!sessions.has(phone)) {
@@ -403,6 +447,21 @@ async function processMessageUpdate(messageUpdate) {
 async function routeMessage(phone, text, session) {
   const normalized = normalizeText(text);
 
+  if (isAdminPhone(phone) && isBotDeactivateRequest(normalized)) {
+    setBotEnabled(false);
+    sessions.forEach((item) => disableHumanHandoff(item));
+    return buildBotStatusMessage(false);
+  }
+
+  if (isAdminPhone(phone) && isBotReactivateRequest(normalized)) {
+    setBotEnabled(true);
+    return buildBotStatusMessage(true);
+  }
+
+  if (!botEnabled) {
+    return null;
+  }
+
   if (isBotReactivateRequest(normalized)) {
     disableHumanHandoff(session);
     return '🤖 *Asistente reactivado*\n\nYa puedo ayudarte nuevamente con medicamentos y pedidos.';
@@ -547,8 +606,7 @@ async function routeMessage(phone, text, session) {
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo 
-si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
+  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
 }
 
 function buildHumanAgentMessage() {
@@ -572,8 +630,6 @@ function isInstagramInfoRequest(value) {
   const text = normalizeText(value);
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
-
-
 
 // ----------------------------------------------------
 // Catalog search
@@ -1129,6 +1185,8 @@ function levenshteinDistance(a, b) {
   return prev[n];
 }
 
+
+
 function buildShortProductLabel(doc) {
   return (
     doc?.ProductTitle ||
@@ -1620,4 +1678,3 @@ process.on('uncaughtException', (error) => {
 app.listen(PORT, () => {
   console.log(`🚀 Gentefarma Webhook Service running on port ${PORT}`);
 });
-
