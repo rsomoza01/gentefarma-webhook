@@ -403,13 +403,6 @@ async function processIncomingMessage(payload) {
     const fromMe = extractFromMe(payload);
 
     console.log('🔎 Extraído:', { from, body, fromMe });
-    console.log('🧪 Bot control check:', {
-      from,
-      body,
-      normalizedFrom: normalizePhoneNumber(from),
-      isAdmin: isAdminPhone(from) || normalizePhoneNumber(from) === '26603581083826',
-      isControl: normalizeText(body) === 'bot off' || normalizeText(body) === 'bot on'
-    });
 
     if (fromMe) {
       console.log('↩️ Mensaje propio, ignorado.');
@@ -451,31 +444,10 @@ async function processMessageUpdate(messageUpdate) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session) {
   const normalized = normalizeText(text);
-  const normalizedPhone = normalizePhoneNumber(phone);
-  const isAdmin = isAdminPhone(phone) || normalizedPhone === '26603581083826';
-  const isAdminSender = normalizedPhone === '26603581083826';
-  const isBotOffCommand = normalized === 'bot off';
-  const isBotOnCommand = normalized === 'bot on';
 
-  if (isBotOffCommand || isBotOnCommand) {
-    if (!isAdmin) return null;
-
-    if (isBotOffCommand) {
-      setBotEnabled(false);
-      sessions.forEach((item) => disableHumanHandoff(item));
-      return buildBotStatusMessage(false);
-    }
-
-    setBotEnabled(true);
-    return buildBotStatusMessage(true);
-  }
-
-  if (!botEnabled) {
-    return null;
-  }
-
-  if (!isAdminSender && isAdminControlCommand(phone, normalized)) {
-    return null;
+  if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
+    disableHumanHandoff(session);
+    return '🤖 *Asistente reactivado*\n\nYa puedo ayudarte nuevamente con medicamentos y pedidos.';
   }
 
   if (isHumanRequest(normalized)) {
@@ -603,8 +575,7 @@ async function routeMessage(phone, text, session) {
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return `⚠️ *${productQuery}* no está disponible en este momento.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamen
-to*`;
+      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
     }
 
     session.pendingSelectionResults = searchResult.matches;
@@ -622,7 +593,7 @@ function buildMenuMessage() {
 }
 
 function buildHumanAgentMessage() {
-  return `👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.\n\nMientras esperas, puedes escribir el nombre del medicamento que necesitas.`;
+  return `👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.`;
 }
 
 function buildInstagramReelMessage() {
@@ -631,8 +602,7 @@ function buildInstagramReelMessage() {
 
 function shouldSendInstagramReel(value) {
   const text = normalizeText(value);
-  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas infor
-macion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas informacion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
   const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
   const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
 
@@ -643,6 +613,7 @@ function isInstagramInfoRequest(value) {
   const text = normalizeText(value);
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
+
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
@@ -825,39 +796,33 @@ async function searchMedicinesByName(userQuery, options = {}) {
     ? exactMatches
     : scoredProducts.filter((item) => (item.score ?? 0) >= 25 || item.phraseHit || item.focusTitleHit || (item.tokenCoverage ?? 0) > 0);
 
-  const strongRelevanceMatches = candidateMatches.filter((item) => {
-    const score = item.score ?? 0;
-    const coverage = item.tokenCoverage ?? 0;
-    const enoughTokenOverlap = queryTokens.length <= 1 ? coverage >= 1 : coverage >= 2;
-
-    return Boolean(
-      item.exactHit ||
-      item.focusTitleHit ||
-      item.phraseHit ||
-      (queryTokens.length <= 1 && score >= 25 && coverage >= 1) ||
-      (queryTokens.length > 1 && score >= 50 && enoughTokenOverlap)
-    );
-  });
-
-  candidateMatches = strongRelevanceMatches;
-
-  if (vitaminFocusWord && candidateMatches.length) {
-    const focusCandidates = candidateMatches.filter((item) => {
-      const itemText = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
-      return itemText.includes(vitaminFocusWord);
-    });
-
-    if (focusCandidates.length) candidateMatches = focusCandidates;
+  if (!candidateMatches.length) {
+    candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) >= 15);
   }
 
-  const topMatches = candidateMatches
-    .slice(0, 5)
-    .sort((a, b) => {
-      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
-      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
-      if (priceA !== priceB) return priceA - priceB;
-      return (b.score ?? 0) - (a.score ?? 0);
-    });
+  if (!candidateMatches.length) {
+    candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) > 0);
+  }
+
+  if (!candidateMatches.length) {
+    candidateMatches = scoredProducts.slice(0, 5);
+  }
+
+  const focusCandidates = vitaminFocusWord
+    ? candidateMatches.filter((item) => {
+        const itemText = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
+        return itemText.includes(vitaminFocusWord);
+      })
+    : [];
+
+  if (vitaminFocusWord && focusCandidates.length) candidateMatches = focusCandidates;
+
+  const topMatches = candidateMatches.slice(0, 5).sort((a, b) => {
+    const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+    const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+    if (priceA !== priceB) return priceA - priceB;
+    return (b.score ?? 0) - (a.score ?? 0);
+  });
 
   return {
     query,
@@ -880,7 +845,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }))
   };
 }
-
 
 function buildCatalogResponse(result) {
   if (!result || !result.matches || !result.matches.length) {
