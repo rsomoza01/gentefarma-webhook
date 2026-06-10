@@ -820,14 +820,17 @@ function buildCatalogResponse(result) {
     const title = shortenText(item.title || 'Medicamento', 52);
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-    lines.push(`*${title}*`);
-    lines.push(`Opción ${index + 1} — ${bsText} — ${usdText}`);
+    lines.push(`💊 *${index + 1}. ${title}*`);
+    lines.push(`   ${usdText}  |  ${bsText}`);
     lines.push('');
   });
 
   lines.push('');
-  lines.push('Para agregar al pedido: *1 2*');
-  lines.push('Luego escribe otro medicamento o *LISTO* para el resumen.');
+  lines.push('👉 Para agregar al pedido, escríbeme así:');
+  lines.push('“quiero X cajas de la opción Z”');
+  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
+  lines.push('');
+  lines.push('¿Luego necesitas buscar otro medicamento? Escríbeme el nombre y lo agrego a tu lista. 🛒');
 
   return lines.join('\n').trim();
 }
@@ -850,7 +853,8 @@ function buildMultiCatalogResponse(results, flatOptions = []) {
       const name = shortenText(item.title || 'Medicamento', 52);
       const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
       const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-      lines.push(`${optionNumber}. ${name} — ${bsText} — ${usdText}`);
+      lines.push(`💊 ${optionNumber}. ${name}`);
+      lines.push(`   ${usdText}  |  ${bsText}`);
       optionNumber += 1;
     });
 
@@ -858,8 +862,11 @@ function buildMultiCatalogResponse(results, flatOptions = []) {
   });
 
   lines.push('');
-  lines.push('Para agregar al pedido: *1 2*');
-  lines.push('Luego escribe otro medicamento o *LISTO* para el resumen.');
+  lines.push('👉 Para agregar al pedido, escríbeme así:');
+  lines.push('“quiero X cajas de la opción Z”');
+  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
+  lines.push('');
+  lines.push('¿Luego necesitas buscar otro medicamento? Escríbeme el nombre y lo agrego a tu lista. 🛒');
 
   return lines.join('\n').trim();
 }
