@@ -94,7 +94,9 @@ function resetSession(phone) {
 function enableHumanHandoff(session) {
   session.humanHandoff = true;
   session.mode = 'human_handoff';
+  session.lastSearch = null;
   session.pendingSelectionResults = null;
+  session.selectedProducts = [];
   touchSession(session);
 }
 
@@ -401,7 +403,7 @@ async function processMessageUpdate(messageUpdate) {
 async function routeMessage(phone, text, session) {
   const normalized = normalizeText(text);
 
-  if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
+  if (isBotReactivateRequest(normalized)) {
     disableHumanHandoff(session);
     return '🤖 *Asistente reactivado*\n\nYa puedo ayudarte nuevamente con medicamentos y pedidos.';
   }
@@ -531,7 +533,7 @@ async function routeMessage(phone, text, session) {
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
+      return `⚠️ *${productQuery}* no está disponible en este momento.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
     }
 
     session.pendingSelectionResults = searchResult.matches;
@@ -550,7 +552,7 @@ si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
 }
 
 function buildHumanAgentMessage() {
-  return `👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.`;
+  return `👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.\n\nMientras esperas, puedes escribir el nombre del medicamento que necesitas.`;
 }
 
 function buildInstagramReelMessage() {
@@ -570,6 +572,7 @@ function isInstagramInfoRequest(value) {
   const text = normalizeText(value);
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
+
 
 
 // ----------------------------------------------------
@@ -754,33 +757,39 @@ async function searchMedicinesByName(userQuery, options = {}) {
     ? exactMatches
     : scoredProducts.filter((item) => (item.score ?? 0) >= 25 || item.phraseHit || item.focusTitleHit || (item.tokenCoverage ?? 0) > 0);
 
-  if (!candidateMatches.length) {
-    candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) >= 15);
-  }
+  const strongRelevanceMatches = candidateMatches.filter((item) => {
+    const score = item.score ?? 0;
+    const coverage = item.tokenCoverage ?? 0;
+    const enoughTokenOverlap = queryTokens.length <= 1 ? coverage >= 1 : coverage >= 2;
 
-  if (!candidateMatches.length) {
-    candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) > 0);
-  }
-
-  if (!candidateMatches.length) {
-    candidateMatches = scoredProducts.slice(0, 5);
-  }
-
-  const focusCandidates = vitaminFocusWord
-    ? candidateMatches.filter((item) => {
-        const itemText = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
-        return itemText.includes(vitaminFocusWord);
-      })
-    : [];
-
-  if (vitaminFocusWord && focusCandidates.length) candidateMatches = focusCandidates;
-
-  const topMatches = candidateMatches.slice(0, 5).sort((a, b) => {
-    const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
-    const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
-    if (priceA !== priceB) return priceA - priceB;
-    return (b.score ?? 0) - (a.score ?? 0);
+    return Boolean(
+      item.exactHit ||
+      item.focusTitleHit ||
+      item.phraseHit ||
+      (queryTokens.length <= 1 && score >= 25 && coverage >= 1) ||
+      (queryTokens.length > 1 && score >= 50 && enoughTokenOverlap)
+    );
   });
+
+  candidateMatches = strongRelevanceMatches;
+
+  if (vitaminFocusWord && candidateMatches.length) {
+    const focusCandidates = candidateMatches.filter((item) => {
+      const itemText = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
+      return itemText.includes(vitaminFocusWord);
+    });
+
+    if (focusCandidates.length) candidateMatches = focusCandidates;
+  }
+
+  const topMatches = candidateMatches
+    .slice(0, 5)
+    .sort((a, b) => {
+      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      if (priceA !== priceB) return priceA - priceB;
+      return (b.score ?? 0) - (a.score ?? 0);
+    });
 
   return {
     query,
@@ -826,11 +835,10 @@ function buildCatalogResponse(result) {
   });
 
   lines.push('');
-  lines.push('👉 Para agregar al pedido, escríbeme así:');
-  lines.push('“quiero X cajas de la opción Z”');
+  lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
   lines.push('Ejemplo: quiero 2 cajas de la opción 3');
-  lines.push('');
-  lines.push('¿Luego necesitas buscar otro medicamento? Escríbeme el nombre y lo agrego a tu lista. 🛒');
+  lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
+  lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
 
   return lines.join('\n').trim();
 }
@@ -862,11 +870,10 @@ function buildMultiCatalogResponse(results, flatOptions = []) {
   });
 
   lines.push('');
-  lines.push('👉 Para agregar al pedido, escríbeme así:');
-  lines.push('“quiero X cajas de la opción Z”');
+  lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
   lines.push('Ejemplo: quiero 2 cajas de la opción 3');
-  lines.push('');
-  lines.push('¿Luego necesitas buscar otro medicamento? Escríbeme el nombre y lo agrego a tu lista. 🛒');
+  lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
+  lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
 
   return lines.join('\n').trim();
 }
@@ -1522,7 +1529,12 @@ function queryHasMultipleWords(query) {
 
 function isHumanRequest(value) {
   const text = normalizeText(value);
-  return /\b(humano|agente|asesor|persona|operador|atencion humana|atencion al cliente|auxiliar)\b/.test(text);
+  return /\b(humano|agente|asesor|persona|operador|atencion humana|atencion al cliente|auxiliar|auxiliares|colaborador|colaboradores)\b/.test(text);
+}
+
+function isBotReactivateRequest(value) {
+  const text = normalizeText(value);
+  return /\b(bot|agente|volver al bot|retomar bot|activar bot|activar asistente|reactivar bot)\b/.test(text);
 }
 
 function isProductSearchRequest(value) {
@@ -1550,7 +1562,8 @@ function extractMedicineQuery(text) {
   if (!cleaned) return '';
 
   const patterns = [
-    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
+    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+
+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
     /(?:^|\s)(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
   ];
 
@@ -1564,7 +1577,8 @@ function extractMedicineQuery(text) {
   }
 
   candidate = candidate
-    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
+    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\
+s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
     .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
     .trim();
 
@@ -1608,3 +1622,4 @@ process.on('uncaughtException', (error) => {
 app.listen(PORT, () => {
   console.log(`🚀 Gentefarma Webhook Service running on port ${PORT}`);
 });
+
