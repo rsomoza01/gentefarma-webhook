@@ -649,12 +649,7 @@ async function searchAndBuildCatalogResponse(text, session) {
     }
 
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para esa lista de medicamentos.
-
-Prueba enviándolos de nuevo, uno por línea, por ejemplo:
-• Candesartan 160mg
-• Clopidogrel 75mg
-• Omeprazol 20mg`;
+    return `⚠️ No encontré coincidencias para esa lista de medicamentos.\n\nPrueba enviándolos de nuevo, uno por línea, por ejemplo:\n• Candesartan 160mg\n• Clopidogrel 75mg\n• Omeprazol 20mg`;
   }
 
   const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text;
@@ -662,14 +657,7 @@ Prueba enviándolos de nuevo, uno por línea, por ejemplo:
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para *${singleQuery.trim()}*.
-
-Intenta con el nombre del medicamento.
-Ejemplos:
-• *atamel*
-• *histaler ped*
-• *desloratadina*
-• *ibuprofeno*`;
+    return `⚠️ No encontré coincidencias para *${singleQuery.trim()}*.\n\nIntenta con el nombre del medicamento.\nEjemplos:\n• *atamel*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno*`;
   }
 
   session.lastSearch = result;
@@ -816,6 +804,32 @@ async function searchMedicinesByName(userQuery, options = {}) {
     : [];
 
   if (vitaminFocusWord && focusCandidates.length) candidateMatches = focusCandidates;
+
+  if (isVitaminQuery) {
+    const queryFocus = vitaminFocusWord;
+    const exactVitaminPattern = queryFocus
+      ? new RegExp(`\\bvitamina\\s+${queryFocus}\\b`, 'i')
+      : null;
+
+    const vitaminOnlyCandidates = candidateMatches.filter((item) => {
+      const text = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
+      const hasVitamin = /\bvitamina\b/.test(text);
+
+      if (!hasVitamin) return false;
+
+      if (!queryFocus) {
+        return /\bvitamina\s+[a-z0-9]+\b/.test(text);
+      }
+
+      return exactVitaminPattern ? exactVitaminPattern.test(text) : false;
+    });
+
+    if (!vitaminOnlyCandidates.length) {
+      return { query, queryTokens, exchangeRate, matches: [] };
+    }
+
+    candidateMatches = vitaminOnlyCandidates;
+  }
 
   const topMatches = candidateMatches.slice(0, 5).sort((a, b) => {
     const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
