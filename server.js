@@ -66,6 +66,7 @@ initFirebase();
 // ----------------------------------------------------
 const sessions = new Map();
 const ADMIN_PHONE = String(process.env.ADMIN_PHONE || '584128840350').replace(/\D/g, '');
+const ADMIN_PHONE_DISPLAY = '584128840350';
 let botEnabled = String(process.env.BOT_ENABLED || 'true').toLowerCase() !== 'false';
 
 function normalizePhoneNumber(value) {
@@ -80,16 +81,6 @@ function setBotEnabled(enabled) {
   botEnabled = Boolean(enabled);
 }
 
-function isBotDeactivateRequest(value) {
-  const text = normalizeText(value);
-  return text === 'bot off';
-}
-
-function isBotReactivateRequest(value) {
-  const text = normalizeText(value);
-  return text === 'bot on';
-}
-
 function buildBotStatusMessage(enabled) {
   return enabled
     ? '🤖 *Bot activado*\n\nYa está respondiendo automáticamente.'
@@ -100,14 +91,19 @@ function buildAdminHelpMessage() {
   return [
     '🔐 *Controles de administrador*',
     '',
-    'Solo desde el número *584128840350*:',
+    `Solo desde el número *${ADMIN_PHONE_DISPLAY}*:`,
     '• *bot off* → apaga el bot',
     '• *bot on* → enciende el bot'
   ].join('\n');
 }
 
 function isBotControlMessage(value) {
-  return isBotDeactivateRequest(value) || isBotReactivateRequest(value);
+  const text = normalizeText(value);
+  return text === 'bot off' || text === 'bot on';
+}
+
+function isAdminControlCommand(phone, text) {
+  return isAdminPhone(phone) && isBotControlMessage(text);
 }
 
 
@@ -448,13 +444,11 @@ async function processMessageUpdate(messageUpdate) {
 async function routeMessage(phone, text, session) {
   const normalized = normalizeText(text);
   const isAdmin = isAdminPhone(phone);
-  const isBotOffCommand = isBotDeactivateRequest(normalized);
-  const isBotOnCommand = isBotReactivateRequest(normalized);
+  const isBotOffCommand = normalized === 'bot off';
+  const isBotOnCommand = normalized === 'bot on';
 
   if (isBotOffCommand || isBotOnCommand) {
-    if (!isAdmin) {
-      return null;
-    }
+    if (!isAdmin) return null;
 
     if (isBotOffCommand) {
       setBotEnabled(false);
@@ -470,7 +464,7 @@ async function routeMessage(phone, text, session) {
     return null;
   }
 
-  if (isBotControlMessage(normalized)) {
+  if (isAdminControlCommand(phone, normalized)) {
     return null;
   }
 
@@ -638,8 +632,6 @@ function isInstagramInfoRequest(value) {
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
 
-
-
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
@@ -704,6 +696,7 @@ Ejemplos:
 
   return buildCatalogResponse(result);
 }
+
 
 async function searchMedicinesByName(userQuery, options = {}) {
   if (!db) return null;
