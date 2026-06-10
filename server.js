@@ -470,6 +470,10 @@ async function routeMessage(phone, text, session) {
     return null;
   }
 
+  if (isBotControlMessage(normalized)) {
+    return null;
+  }
+
   if (isHumanRequest(normalized)) {
     enableHumanHandoff(session);
     return buildHumanAgentMessage();
@@ -634,6 +638,11 @@ function isInstagramInfoRequest(value) {
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
 
+
+
+// ----------------------------------------------------
+// Catalog search
+// ----------------------------------------------------
 async function searchAndBuildCatalogResponse(text, session) {
   if (!db) {
     return '⚠️ No tengo conexión al catálogo en este momento. Intenta de nuevo más tarde.';
@@ -1588,10 +1597,6 @@ function isHumanRequest(value) {
   return /\b(humano|agente|asesor|persona|operador|atencion humana|atencion al cliente|auxiliar|auxiliares|colaborador|colaboradores)\b/.test(text);
 }
 
-function isBotReactivateRequest(value) {
-  const text = normalizeText(value);
-  return /\b(bot|agente|volver al bot|retomar bot|activar bot|activar asistente|reactivar bot)\b/.test(text);
-}
 
 function isProductSearchRequest(value) {
   const text = normalizeText(value);
