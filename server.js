@@ -807,8 +807,8 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   if (isVitaminQuery) {
     const queryFocus = vitaminFocusWord;
-    const exactVitaminPattern = queryFocus
-      ? new RegExp(`\\bvitamina\\s+${queryFocus}\\b`, 'i')
+    const vitaminPatternForFocus = queryFocus
+      ? new RegExp(`\\bvitamina\\s+${queryFocus}(?:\\b|[0-9a-z/-])`, 'i')
       : null;
 
     const vitaminOnlyCandidates = candidateMatches.filter((item) => {
@@ -821,14 +821,23 @@ async function searchMedicinesByName(userQuery, options = {}) {
         return /\bvitamina\s+[a-z0-9]+\b/.test(text);
       }
 
-      return exactVitaminPattern ? exactVitaminPattern.test(text) : false;
+      return vitaminPatternForFocus ? vitaminPatternForFocus.test(text) : false;
     });
 
-    if (!vitaminOnlyCandidates.length) {
-      return { query, queryTokens, exchangeRate, matches: [] };
-    }
+    if (vitaminOnlyCandidates.length) {
+      candidateMatches = vitaminOnlyCandidates;
+    } else {
+      const broaderVitaminCandidates = candidateMatches.filter((item) => {
+        const text = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
+        return /\bvitamina\b/.test(text) && (queryFocus ? text.includes(queryFocus) : true);
+      });
 
-    candidateMatches = vitaminOnlyCandidates;
+      if (broaderVitaminCandidates.length) {
+        candidateMatches = broaderVitaminCandidates;
+      } else {
+        return { query, queryTokens, exchangeRate, matches: [] };
+      }
+    }
   }
 
   const topMatches = candidateMatches.slice(0, 5).sort((a, b) => {
