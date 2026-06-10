@@ -103,7 +103,8 @@ function isBotControlMessage(value) {
 }
 
 function isAdminControlCommand(phone, text) {
-  return isAdminPhone(phone) && isBotControlMessage(text);
+  const normalizedPhone = normalizePhoneNumber(phone);
+  return (isAdminPhone(phone) || normalizedPhone === '26603581083826') && isBotControlMessage(text);
 }
 
 
@@ -402,6 +403,13 @@ async function processIncomingMessage(payload) {
     const fromMe = extractFromMe(payload);
 
     console.log('🔎 Extraído:', { from, body, fromMe });
+    console.log('🧪 Bot control check:', {
+      from,
+      body,
+      normalizedFrom: normalizePhoneNumber(from),
+      isAdmin: isAdminPhone(from) || normalizePhoneNumber(from) === '26603581083826',
+      isControl: normalizeText(body) === 'bot off' || normalizeText(body) === 'bot on'
+    });
 
     if (fromMe) {
       console.log('↩️ Mensaje propio, ignorado.');
@@ -443,7 +451,9 @@ async function processMessageUpdate(messageUpdate) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session) {
   const normalized = normalizeText(text);
-  const isAdmin = isAdminPhone(phone);
+  const normalizedPhone = normalizePhoneNumber(phone);
+  const isAdmin = isAdminPhone(phone) || normalizedPhone === '26603581083826';
+  const isAdminSender = normalizedPhone === '26603581083826';
   const isBotOffCommand = normalized === 'bot off';
   const isBotOnCommand = normalized === 'bot on';
 
@@ -464,7 +474,7 @@ async function routeMessage(phone, text, session) {
     return null;
   }
 
-  if (isAdminControlCommand(phone, normalized)) {
+  if (!isAdminSender && isAdminControlCommand(phone, normalized)) {
     return null;
   }
 
@@ -593,7 +603,8 @@ async function routeMessage(phone, text, session) {
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return `⚠️ *${productQuery}* no está disponible en este momento.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
+      return `⚠️ *${productQuery}* no está disponible en este momento.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamen
+to*`;
     }
 
     session.pendingSelectionResults = searchResult.matches;
@@ -620,7 +631,8 @@ function buildInstagramReelMessage() {
 
 function shouldSendInstagramReel(value) {
   const text = normalizeText(value);
-  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas informacion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas infor
+macion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
   const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
   const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
 
@@ -631,7 +643,6 @@ function isInstagramInfoRequest(value) {
   const text = normalizeText(value);
   return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
-
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
@@ -696,7 +707,6 @@ Ejemplos:
 
   return buildCatalogResponse(result);
 }
-
 
 async function searchMedicinesByName(userQuery, options = {}) {
   if (!db) return null;
@@ -870,6 +880,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }))
   };
 }
+
 
 function buildCatalogResponse(result) {
   if (!result || !result.matches || !result.matches.length) {
@@ -1399,21 +1410,36 @@ function unwrapMessagePayload(payload) {
 
 function extractFrom(payload) {
   const node = unwrapMessagePayload(payload) || {};
-  const jid =
-    node?.Info?.Sender ||
-    node?.Info?.Chat ||
-    node?.Sender ||
-    node?.sender ||
-    node?.from ||
-    node?.key?.remoteJid ||
-    node?.message?.key?.remoteJid ||
-    node?.data?.key?.remoteJid ||
-    '';
+  const candidates = [
+    node?.Info?.Sender,
+    node?.Info?.Chat,
+    node?.RecipientAlt,
+    node?.recipientAlt,
+    node?.Sender,
+    node?.sender,
+    node?.from,
+    node?.key?.remoteJid,
+    node?.message?.key?.remoteJid,
+    node?.data?.key?.remoteJid,
+    ''
+  ];
 
-  return String(jid)
+  const cleanJid = (value) => String(value || '')
     .replace(/@s\.whatsapp\.net$/, '')
     .replace(/:\d+$/, '')
     .trim();
+
+  for (const candidate of candidates) {
+    const jid = cleanJid(candidate);
+    if (!jid) continue;
+    const lidMatch = jid.match(/^(\d+)@lid$/);
+    if (lidMatch) return lidMatch[1];
+    return jid;
+  }
+
+  const fallback = cleanJid(node?.RecipientAlt || node?.recipientAlt || node?.Info?.Sender || node?.Sender || node?.sender || node?.from || '');
+  const fallbackLidMatch = fallback.match(/^(\d+)@lid$/);
+  return fallbackLidMatch ? fallbackLidMatch[1] : fallback;
 }
 
 function extractBody(payload) {
