@@ -765,7 +765,7 @@ async function searchAndBuildCatalogResponse(text, session) {
     const missingMedicineSet = new Set();
 
     for (const medicineQuery of candidateMedicines) {
-      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate });
+      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate, strictListMode: true });
       if (result && result.matches && result.matches.length) {
         groups.push(result);
       } else {
@@ -814,6 +814,9 @@ Ejemplos:
 
 async function searchMedicinesByName(userQuery, options = {}) {
   if (!db) return null;
+
+  const strictListMode = Boolean(options.strictListMode);
+  const strictReferenceThreshold = strictListMode ? 0.93 : 0.88;
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
@@ -1006,9 +1009,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (signal.titleArrayTextFull === matchQuery) score += 560;
     if (signal.ingredient === matchQuery) score += 420;
 
-    if (referenceSimilarity >= 0.95) score += 380;
-    else if (referenceSimilarity >= 0.92) score += 260;
-    else if (referenceSimilarity >= 0.88) score += 120;
+    if (referenceSimilarity >= strictReferenceThreshold + 0.03) score += 420;
+    else if (referenceSimilarity >= strictReferenceThreshold) score += 260;
+    else if (referenceSimilarity >= strictReferenceThreshold - 0.03) score += strictListMode ? 80 : 120;
+    else if (strictListMode) score -= 500;
 
     if (signal.productTitleFull.includes(matchQuery) || matchQuery.includes(signal.productTitleFull)) score += 320;
     if (signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)) score += 280;
@@ -1169,10 +1173,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     candidateMatches = focusedVitaminMatches;
   } else {
-    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.88);
+    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.93);
     candidateMatches = similarityMatches.filter((item) => {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.referenceSimilarity ?? 0) >= 0.88 || (item.score ?? 0) >= 150;
+      return (item.referenceSimilarity ?? 0) >= 0.93 || (item.score ?? 0) >= 180;
     });
 
     if (!candidateMatches.length) {
