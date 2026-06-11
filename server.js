@@ -125,6 +125,18 @@ function clearSelectionState(session) {
   }
 }
 
+function resolveSelectionResults(session) {
+  if (Array.isArray(session?.pendingSelectionResults) && session.pendingSelectionResults.length > 0) {
+    return session.pendingSelectionResults;
+  }
+
+  if (session?.lastSearch && Array.isArray(session.lastSearch.matches) && session.lastSearch.matches.length > 0) {
+    return session.lastSearch.matches;
+  }
+
+  return [];
+}
+
 function getCartTotals(session) {
   const items = ensureSelectedProducts(session);
   const totalUsd = items.reduce((sum, item) => sum + (Number(item.priceUsd) || 0) * (Number(item.quantity) || 0), 0);
@@ -468,7 +480,7 @@ async function routeMessage(phone, text, session) {
   const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
 
   if (selectionCandidate && hasSelectionResults) {
-    const results = session.pendingSelectionResults;
+    const results = resolveSelectionResults(session);
     const selected = results[selectionCandidate.option - 1];
     if (!selected) {
       return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
@@ -486,13 +498,27 @@ async function routeMessage(phone, text, session) {
   }
 
   if (selectionCandidate && isSelectionPhrase(normalized)) {
-    return '⚠️ Para agregar un producto, primero necesito la lista de opciones del medicamento. Busca el medicamento y luego escribe el número de opción y la cantidad.';
+    const results = resolveSelectionResults(session);
+    if (!results.length) {
+      return '⚠️ Para agregar un producto, primero necesito la lista de opciones del medicamento. Busca el medicamento y luego escribe el número de opción y la cantidad.';
+    }
+
+    const selected = results[selectionCandidate.option - 1];
+    if (!selected) {
+      return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
+    }
+
+    addItemToCart(session, selected, selectionCandidate.quantity);
+    touchSession(session);
+    clearSelectionState(session);
+
+    return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
   }
 
   if (session.mode === 'awaiting_choice') {
     const selectionIntent = selectionCandidate || isSelectionIntent(normalized);
+    const results = resolveSelectionResults(session);
     if (selectionCandidate) {
-      const results = session.pendingSelectionResults || [];
       const selected = results[selectionCandidate.option - 1];
       if (!selected) {
         return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
@@ -514,8 +540,8 @@ async function routeMessage(phone, text, session) {
 
   if (session.mode === 'awaiting_choice_global') {
     const selectionIntent = selectionCandidate || isSelectionIntent(normalized);
+    const results = resolveSelectionResults(session);
     if (selectionCandidate) {
-      const results = session.pendingSelectionResults || [];
       const selected = results[selectionCandidate.option - 1];
       if (!selected) {
         return `⚠️ La opción global *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
