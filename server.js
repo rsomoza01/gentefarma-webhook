@@ -1123,8 +1123,8 @@ function buildMultiCatalogResponse(results, flatOptions = []) {
 
   let optionNumber = 1;
   results.forEach((result) => {
-    const title = shortenText(result.query || 'Medicamento', 52);
-    lines.push(`*${title}*`);
+    const groupTitle = shortenText(String(result.query || 'MEDICAMENTO').toUpperCase(), 52);
+    lines.push(`*${groupTitle}*`);
 
     (result.matches || []).forEach((item) => {
       const name = shortenText(item.title || 'Medicamento', 52);
