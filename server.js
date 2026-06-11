@@ -494,8 +494,16 @@ async function processIncomingMessage(payload) {
     const from = extractFrom(payload);
     const body = extractBody(payload);
     const fromMe = extractFromMe(payload);
+    const adminRecipient = extractRecipient(payload);
+    const normalizedBody = normalizeText(body);
+    const normalizedFrom = normalizeText(from);
+    const normalizedRecipient = normalizeText(adminRecipient);
+    const isAdmin = isAdminSender(from) || isAdminSender(adminRecipient);
+    const isControlMessage = isBotControlMessage(body);
+    const isControlCommand = isControlMessage && isAdmin;
 
-    console.log('🔎 Extraído:', { from, body, fromMe });
+    console.log('🔎 Extraído:', { from, adminRecipient, body, fromMe });
+    console.log('🔎 Control bot:', { normalizedFrom, normalizedRecipient, isAdmin, isControlMessage, fromMe, botEnabled });
 
     if (!from) {
       console.log('⚠️ No se pudo obtener el remitente.');
@@ -507,13 +515,6 @@ async function processIncomingMessage(payload) {
       return;
     }
 
-    const normalizedBody = normalizeText(body);
-    const isAdmin = isAdminSender(from);
-    const isControlMessage = isBotControlMessage(body);
-    const isControlCommand = isControlMessage && isAdmin;
-
-    console.log('🔎 Control bot:', { normalizedFrom: normalizeText(from), isAdmin, isControlMessage, fromMe, botEnabled });
-
     if (isControlCommand) {
       if (normalizedBody === 'bot off') {
         botEnabled = false;
@@ -522,18 +523,24 @@ async function processIncomingMessage(payload) {
           session.humanHandoff = false;
           if (session.mode === 'human_handoff') session.mode = 'idle';
         });
-        await sendWhatsAppMessage(from, '⛔ Bot desactivado.');
+        if (!fromMe) {
+          await sendWhatsAppMessage(from, '⛔ Bot desactivado.');
+        }
         return;
       }
 
       if (normalizedBody === 'bot on') {
         botEnabled = true;
-        await sendWhatsAppMessage(from, '🤖 Bot activado.');
+        if (!fromMe) {
+          await sendWhatsAppMessage(from, '🤖 Bot activado.');
+        }
         return;
       }
 
       if (normalizedBody === 'bot status') {
-        await sendWhatsAppMessage(from, botEnabled ? '🤖 Bot activo.' : '⛔ Bot desactivado.');
+        if (!fromMe) {
+          await sendWhatsAppMessage(from, botEnabled ? '🤖 Bot activo.' : '⛔ Bot desactivado.');
+        }
         return;
       }
     }
@@ -2059,6 +2066,25 @@ function extractFromMe(payload) {
   );
 }
 
+function extractRecipient(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  const jid =
+    node?.Info?.RecipientAlt ||
+    node?.Info?.Chat ||
+    node?.RecipientAlt ||
+    node?.recipient ||
+    node?.to ||
+    node?.key?.remoteJid ||
+    node?.message?.key?.remoteJid ||
+    node?.data?.key?.remoteJid ||
+    '';
+
+  return String(jid)
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/:\d+$/, '')
+    .trim();
+}
+
 // ----------------------------------------------------
 // Text helpers
 // ----------------------------------------------------
@@ -2209,7 +2235,14 @@ function isBotControlMessage(value) {
 
 function isAdminSender(value) {
   const text = normalizeText(value);
-  return text === normalizeText(BOT_ADMIN_NUMBER) || text === normalizeText(`${BOT_ADMIN_NUMBER}@s.whatsapp.net`);
+  const normalizedAdmin = normalizeText(BOT_ADMIN_NUMBER);
+  const compactAdmin = normalizedAdmin.replace(/\s+/g, '');
+  const compactText = text.replace(/\s+/g, '');
+  return (
+    text === normalizedAdmin ||
+    compactText === compactAdmin ||
+    text === normalizeText(`${BOT_ADMIN_NUMBER}@s.whatsapp.net`)
+  );
 }
 
 function isProductSearchRequest(value) {
