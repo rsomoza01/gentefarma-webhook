@@ -896,6 +896,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
     const tokenHitsIngredient = primaryTokens.filter((token) => signal.ingredientTokens.includes(token)).length;
     const bestTokenHits = Math.max(tokenHitsTitle, tokenHitsArray, tokenHitsIngredient);
     const strongTokenCoverage = primaryTokens.length > 0 && bestTokenHits / primaryTokens.length >= 0.8;
+    const fullFocusMatch = primaryTokens.length > 0 && (
+      (tokenHitsTitle === primaryTokens.length) ||
+      (tokenHitsArray === primaryTokens.length) ||
+      (tokenHitsIngredient === primaryTokens.length)
+    );
 
     if (signal.productTitleFull === matchQuery) score += 600;
     if (signal.titleArrayTextFull === matchQuery) score += 560;
@@ -931,6 +936,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
 
     if (strongTokenCoverage) score += 120;
+    if (fullFocusMatch) score += 260;
+    else if (primaryTokens.length > 1 && bestTokenHits === 0) score -= 500;
+    else if (primaryTokens.length > 1 && bestTokenHits === 1) score -= 220;
+    else if (primaryTokens.length > 1 && bestTokenHits === 2) score -= 80;
 
     if (isVitaminQuery && vitaminFocusWord && signalMatchesVitaminFocus(signal, vitaminFocusWord)) {
       score += 420;
@@ -1031,9 +1040,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   let candidateMatches = [];
 
   if (isVitaminQuery) {
-    const focusedVitaminMatches = vitaminFocusWord
-      ? scoredProducts.filter((item) => item.vitaminHit)
-      : scoredProducts.filter((item) => item.vitaminHit);
+    const focusedVitaminMatches = scoredProducts.filter((item) => item.vitaminHit);
 
     if (!focusedVitaminMatches.length) {
       return { query, queryTokens, exchangeRate, matches: [] };
@@ -1041,21 +1048,21 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     candidateMatches = focusedVitaminMatches;
   } else {
-    const exactMatches = scoredProducts.filter((item) => item.exactHit || item.phraseHit);
+    const exactMatches = scoredProducts.filter((item) => item.exactHit || item.phraseHit || item.fullFocusMatch);
     candidateMatches = exactMatches.length
       ? exactMatches
-      : scoredProducts.filter((item) => (item.score ?? 0) >= 60 || item.phraseHit || (item.tokenCoverage ?? 0) > 0);
+      : scoredProducts.filter((item) => (item.fullFocusMatch && (item.score ?? 0) >= 0) || ((item.score ?? 0) >= 120 && item.tokenCoverage >= 2));
 
     if (!candidateMatches.length) {
-      candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) >= 30);
+      candidateMatches = scoredProducts.filter((item) => item.fullFocusMatch || (item.score ?? 0) >= 80);
     }
 
     if (!candidateMatches.length) {
-      candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) > 0);
+      candidateMatches = scoredProducts.filter((item) => item.fullFocusMatch);
     }
 
     if (!candidateMatches.length) {
-      candidateMatches = scoredProducts.slice(0, 5);
+      return { query, queryTokens, exchangeRate, matches: [] };
     }
   }
 
