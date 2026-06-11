@@ -761,19 +761,29 @@ async function searchAndBuildCatalogResponse(text, session) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCatalogProducts(2000);
     const groups = [];
+    const missingMedicines = [];
+    const missingMedicineSet = new Set();
 
     for (const medicineQuery of candidateMedicines) {
       const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate });
-      if (result && result.matches && result.matches.length) groups.push(result);
+      if (result && result.matches && result.matches.length) {
+        groups.push(result);
+      } else {
+        const normalizedMissing = normalizeText(medicineQuery);
+        if (normalizedMissing && !missingMedicineSet.has(normalizedMissing)) {
+          missingMedicineSet.add(normalizedMissing);
+          missingMedicines.push(medicineQuery);
+        }
+      }
     }
 
-    if (groups.length > 0) {
+    if (groups.length > 0 || missingMedicines.length > 0) {
       const flattenedOptions = flattenCatalogResults(groups);
-      session.lastSearch = groups[0];
-      session.pendingSelectionResults = flattenedOptions;
-      session.mode = 'awaiting_choice_global';
+      session.lastSearch = groups[0] || null;
+      session.pendingSelectionResults = flattenedOptions.length ? flattenedOptions : null;
+      session.mode = flattenedOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
       touchSession(session);
-      return buildMultiCatalogResponse(groups, flattenedOptions);
+      return buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines);
     }
 
     session.mode = 'awaiting_product_name';
@@ -1214,14 +1224,33 @@ function buildCatalogResponse(result) {
   return lines.join('\n').trim();
 }
 
-function buildMultiCatalogResponse(results, flatOptions = []) {
+function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines = []) {
   if (!Array.isArray(results) || !results.length) {
-    return '⚠️ Necesito un poco más de detalle para ayudarte.';
+    const missingLines = Array.isArray(missingMedicines) && missingMedicines.length
+      ? [
+          '⚠️ Algunos medicamentos no están disponibles en este momento:',
+          ...missingMedicines.map((item) => `• *${item}*`),
+          '',
+          'Te muestro los que sí encontré abajo.'
+        ]
+      : ['⚠️ Necesito un poco más de detalle para ayudarte.'];
+
+    return missingLines.join('\n').trim();
   }
 
   const lines = [];
   lines.push('🔎 *Resultados encontrados*');
   lines.push('');
+
+  if (Array.isArray(missingMedicines) && missingMedicines.length) {
+    lines.push('⚠️ *No disponibles:*');
+    missingMedicines.forEach((item) => {
+      lines.push(`• *${item}*`);
+    });
+    lines.push('');
+    lines.push('Te muestro los que sí encontré abajo.');
+    lines.push('');
+  }
 
   let optionNumber = 1;
   results.forEach((result) => {
