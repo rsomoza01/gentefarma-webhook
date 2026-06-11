@@ -823,9 +823,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
     .filter((token) => !/^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/.test(token))
     .join(' ')
     .trim();
-  const vitaminPhrases = extractVitaminFocusPhrases(query);
-  const vitaminFocusWord = extractVitaminFocusTokens(query)[0] || '';
-  const isVitaminQuery = /\bvitamina\b/.test(query) || /\bvit\.?\b/.test(query);
+  const matchQuery = dosageLessQuery || query;
+  const matchTokens = tokenize(matchQuery).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  if (!matchTokens.length) return { query, queryTokens, exchangeRate, matches: [] };
+  const matchRoot = matchTokens.join(' ');
+  const vitaminPhrases = extractVitaminFocusPhrases(matchQuery);
+  const vitaminFocusWord = extractVitaminFocusTokens(matchQuery)[0] || '';
+  const isVitaminQuery = /\bvitamina\b/.test(matchQuery) || /\bvit\.?\b/.test(matchQuery);
 
   function buildCatalogSignal(doc) {
     const productTitleFull = normalizeText(doc?.ProductTitle || '');
@@ -883,43 +887,43 @@ async function searchMedicinesByName(userQuery, options = {}) {
   function scoreSignal(signal) {
     let score = 0;
 
-    const tokenHitsTitle = queryTokens.filter((token) => signal.titleTokens.includes(token)).length;
-    const tokenHitsArray = queryTokens.filter((token) => signal.arrayTokens.includes(token)).length;
-    const tokenHitsIngredient = queryTokens.filter((token) => signal.ingredientTokens.includes(token)).length;
+    const tokenHitsTitle = matchTokens.filter((token) => signal.titleTokens.includes(token)).length;
+    const tokenHitsArray = matchTokens.filter((token) => signal.arrayTokens.includes(token)).length;
+    const tokenHitsIngredient = matchTokens.filter((token) => signal.ingredientTokens.includes(token)).length;
     const bestTokenHits = Math.max(tokenHitsTitle, tokenHitsArray, tokenHitsIngredient);
-    const strongTokenCoverage = queryTokens.length > 0 && bestTokenHits / queryTokens.length >= 0.8;
+    const strongTokenCoverage = matchTokens.length > 0 && bestTokenHits / matchTokens.length >= 0.8;
 
-    if (signal.productTitleFull === query) score += 600;
-    if (signal.titleArrayTextFull === query) score += 560;
-    if (signal.ingredient === query) score += 420;
+    if (signal.productTitleFull === matchQuery) score += 600;
+    if (signal.titleArrayTextFull === matchQuery) score += 560;
+    if (signal.ingredient === matchQuery) score += 420;
 
-    if (signal.productTitleFull.includes(query) || query.includes(signal.productTitleFull)) score += 320;
-    if (signal.titleArrayTextFull.includes(query) || query.includes(signal.titleArrayTextFull)) score += 280;
-    if (signal.ingredient.includes(query) || query.includes(signal.ingredient)) score += 200;
+    if (signal.productTitleFull.includes(matchQuery) || matchQuery.includes(signal.productTitleFull)) score += 320;
+    if (signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)) score += 280;
+    if (signal.ingredient.includes(matchQuery) || matchQuery.includes(signal.ingredient)) score += 200;
 
-    if (queryTokens.length > 1) {
-      if (signal.productTitleFull.includes(exactRoot)) score += 240;
-      if (signal.titleArrayTextFull.includes(exactRoot)) score += 260;
-      if (signal.ingredient.includes(exactRoot)) score += 160;
-      if (exactRoot && signal.productText.includes(exactRoot)) score += 120;
+    if (matchTokens.length > 1) {
+      if (signal.productTitleFull.includes(matchRoot)) score += 240;
+      if (signal.titleArrayTextFull.includes(matchRoot)) score += 260;
+      if (signal.ingredient.includes(matchRoot)) score += 160;
+      if (matchRoot && signal.productText.includes(matchRoot)) score += 120;
     }
 
-    if (queryTokens.length > 0) {
-      score += (tokenHitsTitle / queryTokens.length) * 180;
-      score += (tokenHitsArray / queryTokens.length) * 240;
-      score += (tokenHitsIngredient / queryTokens.length) * 120;
+    if (matchTokens.length > 0) {
+      score += (tokenHitsTitle / matchTokens.length) * 180;
+      score += (tokenHitsArray / matchTokens.length) * 240;
+      score += (tokenHitsIngredient / matchTokens.length) * 120;
     }
 
-    for (const token of queryTokens) {
+    for (const token of matchTokens) {
       if (signal.productTitleFull.includes(token)) score += 28;
       if (signal.titleArrayTextFull.includes(token)) score += 42;
       if (signal.ingredient.includes(token)) score += 16;
     }
 
-    if (queryTokens.length > 1) {
-      if (signal.productTitleFull.startsWith(exactRoot)) score += 120;
-      if (signal.titleArrayTextFull.startsWith(exactRoot)) score += 160;
-      if (signal.ingredient.startsWith(exactRoot)) score += 70;
+    if (matchTokens.length > 1) {
+      if (signal.productTitleFull.startsWith(matchRoot)) score += 120;
+      if (signal.titleArrayTextFull.startsWith(matchRoot)) score += 160;
+      if (signal.ingredient.startsWith(matchRoot)) score += 70;
     }
 
     if (strongTokenCoverage) score += 120;
@@ -938,20 +942,20 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
 
     const exactPhraseHit = Boolean(
-      signal.productTitleFull === query ||
-      signal.titleArrayTextFull === query ||
-      signal.productTitleFull.includes(query) ||
-      signal.titleArrayTextFull.includes(query) ||
-      signal.ingredient.includes(query)
+      signal.productTitleFull === matchQuery ||
+      signal.titleArrayTextFull === matchQuery ||
+      signal.productTitleFull.includes(matchQuery) ||
+      signal.titleArrayTextFull.includes(matchQuery) ||
+      signal.ingredient.includes(matchQuery)
     );
 
-    const phraseHit = queryTokens.length > 1 && (
-      signal.productTitleFull.includes(query) ||
-      signal.titleArrayTextFull.includes(query) ||
-      signal.ingredient.includes(query) ||
-      signal.productTitleFull.includes(exactRoot) ||
-      signal.titleArrayTextFull.includes(exactRoot) ||
-      signal.ingredient.includes(exactRoot) ||
+    const phraseHit = matchTokens.length > 1 && (
+      signal.productTitleFull.includes(matchQuery) ||
+      signal.titleArrayTextFull.includes(matchQuery) ||
+      signal.ingredient.includes(matchQuery) ||
+      signal.productTitleFull.includes(matchRoot) ||
+      signal.titleArrayTextFull.includes(matchRoot) ||
+      signal.ingredient.includes(matchRoot) ||
       (isVitaminQuery && vitaminPhrases.some((phrase) => signal.productTitleFull.includes(phrase) || signal.titleArrayTextFull.includes(phrase) || signal.ingredient.includes(phrase)))
     );
 
@@ -969,8 +973,8 @@ async function searchMedicinesByName(userQuery, options = {}) {
             ? signalMatchesVitaminFocus(signal, vitaminFocusWord)
             : (signalHasToken(signal, 'vitamina') || signalHasToken(signal, 'vit')))
         : false,
-      titleContentMatch: signal.productTitleFull.includes(query) || query.includes(signal.productTitleFull),
-      arrayContentMatch: signal.titleArrayTextFull.includes(query) || query.includes(signal.titleArrayTextFull)
+      titleContentMatch: signal.productTitleFull.includes(matchQuery) || matchQuery.includes(signal.productTitleFull),
+      arrayContentMatch: signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)
     };
   }
 
