@@ -73,6 +73,7 @@ function getSession(phone) {
       humanHandoff: false,
       lastSearch: null,
       pendingSelectionResults: null,
+      catalogHistory: [],
       selectedProducts: [],
       updatedAt: Date.now()
     });
@@ -86,6 +87,7 @@ function resetSession(phone) {
     humanHandoff: false,
     lastSearch: null,
     pendingSelectionResults: null,
+    catalogHistory: [],
     selectedProducts: [],
     updatedAt: Date.now()
   });
@@ -125,9 +127,65 @@ function clearSelectionState(session) {
   }
 }
 
+function getCatalogSelectionHistory(session) {
+  if (!Array.isArray(session.catalogHistory)) session.catalogHistory = [];
+  return session.catalogHistory;
+}
+
+function rememberCatalogSnapshot(session, resultSet, label, message) {
+  const options = Array.isArray(resultSet) ? resultSet.map((item) => ({
+    title: item.title,
+    priceUsd: item.priceUsd,
+    priceBs: item.priceBs,
+    raw: item.raw || null
+  })) : [];
+
+  if (!options.length) return;
+
+  const history = getCatalogSelectionHistory(session);
+  history.push({
+    id: `cat_${Date.now()}_${history.length + 1}`,
+    label: String(label || 'MEDICAMENTO').trim(),
+    message: String(message || '').trim(),
+    options,
+    createdAt: Date.now()
+  });
+
+  while (history.length > 5) history.shift();
+}
+
+function getPreviousCatalogSnapshot(session) {
+  const history = Array.isArray(session.catalogHistory) ? session.catalogHistory : [];
+  if (history.length < 2) return null;
+  for (let i = history.length - 2; i >= 0; i--) {
+    const snapshot = history[i];
+    if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length) return snapshot;
+  }
+  return null;
+}
+
+function isPreviousCatalogRequest(value) {
+  const text = normalizeText(value);
+  return /\b(lista\s+anterior|resultados\s+anteriores|volver\s+a\s+la\s+lista|volver\s+a\s+resultados|ver\s+lista\s+anterior|lista\s+previa|resultado\s+anterior)\b/.test(text);
+}
+
+function getLatestCatalogSnapshot(session) {
+  const history = Array.isArray(session.catalogHistory) ? session.catalogHistory : [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const snapshot = history[i];
+    if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length) return snapshot;
+  }
+  return null;
+}
+
 function resolveSelectionResults(session) {
   if (Array.isArray(session?.pendingSelectionResults) && session.pendingSelectionResults.length > 0) {
     return session.pendingSelectionResults;
+  }
+
+  const latestSnapshot = getLatestCatalogSnapshot(session);
+  if (latestSnapshot && Array.isArray(latestSnapshot.options) && latestSnapshot.options.length > 0) {
+    return latestSnapshot.options;
   }
 
   if (session?.lastSearch && Array.isArray(session.lastSearch.matches) && session.lastSearch.matches.length > 0) {
@@ -136,6 +194,28 @@ function resolveSelectionResults(session) {
 
   return [];
 }
+
+function resolveSelectionByHistory(session, optionNumber) {
+  const results = resolveSelectionResults(session);
+  const parsedOption = Number(optionNumber);
+  if (!Number.isInteger(parsedOption) || parsedOption <= 0) return { results, selected: null };
+  return { results, selected: results[parsedOption - 1] || null };
+}
+
+function pushSelectionHistory(session, selected, quantity) {
+  if (!selected) return;
+  const history = getCatalogSelectionHistory(session);
+  history.push({
+    type: 'selection',
+    title: selected.title,
+    quantity,
+    priceUsd: selected.priceUsd,
+    priceBs: selected.priceBs,
+    createdAt: Date.now()
+  });
+  while (history.length > 20) history.shift();
+}
+
 
 function getCartTotals(session) {
   const items = ensureSelectedProducts(session);
@@ -249,7 +329,7 @@ function formatSelectionSavedMessage(item, quantity, session) {
     `Subtotal: ${totalUsd}  |  ${totalBs}`,
     '',
     `🧾 Tu carrito actual: *$${formatPrice(cartUsd)}*  |  *Bs ${formatPrice(cartBs)}*`,
-    'Escribe *LISTO* para ver el pedido completo o continúa buscando otro medicamento.'
+    'Puedes seguir agregando opciones de esta misma lista o escribir *LISTO* para ver el pedido completo.'
   ].join('\n');
 }
 
@@ -474,6 +554,18 @@ async function routeMessage(phone, text, session) {
     return 'Con gusto. Estoy aquí para ayudarte cuando necesites buscar otro medicamento.';
   }
 
+  if (isPreviousCatalogRequest(normalized)) {
+    const snapshot = getPreviousCatalogSnapshot(session) || getLatestCatalogSnapshot(session);
+    if (!snapshot) {
+      return '⚠️ Aún no tengo una lista anterior para mostrarte. Busca un medicamento primero.';
+    }
+
+    session.pendingSelectionResults = Array.isArray(snapshot.options) ? snapshot.options : null;
+    session.mode = session.pendingSelectionResults && session.pendingSelectionResults.length ? 'awaiting_choice_global' : 'awaiting_product_name';
+    touchSession(session);
+    return snapshot.message || '🔎 *Lista anterior*\n\nBusca nuevamente el medicamento para volver a mostrar opciones.';
+  }
+
   const directMedicineQuery = extractMedicineQuery(text);
   const medicineRequests = extractMedicineRequests(text);
   const selectionCandidate = parseSelectionAndQuantity(normalized);
@@ -486,10 +578,11 @@ async function routeMessage(phone, text, session) {
       return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
     }
 
-    addItemToCart(session, selected, selectionCandidate.quantity);
-    touchSession(session);
+      addItemToCart(session, selected, selectionCandidate.quantity);
+      pushSelectionHistory(session, selected, selectionCandidate.quantity);
+      touchSession(session);
 
-    return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+      return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
   }
 
   if (selectionCandidate && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global')) {
@@ -507,10 +600,11 @@ async function routeMessage(phone, text, session) {
       return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
     }
 
-    addItemToCart(session, selected, selectionCandidate.quantity);
-    touchSession(session);
+      addItemToCart(session, selected, selectionCandidate.quantity);
+      pushSelectionHistory(session, selected, selectionCandidate.quantity);
+      touchSession(session);
 
-    return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+      return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
   }
 
   if (session.mode === 'awaiting_choice') {
@@ -780,6 +874,7 @@ async function searchAndBuildCatalogResponse(text, session) {
       session.lastSearch = groups[0] || null;
       session.pendingSelectionResults = flattenedOptions.length ? flattenedOptions : null;
       session.mode = flattenedOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
+      rememberCatalogSnapshot(session, flattenedOptions, candidateMedicines.join(' • '), buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines));
       touchSession(session);
       return buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines);
     }
@@ -803,11 +898,12 @@ Ejemplos:
 • *ibuprofeno*`;
   }
 
-    session.lastSearch = result;
-    session.mode = 'idle';
-    touchSession(session);
+  session.lastSearch = result;
+  session.mode = 'idle';
+  touchSession(session);
+  rememberCatalogSnapshot(session, result.matches, result.query || singleQuery, buildSearchDiagnosticMessage(result, singleQuery));
 
-    return buildSearchDiagnosticMessage(result, singleQuery);
+  return buildSearchDiagnosticMessage(result, singleQuery);
 }
 
 async function searchMedicinesByName(userQuery, options = {}) {
