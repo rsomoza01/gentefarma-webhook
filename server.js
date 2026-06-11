@@ -488,7 +488,6 @@ async function routeMessage(phone, text, session) {
 
     addItemToCart(session, selected, selectionCandidate.quantity);
     touchSession(session);
-    clearSelectionState(session);
 
     return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
   }
@@ -510,7 +509,6 @@ async function routeMessage(phone, text, session) {
 
     addItemToCart(session, selected, selectionCandidate.quantity);
     touchSession(session);
-    clearSelectionState(session);
 
     return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
   }
