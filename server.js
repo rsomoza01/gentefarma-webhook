@@ -703,6 +703,8 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const vitaminPhrases = extractVitaminFocusPhrases(query);
   const vitaminFocusWord = extractVitaminFocusTokens(query)[0] || '';
   const isVitaminQuery = normalizeText(query).includes('vitamina');
+  const vitaminQueryOnly = isVitaminQuery && queryTokens.includes('vitamina') && queryTokens.length <= 2;
+  const vitaminStrictQuery = isVitaminQuery && !!vitaminFocusWord;
 
   const scoredProducts = products
     .map((doc) => {
@@ -831,11 +833,14 @@ async function searchMedicinesByName(userQuery, options = {}) {
     const vitaminOnlyCandidates = candidateMatches.filter((item) => {
       const text = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
       const hasVitamin = /\bvitamina\b/.test(text);
-
       if (!hasVitamin) return false;
 
+      if (vitaminQueryOnly) {
+        return /\bvitamina\s+([a-z]\d*|\d+[a-z]?)\b/.test(text);
+      }
+
       if (!queryFocus) {
-        return /\bvitamina\s+[a-z0-9]+\b/.test(text);
+        return false;
       }
 
       return vitaminPatternForFocus ? vitaminPatternForFocus.test(text) : false;
@@ -846,7 +851,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     } else {
       const broaderVitaminCandidates = candidateMatches.filter((item) => {
         const text = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
-        return /\bvitamina\b/.test(text) && (queryFocus ? text.includes(queryFocus) : true);
+        return /\bvitamina\b/.test(text) && (queryFocus ? text.includes(queryFocus) : false);
       });
 
       if (broaderVitaminCandidates.length) {
@@ -1683,6 +1688,11 @@ function extractMedicineQuery(text) {
     .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
     .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
     .trim();
+
+  const vitaminDirectMatch = candidate.match(/\bvitamina\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
+  if (vitaminDirectMatch) {
+    return `vitamina ${normalizeText(vitaminDirectMatch[1])}`.trim();
+  }
 
   const tokens = tokenize(candidate)
     .filter((token) => token.length > 1)
