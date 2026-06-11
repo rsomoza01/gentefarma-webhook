@@ -831,6 +831,31 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const focusTokens = matchTokens.filter((token) => !isDosageToken(token));
   const primaryTokens = focusTokens.length ? focusTokens : matchTokens;
   const primaryRoot = primaryTokens.join(' ');
+
+  function tokenSimilarity(a, b) {
+    const left = normalizeText(a);
+    const right = normalizeText(b);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+
+    const maxLen = Math.max(left.length, right.length);
+    const minLen = Math.min(left.length, right.length);
+    const lengthGap = Math.abs(left.length - right.length);
+    if (lengthGap > 4) return 0;
+
+    const distance = levenshteinDistance(left, right);
+    const similarity = 1 - (distance / maxLen);
+    const relaxedThreshold = maxLen >= 10 ? 0.6 : maxLen >= 7 ? 0.7 : 0.8;
+    const maxDistance = maxLen >= 10 ? 4 : maxLen >= 7 ? 3 : 2;
+
+    if (distance <= maxDistance && similarity >= relaxedThreshold) return similarity;
+
+    if (minLen >= 5 && left[0] === right[0] && left[left.length - 1] === right[right.length - 1] && distance <= maxDistance + 1) {
+      return similarity;
+    }
+
+    return 0;
+  }
   const vitaminPhrases = extractVitaminFocusPhrases(matchQuery);
   const vitaminFocusWord = extractVitaminFocusTokens(matchQuery)[0] || '';
   const isVitaminQuery = /\bvitamina\b/.test(matchQuery) || /\bvit\.?\b/.test(matchQuery);
@@ -927,6 +952,19 @@ async function searchMedicinesByName(userQuery, options = {}) {
       if (signal.productTitleFull.includes(token)) score += 28;
       if (signal.titleArrayTextFull.includes(token)) score += 42;
       if (signal.ingredient.includes(token)) score += 16;
+
+      if (!signal.productTitleFull.includes(token) && !signal.titleArrayTextFull.includes(token) && !signal.ingredient.includes(token)) {
+        let bestSimilarity = 0;
+        for (const candidate of [...signal.titleTokens, ...signal.arrayTokens, ...signal.ingredientTokens]) {
+          const similarity = tokenSimilarity(token, candidate);
+          if (similarity > bestSimilarity) bestSimilarity = similarity;
+          if (bestSimilarity >= 0.92) break;
+        }
+
+        if (bestSimilarity >= 0.9) score += 24;
+        else if (bestSimilarity >= 0.85) score += 16;
+        else if (bestSimilarity >= 0.8) score += 8;
+      }
     }
 
     if (primaryTokens.length > 1) {
@@ -1050,12 +1088,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     candidateMatches = focusedVitaminMatches;
   } else {
-    const exactMatches = scoredProducts.filter((item) => item.exactHit || item.phraseHit || item.fullFocusMatch);
-    candidateMatches = exactMatches.filter((item) => item.fullFocusMatch || (item.score ?? 0) >= 120 || item.exactHit);
-
-    if (!candidateMatches.length) {
-      candidateMatches = scoredProducts.filter((item) => item.fullFocusMatch && (item.score ?? 0) >= 120);
-    }
+    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120);
+    candidateMatches = similarityMatches.filter((item) => {
+      if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
+      return (item.score ?? 0) >= 140;
+    });
 
     if (!candidateMatches.length) {
       return { query, queryTokens, exchangeRate, matches: [] };
