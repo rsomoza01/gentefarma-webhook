@@ -582,6 +582,17 @@ async function routeMessage(phone, text, session) {
   const medicineRequests = extractMedicineRequests(text);
   const selectionCandidate = parseSelectionAndQuantity(normalized);
   const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
+  const hasMedicineSearchSignal = Boolean(
+    directMedicineQuery ||
+    medicineRequests.length > 0 ||
+    isProductSearchRequest(normalized) ||
+    (!selectionCandidate && looksLikeMedicineName(normalized) && !isSelectionPhrase(normalized))
+  );
+
+  if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
+    clearSelectionState(session);
+    return await searchAndBuildCatalogResponse(text, session);
+  }
 
   if (selectionCandidate && hasSelectionResults) {
     const results = resolveSelectionResults(session);
@@ -590,11 +601,11 @@ async function routeMessage(phone, text, session) {
       return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
     }
 
-      addItemToCart(session, selected, selectionCandidate.quantity);
-      pushSelectionHistory(session, selected, selectionCandidate.quantity);
-      touchSession(session);
+    addItemToCart(session, selected, selectionCandidate.quantity);
+    pushSelectionHistory(session, selected, selectionCandidate.quantity);
+    touchSession(session);
 
-      return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+    return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
   }
 
   if (selectionCandidate && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global')) {
@@ -612,11 +623,11 @@ async function routeMessage(phone, text, session) {
       return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
     }
 
-      addItemToCart(session, selected, selectionCandidate.quantity);
-      pushSelectionHistory(session, selected, selectionCandidate.quantity);
-      touchSession(session);
+    addItemToCart(session, selected, selectionCandidate.quantity);
+    pushSelectionHistory(session, selected, selectionCandidate.quantity);
+    touchSession(session);
 
-      return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+    return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
   }
 
   if (session.mode === 'awaiting_choice') {
