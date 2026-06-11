@@ -531,14 +531,14 @@ async function routeMessage(phone, text, session) {
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
-      return `⚠️ No encontré *${productQuery}* o una presentación muy cercana.\n\nPrueba con otro nombre o una presentación distinta. Ejemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
+      return buildNoMatchMessage(productQuery);
     }
 
     session.pendingSelectionResults = searchResult.matches;
     session.mode = 'awaiting_choice';
     touchSession(session);
 
-      return buildCatalogResponse(searchResult);
+    return buildSearchDiagnosticMessage(searchResult, productQuery);
   }
 
   return buildMenuMessage();
@@ -546,6 +546,36 @@ async function routeMessage(phone, text, session) {
 
 function buildMenuMessage() {
   return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
+}
+
+function buildNoMatchMessage(query) {
+  return `⚠️ *${query}* no está disponible en este momento.\n\nPrueba con otro nombre del medicamento o una presentación distinta.\nEjemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
+}
+
+function buildNoMatchListMessage() {
+  return `⚠️ Esa consulta no está disponible en este momento.\n\nPrueba enviándola de nuevo, uno por línea, por ejemplo:\n• Candesartan 160mg\n• Clopidogrel 75mg\n• Omeprazol 20mg`;
+}
+
+function buildSearchDiagnosticMessage(result, query) {
+  const lines = [
+    `🔎 *${result.query || query}*`,
+    '⚙️ Búsqueda afinada usando *ProductTitle* + *productTitleArray*.',
+    ''
+  ];
+
+  (result.matches || []).forEach((item, index) => {
+    const title = shortenText(item.title || 'Medicamento', 52);
+    const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+    const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+    lines.push(`💊 *${index + 1}. ${title}*`);
+    lines.push(`   ${usdText}  |  ${bsText}`);
+    lines.push('');
+  });
+
+  lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
+  lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
+
+  return lines.join('\n').trim();
 }
 
 function buildHumanAgentMessage() {
@@ -605,7 +635,7 @@ async function searchAndBuildCatalogResponse(text, session) {
     }
 
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para esa lista de medicamentos.\n\nPrueba enviándolos de nuevo, uno por línea, por ejemplo:\n• Candesartan 160mg\n• Clopidogrel 75mg\n• Omeprazol 20mg`;
+    return buildNoMatchListMessage();
   }
 
   const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text;
@@ -613,14 +643,21 @@ async function searchAndBuildCatalogResponse(text, session) {
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para *${singleQuery.trim()}*.\n\nIntenta con el nombre del medicamento.\nEjemplos:\n• *atamel*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno*`;
+    return `⚠️ *${singleQuery.trim()}* no está disponible en este momento.
+
+Intenta con el nombre del medicamento o una presentación distinta.
+Ejemplos:
+• *atamel*
+• *histaler ped*
+• *desloratadina*
+• *ibuprofeno*`;
   }
 
-  session.lastSearch = result;
-  session.mode = 'idle';
-  touchSession(session);
+    session.lastSearch = result;
+    session.mode = 'idle';
+    touchSession(session);
 
-  return buildCatalogResponse(result);
+    return buildSearchDiagnosticMessage(result, singleQuery);
 }
 
 async function searchMedicinesByName(userQuery, options = {}) {
@@ -659,6 +696,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
         ? normalizeText(doc.productTitleArray.join(' '))
         : '';
       const ingredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
+      const ingredientTokens = tokenize(ingredient);
       const score = computeMatchScore(query, queryTokens, productText, doc);
     const productTitleFull = normalizeText(doc?.ProductTitle || '');
     const titleArrayTextFull = Array.isArray(doc?.productTitleArray)
@@ -1102,7 +1140,7 @@ function computeMatchScore(query, queryTokens, docText, doc) {
   let score = 0;
   if (!docText) return 0;
 
-  const productTitle = normalizeText(buildShortProductLabel(doc));
+  const productTitle = normalizeText(doc?.ProductTitle || buildShortProductLabel(doc));
   const titleArray = Array.isArray(doc?.productTitleArray)
     ? doc.productTitleArray.map((value) => normalizeText(value)).filter(Boolean)
     : [];
@@ -1446,36 +1484,21 @@ function unwrapMessagePayload(payload) {
 
 function extractFrom(payload) {
   const node = unwrapMessagePayload(payload) || {};
-  const candidates = [
-    node?.Info?.Sender,
-    node?.Info?.Chat,
-    node?.RecipientAlt,
-    node?.recipientAlt,
-    node?.Sender,
-    node?.sender,
-    node?.from,
-    node?.key?.remoteJid,
-    node?.message?.key?.remoteJid,
-    node?.data?.key?.remoteJid,
-    ''
-  ];
+  const jid =
+    node?.Info?.Sender ||
+    node?.Info?.Chat ||
+    node?.Sender ||
+    node?.sender ||
+    node?.from ||
+    node?.key?.remoteJid ||
+    node?.message?.key?.remoteJid ||
+    node?.data?.key?.remoteJid ||
+    '';
 
-  const cleanJid = (value) => String(value || '')
+  return String(jid)
     .replace(/@s\.whatsapp\.net$/, '')
     .replace(/:\d+$/, '')
     .trim();
-
-  for (const candidate of candidates) {
-    const jid = cleanJid(candidate);
-    if (!jid) continue;
-    const lidMatch = jid.match(/^(\d+)@lid$/);
-    if (lidMatch) return lidMatch[1];
-    return jid;
-  }
-
-  const fallback = cleanJid(node?.RecipientAlt || node?.recipientAlt || node?.Info?.Sender || node?.Sender || node?.sender || node?.from || '');
-  const fallbackLidMatch = fallback.match(/^(\d+)@lid$/);
-  return fallbackLidMatch ? fallbackLidMatch[1] : fallback;
 }
 
 function extractBody(payload) {
