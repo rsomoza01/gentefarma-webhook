@@ -560,7 +560,7 @@ function buildSearchDiagnosticMessage(result, query) {
   const lines = [
     `🔎 *${result.query || query}*`,
     result.exchangeRate ? `💱 Tasa BCV: *Bs ${formatPrice(result.exchangeRate)}*` : null,
-    '⚙️ Búsqueda afinada usando *ProductTitle* + *productTitleArray*.',
+
     ''
   ].filter(Boolean);
   lines.push('');
