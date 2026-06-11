@@ -819,6 +819,8 @@ function buildSearchDiagnosticMessage(result, query) {
   });
 
   lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
+  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
+  lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
   lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
 
   return lines.join('\n').trim();
