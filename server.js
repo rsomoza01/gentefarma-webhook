@@ -515,15 +515,27 @@ async function processIncomingMessage(payload) {
     console.log('🔎 Control bot:', { normalizedFrom: normalizeText(from), isAdmin, isControlMessage, fromMe, botEnabled });
 
     if (isControlCommand) {
-      botEnabled = normalizedBody === 'bot on';
-      sessions.forEach((session) => {
-        if (!session) return;
-        session.humanHandoff = false;
-        if (session.mode === 'human_handoff') session.mode = 'idle';
-      });
+      if (normalizedBody === 'bot off') {
+        botEnabled = false;
+        sessions.forEach((session) => {
+          if (!session) return;
+          session.humanHandoff = false;
+          if (session.mode === 'human_handoff') session.mode = 'idle';
+        });
+        await sendWhatsAppMessage(from, '⛔ Bot desactivado.');
+        return;
+      }
 
-      await sendWhatsAppMessage(from, botEnabled ? '🤖 Bot activado.' : '⛔ Bot desactivado.');
-      return;
+      if (normalizedBody === 'bot on') {
+        botEnabled = true;
+        await sendWhatsAppMessage(from, '🤖 Bot activado.');
+        return;
+      }
+
+      if (normalizedBody === 'bot status') {
+        await sendWhatsAppMessage(from, botEnabled ? '🤖 Bot activo.' : '⛔ Bot desactivado.');
+        return;
+      }
     }
 
     if (fromMe) {
@@ -2192,7 +2204,7 @@ function isHumanRequest(value) {
 
 function isBotControlMessage(value) {
   const text = normalizeText(value);
-  return /^(bot\s+off|bot\s+on)$/i.test(text);
+  return /^(bot\s+off|bot\s+on|bot\s+status)$/i.test(text);
 }
 
 function isAdminSender(value) {
