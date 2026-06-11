@@ -465,12 +465,13 @@ async function routeMessage(phone, text, session) {
   const directMedicineQuery = extractMedicineQuery(text);
   const medicineRequests = extractMedicineRequests(text);
   const selectionCandidate = parseSelectionAndQuantity(normalized);
+  const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
 
-  if (selectionCandidate && Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length) {
+  if (selectionCandidate && hasSelectionResults) {
     const results = session.pendingSelectionResults;
     const selected = results[selectionCandidate.option - 1];
     if (!selected) {
-      return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+      return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
     }
 
     addItemToCart(session, selected, selectionCandidate.quantity);
@@ -478,10 +479,6 @@ async function routeMessage(phone, text, session) {
     clearSelectionState(session);
 
     return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
-  }
-
-  if (selectionCandidate && isSelectionPhrase(normalized) && !Array.isArray(session.pendingSelectionResults)) {
-    return '⚠️ Primero debes ver los resultados del catálogo. Busca el medicamento y luego escribe el número de opción y la cantidad.';
   }
 
   if (session.mode === 'awaiting_choice') {
