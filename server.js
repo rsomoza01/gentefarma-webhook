@@ -559,9 +559,11 @@ function buildNoMatchListMessage() {
 function buildSearchDiagnosticMessage(result, query) {
   const lines = [
     `🔎 *${result.query || query}*`,
+    result.exchangeRate ? `💱 Tasa BCV: *Bs ${formatPrice(result.exchangeRate)}* por *$1*` : null,
     '⚙️ Búsqueda afinada usando *ProductTitle* + *productTitleArray*.',
     ''
-  ];
+  ].filter(Boolean);
+  lines.push('');
 
   (result.matches || []).forEach((item, index) => {
     const title = shortenText(item.title || 'Medicamento', 52);
@@ -832,7 +834,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const matchesVitaminFocus = (text, focus) => {
     if (!focus) return false;
     const normalizedFocus = normalizeText(focus);
-    const escapedFocus = normalizedFocus.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const escapedFocus = normalizedFocus.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
     const vitaminPatterns = [
       new RegExp(`\\bvitamina\\s+${escapedFocus}(?:\\b|[0-9a-z/-])`, 'i'),
       new RegExp(`\\bvit\\.?\\s*${escapedFocus}(?:\\b|[0-9a-z/-])`, 'i')
