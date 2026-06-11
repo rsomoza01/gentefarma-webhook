@@ -631,7 +631,7 @@ async function searchAndBuildCatalogResponse(text, session) {
 
   if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
-    const products = await fetchCollectionDocuments('products-market', 2000);
+    const products = await fetchCatalogProducts(2000);
     const groups = [];
 
     for (const medicineQuery of candidateMedicines) {
@@ -649,7 +649,12 @@ async function searchAndBuildCatalogResponse(text, session) {
     }
 
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para esa lista de medicamentos.\n\nPrueba enviándolos de nuevo, uno por línea, por ejemplo:\n• Candesartan 160mg\n• Clopidogrel 75mg\n• Omeprazol 20mg`;
+    return `⚠️ No encontré coincidencias para esa lista de medicamentos.
+
+Prueba enviándolos de nuevo, uno por línea, por ejemplo:
+• Candesartan 160mg
+• Clopidogrel 75mg
+• Omeprazol 20mg`;
   }
 
   const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text;
@@ -657,7 +662,14 @@ async function searchAndBuildCatalogResponse(text, session) {
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para *${singleQuery.trim()}*.\n\nIntenta con el nombre del medicamento.\nEjemplos:\n• *atamel*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno*`;
+    return `⚠️ No encontré coincidencias para *${singleQuery.trim()}*.
+
+Intenta con el nombre del medicamento.
+Ejemplos:
+• *atamel*
+• *histaler ped*
+• *desloratadina*
+• *ibuprofeno*`;
   }
 
   session.lastSearch = result;
@@ -675,7 +687,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
   if (!queryTokens.length) return null;
 
   const exchangeRate = options.exchangeRate ?? await getBcvRate();
-  const products = options.products ?? await fetchCollectionDocuments('products-market', 2000);
+  const products = options.products ?? await fetchCatalogProducts(2000);
+  const catalogHealth = summarizeCatalogHealth(products);
+  if (catalogHealth.available === 0) {
+    return { query, queryTokens, exchangeRate, matches: [] };
+  }
 
   const exactQuery = query;
   const exactRoot = queryTokens.join(' ');
@@ -686,6 +702,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     .trim();
   const vitaminPhrases = extractVitaminFocusPhrases(query);
   const vitaminFocusWord = extractVitaminFocusTokens(query)[0] || '';
+  const isVitaminQuery = normalizeText(query).includes('vitamina');
 
   const scoredProducts = products
     .map((doc) => {
@@ -1337,6 +1354,26 @@ async function fetchCollectionDocuments(collectionName, limit = 500) {
   }
 }
 
+async function fetchCatalogProducts(limit = 500) {
+  const primary = await fetchCollectionDocuments('products-market', limit);
+  if (primary.length) return primary;
+
+  const fallback = await fetchCollectionDocuments('providers-products', limit);
+  if (fallback.length) return fallback;
+
+  return [];
+}
+
+function summarizeCatalogHealth(products) {
+  const list = Array.isArray(products) ? products : [];
+  const withTitle = list.filter((doc) => normalizeText(buildShortProductLabel(doc))).length;
+  const withSearchText = list.filter((doc) => normalizeText(buildProductSearchText(doc))).length;
+  return {
+    total: list.length,
+    available: Math.max(withTitle, withSearchText)
+  };
+}
+
 // ----------------------------------------------------
 // WhatsApp send via Evolution GO
 // ----------------------------------------------------
@@ -1665,9 +1702,10 @@ function extractMedicineQuery(text) {
     return dose;
   }
 
-  if (tokens.length <= 4) return tokens.join(' ').trim();
+  const meaningful = tokens.join(' ').trim();
+  if (!meaningful) return '';
 
-  return tokens.slice(-4).join(' ').trim();
+  return meaningful;
 }
 
 // ----------------------------------------------------
