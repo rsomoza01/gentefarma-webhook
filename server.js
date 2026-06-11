@@ -421,6 +421,54 @@ async function routeMessage(phone, text, session) {
 
   const directMedicineQuery = extractMedicineQuery(text);
   const medicineRequests = extractMedicineRequests(text);
+  const selectionCandidate = parseSelectionAndQuantity(normalized);
+
+  if (session.mode === 'awaiting_choice') {
+    const selectionIntent = selectionCandidate || isSelectionIntent(normalized);
+    if (selectionCandidate) {
+      const results = session.pendingSelectionResults || [];
+      const selected = results[selectionCandidate.option - 1];
+      if (!selected) {
+        return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+      }
+
+      addItemToCart(session, selected, selectionCandidate.quantity);
+      touchSession(session);
+      clearSelectionState(session);
+
+      return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+    }
+
+    if (!selectionIntent) {
+      clearSelectionState(session);
+    } else {
+      return '⚠️ Escribe el número de opción y la cantidad. Ejemplos: *1 2*, *quiero 2 cajas de la opción 1*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+    }
+  }
+
+  if (session.mode === 'awaiting_choice_global') {
+    const selectionIntent = selectionCandidate || isSelectionIntent(normalized);
+    if (selectionCandidate) {
+      const results = session.pendingSelectionResults || [];
+      const selected = results[selectionCandidate.option - 1];
+      if (!selected) {
+        return `⚠️ La opción global *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+      }
+
+      addItemToCart(session, selected, selectionCandidate.quantity);
+      touchSession(session);
+      clearSelectionState(session);
+
+      return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+    }
+
+    if (!selectionIntent) {
+      clearSelectionState(session);
+    } else {
+      return '⚠️ Escribe el número global de opción y la cantidad. Ejemplos: *1 2*, *quiero 2 cajas de la opción 1*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+    }
+  }
+
   const medicineSearchIntent = Boolean(
     directMedicineQuery ||
     medicineRequests.length > 0 ||
