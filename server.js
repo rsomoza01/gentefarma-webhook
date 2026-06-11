@@ -558,6 +558,14 @@ async function routeMessage(phone, text, session) {
     return 'Con gusto. Estoy aquí para ayudarte cuando necesites buscar otro medicamento.';
   }
 
+  if (isLocationQuestion(normalized)) {
+    return buildLocationMessage();
+  }
+
+  if (isMoreInfoRequest(normalized)) {
+    return buildMoreInfoMessage();
+  }
+
   if (isPreviousCatalogRequest(normalized)) {
     const snapshot = getPreviousCatalogSnapshot(session) || getLatestCatalogSnapshot(session);
     if (!snapshot) {
@@ -820,22 +828,31 @@ function buildHumanAgentMessage() {
   return `👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.`;
 }
 
-function buildInstagramReelMessage() {
-  return `Claro, aquí tienes más información:\n\nhttps://www.instagram.com/reel/DU3hPpJDquf/?igsh=MWJnczFxMDgyMTh3aQ==`;
+function buildLocationMessage() {
+  return `Somos una plataforma online, no tenemos local físico. A través de nuestra web o número de WhatsApp te ayudamos a buscar tus medicinas y comparar precios, para que encuentres la opción que más te convenga. Sin salir de casa 😉.`;
+}
+
+function buildMoreInfoMessage() {
+  return `¡Hola! gracias por tu mensaje. Somos una plataforma online, no tenemos local físico. A través de nuestra web o número de WhatsApp te ayudamos a buscar tus medicinas y comparar precios, para que encuentres la opción que más te convenga. Sin salir de casa 😉. Visita http://www.gentefarma.com o escríbenos por WhatsApp y te ayudamos a gestionar tu pedido. 🙌\n\nhttps://www.instagram.com/reel/DU3hPpJDquf/?igsh=MWJnczFxMDgyMTh3aQ==`;
+}
+
+function isLocationQuestion(value) {
+  const text = normalizeText(value);
+  return /\b(donde estan ubicados|donde estan|ubicados|ubicacion|ubicación|direccion|dirección|local fisico|local físico|tienen local|donde queda|dónde queda)\b/.test(text);
+}
+
+function isMoreInfoRequest(value) {
+  const text = normalizeText(value);
+  return /\b(hola.*mas informacion|hola.*informacion|hola.*info|hola.*quiero mas informacion|hola.*quiero mas info|quiero mas informacion|quiero mas info|mas informacion|más informacion|informacion|info)\b/.test(text);
 }
 
 function shouldSendInstagramReel(value) {
   const text = normalizeText(value);
-  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|mas informacion|más informacion|informacion de gentefarma|quienes somos|quiénes somos)\b/.test(text);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|quienes somos|quiénes somos)\b/.test(text);
   const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
   const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
 
   return Boolean((isGentefarmaContext && wantsInfo) || asksForMedia);
-}
-
-function isInstagramInfoRequest(value) {
-  const text = normalizeText(value);
-  return /\b(mas\s+informacion|más\s+informacion|informacion|info|quiero\s+saber\s+mas|quiero\s+más\s+saber|quiero\s+mas\s+informacion|quiero\s+más\s+información)\b/.test(text);
 }
 
 // ----------------------------------------------------
