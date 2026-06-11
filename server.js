@@ -605,12 +605,7 @@ async function searchAndBuildCatalogResponse(text, session) {
     }
 
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para esa lista de medicamentos.
-
-Prueba enviándolos de nuevo, uno por línea, por ejemplo:
-• Candesartan 160mg
-• Clopidogrel 75mg
-• Omeprazol 20mg`;
+    return `⚠️ No encontré coincidencias para esa lista de medicamentos.\n\nPrueba enviándolos de nuevo, uno por línea, por ejemplo:\n• Candesartan 160mg\n• Clopidogrel 75mg\n• Omeprazol 20mg`;
   }
 
   const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text;
@@ -618,14 +613,7 @@ Prueba enviándolos de nuevo, uno por línea, por ejemplo:
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ No encontré coincidencias para *${singleQuery.trim()}*.
-
-Intenta con el nombre del medicamento.
-Ejemplos:
-• *atamel*
-• *histaler ped*
-• *desloratadina*
-• *ibuprofeno*`;
+    return `⚠️ No encontré coincidencias para *${singleQuery.trim()}*.\n\nIntenta con el nombre del medicamento.\nEjemplos:\n• *atamel*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno*`;
   }
 
   session.lastSearch = result;
@@ -672,9 +660,22 @@ async function searchMedicinesByName(userQuery, options = {}) {
         : '';
       const ingredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
       const score = computeMatchScore(query, queryTokens, productText, doc);
+    const productTitleFull = normalizeText(doc?.ProductTitle || '');
+    const titleArrayTextFull = Array.isArray(doc?.productTitleArray)
+      ? normalizeText(doc.productTitleArray.join(' '))
+      : '';
+    const productTitleTokens = tokenize(productTitleFull);
+    const titleArrayTokens = tokenize(titleArrayTextFull);
+    const exactProductTitleMatch = Boolean(productTitleFull && (productTitleFull === query || productTitleFull.includes(query)));
+    const exactTokenMatchCount = queryTokens.filter((token) => productTitleTokens.includes(token) || titleArrayTokens.includes(token)).length;
+    const strongTokenCoverage = queryTokens.length > 0 && exactTokenMatchCount / queryTokens.length >= 0.8;
+    const titleMatchesQueryTokens = queryTokens.length > 0 && queryTokens.every((token) => productTitleTokens.includes(token) || titleArrayTokens.includes(token));
+    const focusToken = extractVitaminFocusTokens(query)[0] || '';
+    const focusedVitaminMatch = Boolean(focusToken) && matchesVitaminFocus(`${productTitleFull} ${titleArrayTextFull} ${ingredient}`, focusToken);
+    const strictCatalogMatch = exactProductTitleMatch || titleMatchesQueryTokens || strongTokenCoverage || focusedVitaminMatch;
 
       const variants = [exactQuery, exactRoot, dosageLessQuery, ...vitaminPhrases].filter(Boolean);
-      const exactHit = variants.some((variant) => {
+      const exactHit = strictCatalogMatch || variants.some((variant) => {
         if (!variant) return false;
         const variantTokens = tokenize(variant).filter((t) => !STOPWORDS.has(t) && t.length > 1);
         const tokenCoverageTitle = variantTokens.filter((t) => productTitle.includes(t)).length;
@@ -714,6 +715,17 @@ async function searchMedicinesByName(userQuery, options = {}) {
       const tokenCoverageArray = queryTokens.filter((t) => titleArrayText.includes(t)).length;
       const tokenCoverageIngredient = queryTokens.filter((t) => ingredient.includes(t)).length;
       const tokenCoverage = Math.max(tokenCoverageTitle, tokenCoverageArray, tokenCoverageIngredient);
+      const titleTokenHits = queryTokens.filter((token) => productTitleTokens.includes(token)).length;
+      const arrayTokenHits = queryTokens.filter((token) => titleArrayTokens.includes(token)).length;
+      const ingredientTokenHits = queryTokens.filter((token) => ingredientTokens.includes(token)).length;
+      const strongTitleMatch = queryTokens.length > 0 && titleTokenHits === queryTokens.length;
+      const strongArrayMatch = queryTokens.length > 0 && arrayTokenHits === queryTokens.length;
+      const strongIngredientMatch = queryTokens.length > 0 && ingredientTokenHits === queryTokens.length;
+      const bestTokenHitCount = Math.max(titleTokenHits, arrayTokenHits, ingredientTokenHits);
+      const titleContentMatch = productTitleFull.includes(query) || query.includes(productTitleFull);
+      const arrayContentMatch = titleArrayTextFull.includes(query) || query.includes(titleArrayTextFull);
+      const strongContentMatch = titleContentMatch || arrayContentMatch;
+      const strictCatalogMatchFull = strongContentMatch || strongTitleMatch || strongArrayMatch || strongIngredientMatch || (focusedVitaminMatch && bestTokenHitCount > 0);
 
       const basePriceUsd = getPrice(doc);
       const basePriceBs = getPriceBs(doc, exchangeRate);
@@ -723,7 +735,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
         doc,
         title,
         score: score + (phraseHit ? 220 : 0) + (queryTokens.length > 1 ? tokenCoverage * 12 : 0) + (focusTitleHit ? 250 : 0),
-        exactHit,
+        exactHit: exactHit || strictCatalogMatchFull,
         phraseHit,
         focusTitleHit,
         tokenCoverage,
@@ -756,10 +768,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const exactMatches = scoredProducts.filter((item) => item.exactHit || item.focusTitleHit);
   let candidateMatches = exactMatches.length
     ? exactMatches
-    : scoredProducts.filter((item) => (item.score ?? 0) >= 25 || item.phraseHit || item.focusTitleHit || (item.tokenCoverage ?? 0) > 0);
+    : scoredProducts.filter((item) => (item.score ?? 0) >= 40 || item.phraseHit || item.focusTitleHit || (item.tokenCoverage ?? 0) > 0);
 
   if (!candidateMatches.length) {
-    candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) >= 15);
+    candidateMatches = scoredProducts.filter((item) => (item.score ?? 0) >= 20);
   }
 
   if (!candidateMatches.length) {
@@ -772,6 +784,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   const buildVitaminSearchText = (item) => normalizeText([
     item.title || '',
+    item.doc?.ProductTitle || '',
     buildProductSearchText(item.doc),
     item.doc?.activeIngredient || '',
     item.doc?.active_ingredient || '',
@@ -816,7 +829,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       } else {
         const vitaminLooseCandidates = vitaminSearchPool.filter((item) => {
           const text = buildVitaminSearchText(item);
-          return /\\bvit(?:amina)?\\b/.test(text) && text.includes(queryFocus);
+          return /\bvit(?:amina)?\b/.test(text) && text.includes(queryFocus);
         });
 
         if (vitaminLooseCandidates.length) {
@@ -828,7 +841,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     } else if (vitaminQueryOnly) {
       const vitaminOnlyCandidates = vitaminSearchPool.filter((item) => {
         const text = buildVitaminSearchText(item);
-        return /\\bvit(?:amina)?\\s+([a-z]\\d*|\\d+[a-z]?)\\b/.test(text);
+        return /\bvit(?:amina)?\s+([a-z]\d*|\d+[a-z]?)\b/.test(text);
       });
 
       if (vitaminOnlyCandidates.length) {
@@ -1090,44 +1103,56 @@ function computeMatchScore(query, queryTokens, docText, doc) {
   if (!docText) return 0;
 
   const productTitle = normalizeText(buildShortProductLabel(doc));
-  const titleArrayText = Array.isArray(doc?.productTitleArray)
-    ? normalizeText(doc.productTitleArray.join(' '))
-    : '';
+  const titleArray = Array.isArray(doc?.productTitleArray)
+    ? doc.productTitleArray.map((value) => normalizeText(value)).filter(Boolean)
+    : [];
+  const titleArrayText = titleArray.join(' ');
   const activeIngredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
   const searchArea = [docText, productTitle, titleArrayText, activeIngredient].filter(Boolean).join(' | ');
   const searchTokens = tokenize(searchArea).filter((t) => t.length > 1);
   const phraseQuery = queryTokens.join(' ');
+  const querySet = new Set(queryTokens);
   const multiWord = queryTokens.length > 1;
 
-  if (productTitle === query) score += 400;
-  if (titleArrayText === query) score += 320;
-  if (activeIngredient && activeIngredient === query) score += 300;
+  const queryHasVitalsFocus = queryTokens.includes('vitamina') || /^vit(?:amina)?$/i.test(query);
+  const titleTokens = tokenize(productTitle);
+  const ingredientTokens = tokenize(activeIngredient);
+  const arrayTokenSet = new Set(titleArray);
 
-  if (productTitle.includes(query) || query.includes(productTitle)) score += 220;
-  if (titleArrayText.includes(query) || query.includes(titleArrayText)) score += 180;
-  if (activeIngredient && (activeIngredient.includes(query) || query.includes(activeIngredient))) score += 160;
+  const arrayExactTokenHits = queryTokens.filter((token) => arrayTokenSet.has(token)).length;
+  const titleExactTokenHits = queryTokens.filter((token) => titleTokens.includes(token)).length;
+  const ingredientExactTokenHits = queryTokens.filter((token) => ingredientTokens.includes(token)).length;
+
+  const fullTitleMatchesQuery = productTitle === query;
+  const fullArrayMatchesQuery = titleArrayText === query;
+  const fullIngredientMatchesQuery = activeIngredient && activeIngredient === query;
+
+  if (fullTitleMatchesQuery) score += 500;
+  if (fullArrayMatchesQuery) score += 420;
+  if (fullIngredientMatchesQuery) score += 350;
+
+  if (productTitle.includes(query) || query.includes(productTitle)) score += 260;
+  if (titleArrayText.includes(query) || query.includes(titleArrayText)) score += 220;
+  if (activeIngredient && (activeIngredient.includes(query) || query.includes(activeIngredient))) score += 180;
 
   if (multiWord && phraseQuery) {
-    if (productTitle.includes(phraseQuery)) score += 260;
-    if (titleArrayText.includes(phraseQuery)) score += 220;
-    if (activeIngredient.includes(phraseQuery)) score += 200;
+    if (productTitle.includes(phraseQuery)) score += 300;
+    if (titleArrayText.includes(phraseQuery)) score += 260;
+    if (activeIngredient.includes(phraseQuery)) score += 220;
   }
 
-  const tokenMatchCountTitle = queryTokens.filter((t) => productTitle.includes(t)).length;
-  const tokenMatchCountArray = queryTokens.filter((t) => titleArrayText.includes(t)).length;
-  const tokenMatchCountIngredient = queryTokens.filter((t) => activeIngredient.includes(t)).length;
-
-  if (tokenMatchCountTitle === queryTokens.length && queryTokens.length > 0) score += 140;
-  if (tokenMatchCountArray === queryTokens.length && queryTokens.length > 0) score += 120;
-  if (tokenMatchCountIngredient === queryTokens.length && queryTokens.length > 0) score += 130;
+  if (queryTokens.length > 0) {
+    score += (titleExactTokenHits / queryTokens.length) * 180;
+    score += (arrayExactTokenHits / queryTokens.length) * 240;
+    score += (ingredientExactTokenHits / queryTokens.length) * 120;
+  }
 
   for (const token of queryTokens) {
-    if (searchArea.includes(token)) score += 8;
-    if (productTitle.includes(token)) score += 18;
-    if (titleArrayText.includes(token)) score += 14;
-    if (activeIngredient.includes(token)) score += 16;
+    if (productTitle.includes(token)) score += 30;
+    if (titleArrayText.includes(token)) score += 40;
+    if (activeIngredient.includes(token)) score += 18;
 
-    if (!searchArea.includes(token)) {
+    if (!productTitle.includes(token) && !titleArrayText.includes(token) && !activeIngredient.includes(token)) {
       let bestDistance = Infinity;
       for (const candidate of searchTokens) {
         if (candidate === token) {
@@ -1140,9 +1165,9 @@ function computeMatchScore(query, queryTokens, docText, doc) {
         if (bestDistance <= 1) break;
       }
 
-      if (bestDistance <= 1) score += 36;
-      else if (bestDistance === 2) score += 24;
-      else if (bestDistance === 3) score += 12;
+      if (bestDistance <= 1) score += 20;
+      else if (bestDistance === 2) score += 12;
+      else if (bestDistance === 3) score += 6;
     }
   }
 
@@ -1150,8 +1175,13 @@ function computeMatchScore(query, queryTokens, docText, doc) {
     const titleStartsWithPhrase = productTitle.startsWith(phraseQuery);
     const arrayStartsWithPhrase = titleArrayText.startsWith(phraseQuery);
     const ingredientStartsWithPhrase = activeIngredient.startsWith(phraseQuery);
-    if (titleStartsWithPhrase || arrayStartsWithPhrase || ingredientStartsWithPhrase) score += 90;
+    if (titleStartsWithPhrase) score += 120;
+    if (arrayStartsWithPhrase) score += 150;
+    if (ingredientStartsWithPhrase) score += 80;
   }
+
+  if (queryHasVitalsFocus && arrayExactTokenHits > 0) score += 90;
+  if (queryHasVitalsFocus && productTitle.includes('vitamina')) score += 50;
 
   return score;
 }
@@ -1669,6 +1699,11 @@ function extractMedicineQuery(text) {
   const vitaminDirectMatch = candidate.match(/\bvitamina\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
   if (vitaminDirectMatch) {
     return `vitamina ${normalizeText(vitaminDirectMatch[1])}`.trim();
+  }
+
+  const vitaminLooseMatch = candidate.match(/\bvit\.?\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
+  if (vitaminLooseMatch) {
+    return `vitamina ${normalizeText(vitaminLooseMatch[1])}`.trim();
   }
 
   const tokens = tokenize(candidate)
