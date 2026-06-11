@@ -784,11 +784,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     if (strongTokenCoverage) score += 120;
 
-    if (vitaminFocusWord && signalMatchesVitaminFocus(signal, vitaminFocusWord)) {
+    if (isVitaminQuery && vitaminFocusWord && signalMatchesVitaminFocus(signal, vitaminFocusWord)) {
       score += 420;
     }
 
-    if (vitaminPhrases.length) {
+    if (isVitaminQuery && vitaminPhrases.length) {
       for (const phrase of vitaminPhrases) {
         if (signal.productTitleFull.includes(phrase) || signal.titleArrayTextFull.includes(phrase) || signal.ingredient.includes(phrase)) {
           score += 300;
@@ -797,6 +797,24 @@ async function searchMedicinesByName(userQuery, options = {}) {
       }
     }
 
+    const exactPhraseHit = Boolean(
+      signal.productTitleFull === query ||
+      signal.titleArrayTextFull === query ||
+      signal.productTitleFull.includes(query) ||
+      signal.titleArrayTextFull.includes(query) ||
+      signal.ingredient.includes(query)
+    );
+
+    const phraseHit = queryTokens.length > 1 && (
+      signal.productTitleFull.includes(query) ||
+      signal.titleArrayTextFull.includes(query) ||
+      signal.ingredient.includes(query) ||
+      signal.productTitleFull.includes(exactRoot) ||
+      signal.titleArrayTextFull.includes(exactRoot) ||
+      signal.ingredient.includes(exactRoot) ||
+      (isVitaminQuery && vitaminPhrases.some((phrase) => signal.productTitleFull.includes(phrase) || signal.titleArrayTextFull.includes(phrase) || signal.ingredient.includes(phrase)))
+    );
+
     return {
       score,
       tokenHitsTitle,
@@ -804,25 +822,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
       tokenHitsIngredient,
       bestTokenHits,
       strongTokenCoverage,
-      exactPhraseHit: Boolean(
-        signal.productTitleFull === query ||
-        signal.titleArrayTextFull === query ||
-        signal.productTitleFull.includes(query) ||
-        signal.titleArrayTextFull.includes(query) ||
-        signal.ingredient.includes(query)
-      ),
-      phraseHit: queryTokens.length > 1 && (
-        signal.productTitleFull.includes(query) ||
-        signal.titleArrayTextFull.includes(query) ||
-        signal.ingredient.includes(query) ||
-        signal.productTitleFull.includes(exactRoot) ||
-        signal.titleArrayTextFull.includes(exactRoot) ||
-        signal.ingredient.includes(exactRoot) ||
-        vitaminPhrases.some((phrase) => signal.productTitleFull.includes(phrase) || signal.titleArrayTextFull.includes(phrase) || signal.ingredient.includes(phrase))
-      ),
-      vitaminHit: Boolean(vitaminFocusWord)
-        ? signalMatchesVitaminFocus(signal, vitaminFocusWord)
-        : (signalHasToken(signal, 'vitamina') || signalHasToken(signal, 'vit')),
+      exactPhraseHit,
+      phraseHit,
+      vitaminHit: isVitaminQuery
+        ? (vitaminFocusWord
+            ? signalMatchesVitaminFocus(signal, vitaminFocusWord)
+            : (signalHasToken(signal, 'vitamina') || signalHasToken(signal, 'vit')))
+        : false,
       titleContentMatch: signal.productTitleFull.includes(query) || query.includes(signal.productTitleFull),
       arrayContentMatch: signal.titleArrayTextFull.includes(query) || query.includes(signal.titleArrayTextFull)
     };
