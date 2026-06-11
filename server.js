@@ -770,12 +770,24 @@ async function searchMedicinesByName(userQuery, options = {}) {
     candidateMatches = scoredProducts.slice(0, 5);
   }
 
-  const buildVitaminSearchText = (item) => normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
+  const buildVitaminSearchText = (item) => normalizeText([
+    item.title || '',
+    buildProductSearchText(item.doc),
+    item.doc?.activeIngredient || '',
+    item.doc?.active_ingredient || '',
+    item.doc?.ingredient || ''
+  ].filter(Boolean).join(' '));
+
   const matchesVitaminFocus = (text, focus) => {
     if (!focus) return false;
     const normalizedFocus = normalizeText(focus);
     const escapedFocus = normalizedFocus.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`\\bvitamina\\s+${escapedFocus}(?:\\b|[0-9a-z/-])`, 'i').test(text);
+    const vitaminPatterns = [
+      new RegExp(`\\bvitamina\\s+${escapedFocus}(?:\\b|[0-9a-z/-])`, 'i'),
+      new RegExp(`\\bvit\\.?\\s*${escapedFocus}(?:\\b|[0-9a-z/-])`, 'i')
+    ];
+
+    return vitaminPatterns.some((pattern) => pattern.test(text));
   };
 
   const focusCandidates = vitaminFocusWord
@@ -791,12 +803,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
     const vitaminSearchPool = scoredProducts;
 
     // For focused vitamin searches (e.g. "vitamina e"), search the *full* catalog
-    // for the exact vitamin focus instead of only the already-trimmed candidate set.
-    // This avoids dropping valid vitamin products when the generic ranking changes.
+    // for exact vitamin variants before giving up. This accepts both "vitamina X"
+    // and compact labels like "vit X", which appear in some catalog records.
     if (queryFocus) {
       const vitaminExactCandidates = vitaminSearchPool.filter((item) => {
         const text = buildVitaminSearchText(item);
-        return /\bvitamina\b/.test(text) && matchesVitaminFocus(text, queryFocus);
+        return matchesVitaminFocus(text, queryFocus);
       });
 
       if (vitaminExactCandidates.length) {
@@ -804,7 +816,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       } else {
         const vitaminLooseCandidates = vitaminSearchPool.filter((item) => {
           const text = buildVitaminSearchText(item);
-          return /\bvitamina\b/.test(text) && text.includes(queryFocus);
+          return /\\bvit(?:amina)?\\b/.test(text) && text.includes(queryFocus);
         });
 
         if (vitaminLooseCandidates.length) {
@@ -816,7 +828,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     } else if (vitaminQueryOnly) {
       const vitaminOnlyCandidates = vitaminSearchPool.filter((item) => {
         const text = buildVitaminSearchText(item);
-        return /\bvitamina\s+([a-z]\d*|\d+[a-z]?)\b/.test(text);
+        return /\\bvit(?:amina)?\\s+([a-z]\\d*|\\d+[a-z]?)\\b/.test(text);
       });
 
       if (vitaminOnlyCandidates.length) {
