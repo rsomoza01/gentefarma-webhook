@@ -959,6 +959,22 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const focusTokens = matchTokens.filter((token) => !isDosageToken(token));
   const primaryTokens = focusTokens.length ? focusTokens : matchTokens;
   const primaryRoot = primaryTokens.join(' ');
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|gr|ml|cc|ui|iu)\b/gi;
+  const extractDosageSignatures = (value) => {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue) return [];
+    const signatures = [];
+    let match;
+    while ((match = dosagePattern.exec(normalizedValue))) {
+      const amount = String(match[1]).replace(',', '.');
+      const unit = String(match[2]).replace(/mL/i, 'ml').toLowerCase();
+      signatures.push(`${amount}${unit}`);
+    }
+    dosagePattern.lastIndex = 0;
+    return [...new Set(signatures)];
+  };
+  const queryDosageSignatures = extractDosageSignatures(query);
+  const hasQueryDosage = queryDosageSignatures.length > 0;
 
   function jaroWinklerSimilarity(a, b) {
     const left = normalizeText(a);
@@ -1120,6 +1136,9 @@ async function searchMedicinesByName(userQuery, options = {}) {
       if (referenceSimilarity >= 0.98) break;
     }
 
+    const candidateDosageSignatures = extractDosageSignatures([signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' '));
+    const dosageExactMatch = !hasQueryDosage || queryDosageSignatures.some((sig) => candidateDosageSignatures.includes(sig));
+
     if (signal.productTitleFull === matchQuery) score += 600;
     if (signal.titleArrayTextFull === matchQuery) score += 560;
     if (signal.ingredient === matchQuery) score += 420;
@@ -1133,11 +1152,25 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)) score += 280;
     if (signal.ingredient.includes(matchQuery) || matchQuery.includes(signal.ingredient)) score += 200;
 
+    if (hasQueryDosage && !dosageExactMatch) score -= strictListMode ? 700 : 500;
+    if (hasQueryDosage && dosageExactMatch) score += 260;
+
     if (primaryTokens.length > 1) {
       if (signal.productTitleFull.includes(primaryRoot)) score += 240;
       if (signal.titleArrayTextFull.includes(primaryRoot)) score += 260;
       if (signal.ingredient.includes(primaryRoot)) score += 160;
       if (primaryRoot && signal.productText.includes(primaryRoot)) score += 120;
+    }
+
+    if (hasQueryDosage) {
+      const queryHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(query);
+      const queryHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(query);
+      const candidateText = [signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' ');
+      const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
+      const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
+      if (queryHasAmount && queryHasUnit && !(candidateHasAmount && candidateHasUnit)) {
+        score -= strictListMode ? 800 : 600;
+      }
     }
 
     if (primaryTokens.length > 0) {
@@ -1293,6 +1326,15 @@ async function searchMedicinesByName(userQuery, options = {}) {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
       return (item.referenceSimilarity ?? 0) >= 0.93 || (item.score ?? 0) >= 180;
     });
+
+    if (hasQueryDosage) {
+      candidateMatches = candidateMatches.filter((item) => {
+        const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
+        const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
+        const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
+        return candidateHasAmount && candidateHasUnit && dosageExactMatch;
+      });
+    }
 
     if (!candidateMatches.length) {
       return { query, queryTokens, exchangeRate, matches: [] };
