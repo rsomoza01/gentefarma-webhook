@@ -775,7 +775,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (!focus) return false;
     const normalizedFocus = normalizeText(focus);
     const escapedFocus = normalizedFocus.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`\bvitamina\s+${escapedFocus}(?:\b|[0-9a-z/-])`, 'i').test(text);
+    return new RegExp(`\\bvitamina\\s+${escapedFocus}(?:\\b|[0-9a-z/-])`, 'i').test(text);
   };
 
   const focusCandidates = vitaminFocusWord
@@ -788,12 +788,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   if (isVitaminQuery) {
     const queryFocus = vitaminFocusWord;
+    const vitaminSearchPool = scoredProducts;
 
-    // For focused vitamin searches (e.g. "vitamina e"), only exact vitamin matches
-    // should survive. This logic is scoped exclusively to vitamin queries so it does
-    // not affect non-vitamin medicines.
+    // For focused vitamin searches (e.g. "vitamina e"), search the *full* catalog
+    // for the exact vitamin focus instead of only the already-trimmed candidate set.
+    // This avoids dropping valid vitamin products when the generic ranking changes.
     if (queryFocus) {
-      const vitaminExactCandidates = candidateMatches.filter((item) => {
+      const vitaminExactCandidates = vitaminSearchPool.filter((item) => {
         const text = buildVitaminSearchText(item);
         return /\bvitamina\b/.test(text) && matchesVitaminFocus(text, queryFocus);
       });
@@ -801,10 +802,19 @@ async function searchMedicinesByName(userQuery, options = {}) {
       if (vitaminExactCandidates.length) {
         candidateMatches = vitaminExactCandidates;
       } else {
-        return { query, queryTokens, exchangeRate, matches: [] };
+        const vitaminLooseCandidates = vitaminSearchPool.filter((item) => {
+          const text = buildVitaminSearchText(item);
+          return /\bvitamina\b/.test(text) && text.includes(queryFocus);
+        });
+
+        if (vitaminLooseCandidates.length) {
+          candidateMatches = vitaminLooseCandidates;
+        } else {
+          return { query, queryTokens, exchangeRate, matches: [] };
+        }
       }
     } else if (vitaminQueryOnly) {
-      const vitaminOnlyCandidates = candidateMatches.filter((item) => {
+      const vitaminOnlyCandidates = vitaminSearchPool.filter((item) => {
         const text = buildVitaminSearchText(item);
         return /\bvitamina\s+([a-z]\d*|\d+[a-z]?)\b/.test(text);
       });
