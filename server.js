@@ -65,6 +65,8 @@ initFirebase();
 // Session memory
 // ----------------------------------------------------
 const sessions = new Map();
+let botEnabled = true;
+const BOT_ADMIN_NUMBER = '584128840350';
 
 function getSession(phone) {
   if (!sessions.has(phone)) {
@@ -495,11 +497,6 @@ async function processIncomingMessage(payload) {
 
     console.log('🔎 Extraído:', { from, body, fromMe });
 
-    if (fromMe) {
-      console.log('↩️ Mensaje propio, ignorado.');
-      return;
-    }
-
     if (!from) {
       console.log('⚠️ No se pudo obtener el remitente.');
       return;
@@ -507,6 +504,35 @@ async function processIncomingMessage(payload) {
 
     if (!body) {
       console.log('⚠️ No se pudo obtener el texto del mensaje.');
+      return;
+    }
+
+    const normalizedBody = normalizeText(body);
+    const isAdmin = isAdminSender(from);
+    const isControlMessage = isBotControlMessage(body);
+    const isControlCommand = isControlMessage && isAdmin;
+
+    console.log('🔎 Control bot:', { normalizedFrom: normalizeText(from), isAdmin, isControlMessage, fromMe, botEnabled });
+
+    if (isControlCommand) {
+      botEnabled = normalizedBody === 'bot on';
+      sessions.forEach((session) => {
+        if (!session) return;
+        session.humanHandoff = false;
+        if (session.mode === 'human_handoff') session.mode = 'idle';
+      });
+
+      await sendWhatsAppMessage(from, botEnabled ? '🤖 Bot activado.' : '⛔ Bot desactivado.');
+      return;
+    }
+
+    if (fromMe) {
+      console.log('↩️ Mensaje propio, ignorado.');
+      return;
+    }
+
+    if (!botEnabled) {
+      console.log('⛔ Bot apagado, mensaje ignorado.');
       return;
     }
 
@@ -2162,6 +2188,16 @@ function queryHasMultipleWords(query) {
 function isHumanRequest(value) {
   const text = normalizeText(value);
   return /\b(humano|agente|asesor|persona|operador|atencion humana|atencion al cliente|auxiliar)\b/.test(text);
+}
+
+function isBotControlMessage(value) {
+  const text = normalizeText(value);
+  return /^(bot\s+off|bot\s+on)$/i.test(text);
+}
+
+function isAdminSender(value) {
+  const text = normalizeText(value);
+  return text === normalizeText(BOT_ADMIN_NUMBER) || text === normalizeText(`${BOT_ADMIN_NUMBER}@s.whatsapp.net`);
 }
 
 function isProductSearchRequest(value) {
