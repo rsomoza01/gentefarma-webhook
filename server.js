@@ -481,6 +481,14 @@ async function routeMessage(phone, text, session) {
     return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
   }
 
+  if (selectionCandidate && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global')) {
+    return '⚠️ Primero debes ver los resultados del catálogo. Busca el medicamento y luego escribe el número de opción y la cantidad.';
+  }
+
+  if (selectionCandidate && isSelectionPhrase(normalized)) {
+    return '⚠️ Para agregar un producto, primero necesito la lista de opciones del medicamento. Busca el medicamento y luego escribe el número de opción y la cantidad.';
+  }
+
   if (session.mode === 'awaiting_choice') {
     const selectionIntent = selectionCandidate || isSelectionIntent(normalized);
     if (selectionCandidate) {
