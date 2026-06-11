@@ -990,9 +990,25 @@ async function searchMedicinesByName(userQuery, options = {}) {
       (tokenHitsIngredient === primaryTokens.length)
     );
 
+    const referenceCandidates = [matchQuery, primaryRoot, exactRoot].filter(Boolean);
+    const candidateTexts = [signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean);
+    let referenceSimilarity = 0;
+    for (const reference of referenceCandidates) {
+      for (const candidateText of candidateTexts) {
+        const similarity = jaroWinklerSimilarity(reference, candidateText);
+        if (similarity > referenceSimilarity) referenceSimilarity = similarity;
+        if (referenceSimilarity >= 0.98) break;
+      }
+      if (referenceSimilarity >= 0.98) break;
+    }
+
     if (signal.productTitleFull === matchQuery) score += 600;
     if (signal.titleArrayTextFull === matchQuery) score += 560;
     if (signal.ingredient === matchQuery) score += 420;
+
+    if (referenceSimilarity >= 0.95) score += 380;
+    else if (referenceSimilarity >= 0.92) score += 260;
+    else if (referenceSimilarity >= 0.88) score += 120;
 
     if (signal.productTitleFull.includes(matchQuery) || matchQuery.includes(signal.productTitleFull)) score += 320;
     if (signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)) score += 280;
@@ -1106,6 +1122,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       return {
         ...signal,
         score: metrics.score,
+        referenceSimilarity: metrics.referenceSimilarity,
         exactHit,
         fullFocusMatch: metrics.fullFocusMatch,
         phraseHit: metrics.phraseHit,
@@ -1152,10 +1169,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     candidateMatches = focusedVitaminMatches;
   } else {
-    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120);
+    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.88);
     candidateMatches = similarityMatches.filter((item) => {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.score ?? 0) >= 150;
+      return (item.referenceSimilarity ?? 0) >= 0.88 || (item.score ?? 0) >= 150;
     });
 
     if (!candidateMatches.length) {
