@@ -1643,13 +1643,14 @@ function isGreetingOrMenu(value) {
 function extractVitaminFocusTokens(query) {
   const tokens = tokenize(query);
   const focusTokens = [];
+
   for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i] !== 'vitamina') continue;
+    if (tokens[i] !== 'vitamina' && tokens[i] !== 'vit') continue;
 
     const next = tokens[i + 1];
     const next2 = tokens[i + 2];
 
-    if (next && !STOPWORDS.has(next) && next.length >= 1 && next !== 'vitamina') {
+    if (next && !STOPWORDS.has(next) && next !== 'vitamina' && next !== 'vit') {
       if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
         focusTokens.push(`${next}${next2}`);
       } else {
@@ -1664,17 +1665,18 @@ function extractVitaminFocusTokens(query) {
 function extractVitaminFocusPhrases(query) {
   const tokens = tokenize(query);
   const phrases = [];
+
   for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i] !== 'vitamina') continue;
+    if (tokens[i] !== 'vitamina' && tokens[i] !== 'vit') continue;
 
     const next = tokens[i + 1];
     const next2 = tokens[i + 2];
     if (!next) continue;
 
     if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
-      phrases.push(`vitamina ${next}${next2}`);
+      phrases.push(`${tokens[i]} ${next}${next2}`);
     } else {
-      phrases.push(`vitamina ${next}`);
+      phrases.push(`${tokens[i]} ${next}`);
     }
   }
 
