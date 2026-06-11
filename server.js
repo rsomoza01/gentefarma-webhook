@@ -1123,7 +1123,7 @@ function buildMultiCatalogResponse(results, flatOptions = []) {
 
   let optionNumber = 1;
   results.forEach((result) => {
-    const groupTitle = shortenText(String(result.query || 'MEDICAMENTO').toUpperCase(), 52);
+    const groupTitle = shortenText(String(result.groupTitle || result.query || 'MEDICAMENTO').toUpperCase(), 52);
     lines.push(`*${groupTitle}*`);
 
     (result.matches || []).forEach((item) => {
@@ -1288,10 +1288,12 @@ function looksLikeListToken(token) {
 function flattenCatalogResults(results) {
   const flattened = [];
   for (const group of Array.isArray(results) ? results : []) {
+    const groupQuery = String(group?.query || '').trim();
+    const groupLabel = String(group?.groupTitle || group?.title || groupQuery || 'Medicamento').trim();
     for (const item of group?.matches || []) {
       flattened.push({
-        groupQuery: group?.query || '',
-        groupTitle: group?.query || 'Medicamento',
+        groupQuery,
+        groupTitle: groupLabel,
         ...item
       });
     }
@@ -1866,7 +1868,7 @@ function extractMedicineQuery(text) {
 
   const patterns = [
     /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
-    /(?:^|\s)(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
+    /^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
   ];
 
   let candidate = cleaned;
