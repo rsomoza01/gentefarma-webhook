@@ -143,10 +143,19 @@ function parseSelectionAndQuantity(text) {
   const optionMatch = normalized.match(/\b(?:opcion|opci[oó]n)\s*(?:nro\.?|numero|número)?\s*(\d+)\b/i);
   const quantityMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
   const optionAfter = normalized.match(/\b(\d+)\s*(?:de\s+la\s+)?(?:opcion|opci[oó]n)\b/i);
+  const compactPattern = normalized.match(/^(\d+)\s*x\s*(\d+)$/i);
 
   if (optionMatch || optionAfter) {
     const option = Number((optionMatch || optionAfter)[1]);
     const quantity = quantityMatch ? Number(quantityMatch[1]) : 1;
+    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
+      return { option, quantity };
+    }
+  }
+
+  if (compactPattern) {
+    const option = Number(compactPattern[1]);
+    const quantity = Number(compactPattern[2]);
     if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
       return { option, quantity };
     }
@@ -157,6 +166,24 @@ function parseSelectionAndQuantity(text) {
     const quantity = Number(quantityOnlyMatch[1]);
     if (Number.isInteger(quantity) && quantity > 0) {
       return { option: 1, quantity };
+    }
+  }
+
+  const optionQuantityPattern = normalized.match(/^(?:opcion|opci[oó]n)\s*(\d+)\s*(?:x|por|de)?\s*(\d+)?$/i);
+  if (optionQuantityPattern) {
+    const option = Number(optionQuantityPattern[1]);
+    const quantity = optionQuantityPattern[2] ? Number(optionQuantityPattern[2]) : 1;
+    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
+      return { option, quantity };
+    }
+  }
+
+  const shortPattern = normalized.match(/^(\d+)\s+(\d+)$/);
+  if (shortPattern) {
+    const option = Number(shortPattern[1]);
+    const quantity = Number(shortPattern[2]);
+    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
+      return { option, quantity };
     }
   }
 
@@ -174,7 +201,7 @@ function parseSelectionAndQuantity(text) {
 
 function isSelectionIntent(value) {
   const text = normalizeText(value);
-  return /\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|quiero|quisiera|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/.test(text) && /\d+/.test(text);
+  return /\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|quiero|quisiera|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x)\b/.test(text) && /\d+/.test(text);
 }
 
 
