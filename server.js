@@ -62,51 +62,9 @@ function initFirebase() {
 initFirebase();
 
 // ----------------------------------------------------
-// Session memory / bot controls
+// Session memory
 // ----------------------------------------------------
 const sessions = new Map();
-const ADMIN_PHONE = String(process.env.ADMIN_PHONE || '584128840350').replace(/\D/g, '');
-const ADMIN_PHONE_DISPLAY = '584128840350';
-let botEnabled = String(process.env.BOT_ENABLED || 'true').toLowerCase() !== 'false';
-
-function normalizePhoneNumber(value) {
-  return String(value || '').replace(/\D/g, '');
-}
-
-function isAdminPhone(phone) {
-  return normalizePhoneNumber(phone) === ADMIN_PHONE;
-}
-
-function setBotEnabled(enabled) {
-  botEnabled = Boolean(enabled);
-}
-
-function buildBotStatusMessage(enabled) {
-  return enabled
-    ? '🤖 *Bot activado*\n\nYa está respondiendo automáticamente.'
-    : '🛑 *Bot desactivado*\n\nNo responderá a los chats hasta que lo vuelvas a activar.';
-}
-
-function buildAdminHelpMessage() {
-  return [
-    '🔐 *Controles de administrador*',
-    '',
-    `Solo desde el número *${ADMIN_PHONE_DISPLAY}*:`,
-    '• *bot off* → apaga el bot',
-    '• *bot on* → enciende el bot'
-  ].join('\n');
-}
-
-function isBotControlMessage(value) {
-  const text = normalizeText(value);
-  return text === 'bot off' || text === 'bot on';
-}
-
-function isAdminControlCommand(phone, text) {
-  const normalizedPhone = normalizePhoneNumber(phone);
-  return (isAdminPhone(phone) || normalizedPhone === '26603581083826') && isBotControlMessage(text);
-}
-
 
 function getSession(phone) {
   if (!sessions.has(phone)) {
@@ -136,9 +94,7 @@ function resetSession(phone) {
 function enableHumanHandoff(session) {
   session.humanHandoff = true;
   session.mode = 'human_handoff';
-  session.lastSearch = null;
   session.pendingSelectionResults = null;
-  session.selectedProducts = [];
   touchSession(session);
 }
 
@@ -739,10 +695,9 @@ async function searchMedicinesByName(userQuery, options = {}) {
         );
       });
 
-      const focusTitleHit = Boolean(vitaminFocusWord) && (
-        productTitle.includes(vitaminFocusWord) ||
-        titleArrayText.includes(vitaminFocusWord) ||
-        ingredient.includes(vitaminFocusWord)
+      const focusTitleHit = Boolean(vitaminFocusWord) && matchesVitaminFocus(
+        `${productTitle} ${titleArrayText} ${ingredient}`,
+        vitaminFocusWord
       );
 
       const phraseHit = queryTokens.length > 1 && (
@@ -815,47 +770,47 @@ async function searchMedicinesByName(userQuery, options = {}) {
     candidateMatches = scoredProducts.slice(0, 5);
   }
 
+  const buildVitaminSearchText = (item) => normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
+  const matchesVitaminFocus = (text, focus) => {
+    if (!focus) return false;
+    const normalizedFocus = normalizeText(focus);
+    const escapedFocus = normalizedFocus.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\bvitamina\s+${escapedFocus}(?:\b|[0-9a-z/-])`, 'i').test(text);
+  };
+
   const focusCandidates = vitaminFocusWord
-    ? candidateMatches.filter((item) => {
-        const itemText = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
-        return itemText.includes(vitaminFocusWord);
-      })
+    ? candidateMatches.filter((item) => matchesVitaminFocus(buildVitaminSearchText(item), vitaminFocusWord))
     : [];
 
-  if (vitaminFocusWord && focusCandidates.length) candidateMatches = focusCandidates;
+  if (vitaminFocusWord && focusCandidates.length) {
+    candidateMatches = focusCandidates;
+  }
 
   if (isVitaminQuery) {
     const queryFocus = vitaminFocusWord;
-    const vitaminPatternForFocus = queryFocus
-      ? new RegExp(`\\bvitamina\\s+${queryFocus}(?:\\b|[0-9a-z/-])`, 'i')
-      : null;
 
-    const vitaminOnlyCandidates = candidateMatches.filter((item) => {
-      const text = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
-      const hasVitamin = /\bvitamina\b/.test(text);
-      if (!hasVitamin) return false;
-
-      if (vitaminQueryOnly) {
-        return /\bvitamina\s+([a-z]\d*|\d+[a-z]?)\b/.test(text);
-      }
-
-      if (!queryFocus) {
-        return false;
-      }
-
-      return vitaminPatternForFocus ? vitaminPatternForFocus.test(text) : false;
-    });
-
-    if (vitaminOnlyCandidates.length) {
-      candidateMatches = vitaminOnlyCandidates;
-    } else {
-      const broaderVitaminCandidates = candidateMatches.filter((item) => {
-        const text = normalizeText(`${item.title || ''} ${buildProductSearchText(item.doc)} ${item.raw?.activeIngredient || ''}`);
-        return /\bvitamina\b/.test(text) && (queryFocus ? text.includes(queryFocus) : false);
+    // For focused vitamin searches (e.g. "vitamina e"), only exact vitamin matches
+    // should survive. This logic is scoped exclusively to vitamin queries so it does
+    // not affect non-vitamin medicines.
+    if (queryFocus) {
+      const vitaminExactCandidates = candidateMatches.filter((item) => {
+        const text = buildVitaminSearchText(item);
+        return /\bvitamina\b/.test(text) && matchesVitaminFocus(text, queryFocus);
       });
 
-      if (broaderVitaminCandidates.length) {
-        candidateMatches = broaderVitaminCandidates;
+      if (vitaminExactCandidates.length) {
+        candidateMatches = vitaminExactCandidates;
+      } else {
+        return { query, queryTokens, exchangeRate, matches: [] };
+      }
+    } else if (vitaminQueryOnly) {
+      const vitaminOnlyCandidates = candidateMatches.filter((item) => {
+        const text = buildVitaminSearchText(item);
+        return /\bvitamina\s+([a-z]\d*|\d+[a-z]?)\b/.test(text);
+      });
+
+      if (vitaminOnlyCandidates.length) {
+        candidateMatches = vitaminOnlyCandidates;
       } else {
         return { query, queryTokens, exchangeRate, matches: [] };
       }
