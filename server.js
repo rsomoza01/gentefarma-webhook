@@ -141,13 +141,23 @@ function parseSelectionAndQuantity(text) {
   if (!normalized) return null;
 
   const optionMatch = normalized.match(/\b(?:opcion|opci[oó]n)\s*(?:nro\.?|numero|número)?\s*(\d+)\b/i);
+  const optionAfter = normalized.match(/\b(\d+)\s*(?:de\s+la\s+|de\s+)?(?:opcion|opci[oó]n)\b/i);
   const quantityMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
-  const optionAfter = normalized.match(/\b(\d+)\s*(?:de\s+la\s+)?(?:opcion|opci[oó]n)\b/i);
+  const quantityBeforeOption = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(?:de\s+la\s+|de\s+)?(?:opcion|opci[oó]n)\s*(\d+)\b/i);
+  const optionBeforeQuantity = normalized.match(/\b(?:opcion|opci[oó]n)\s*(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(\d+)?\b/i);
   const compactPattern = normalized.match(/^(\d+)\s*x\s*(\d+)$/i);
 
-  if (optionMatch || optionAfter) {
-    const option = Number((optionMatch || optionAfter)[1]);
-    const quantity = quantityMatch ? Number(quantityMatch[1]) : 1;
+  if (quantityBeforeOption) {
+    const quantity = Number(quantityBeforeOption[1]);
+    const option = Number(quantityBeforeOption[2]);
+    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
+      return { option, quantity };
+    }
+  }
+
+  if (optionMatch || optionAfter || optionBeforeQuantity) {
+    const option = Number((optionMatch || optionAfter || optionBeforeQuantity)[1]);
+    const quantity = quantityMatch ? Number(quantityMatch[1]) : (optionBeforeQuantity && optionBeforeQuantity[2] ? Number(optionBeforeQuantity[2]) : 1);
     if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
       return { option, quantity };
     }
@@ -198,6 +208,12 @@ function parseSelectionAndQuantity(text) {
 
   return { option, quantity };
 }
+
+function isSelectionPhrase(value) {
+  const text = normalizeText(value);
+  return /\b(opcion|opci[oó]n|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x)\b/.test(text) && /\d+/.test(text);
+}
+
 
 function isSelectionIntent(value) {
   const text = normalizeText(value);
@@ -450,6 +466,24 @@ async function routeMessage(phone, text, session) {
   const medicineRequests = extractMedicineRequests(text);
   const selectionCandidate = parseSelectionAndQuantity(normalized);
 
+  if (selectionCandidate && Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length) {
+    const results = session.pendingSelectionResults;
+    const selected = results[selectionCandidate.option - 1];
+    if (!selected) {
+      return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+    }
+
+    addItemToCart(session, selected, selectionCandidate.quantity);
+    touchSession(session);
+    clearSelectionState(session);
+
+    return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+  }
+
+  if (selectionCandidate && isSelectionPhrase(normalized) && !Array.isArray(session.pendingSelectionResults)) {
+    return '⚠️ Primero debes ver los resultados del catálogo. Busca el medicamento y luego escribe el número de opción y la cantidad.';
+  }
+
   if (session.mode === 'awaiting_choice') {
     const selectionIntent = selectionCandidate || isSelectionIntent(normalized);
     if (selectionCandidate) {
@@ -469,7 +503,7 @@ async function routeMessage(phone, text, session) {
     if (!selectionIntent) {
       clearSelectionState(session);
     } else {
-      return '⚠️ Escribe el número de opción y la cantidad. Ejemplos: *1 2*, *quiero 2 cajas de la opción 1*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+      return '⚠️ Escribe solo el número de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
   }
 
@@ -492,15 +526,15 @@ async function routeMessage(phone, text, session) {
     if (!selectionIntent) {
       clearSelectionState(session);
     } else {
-      return '⚠️ Escribe el número global de opción y la cantidad. Ejemplos: *1 2*, *quiero 2 cajas de la opción 1*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+      return '⚠️ Escribe solo el número global de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
   }
 
   const medicineSearchIntent = Boolean(
     directMedicineQuery ||
     medicineRequests.length > 0 ||
-    /(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina|dosis|presentacion|presentación)/.test(normalized) ||
-    /\b(tienes?|tiene|hay|busco|busca|quiero|necesito|precio|costo|disponible|disponibilidad|medicamento|medicamentos|producto|productos)\b/.test(normalized)
+    (!isSelectionPhrase(normalized) && /(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina|dosis|presentacion|presentación)/.test(normalized)) ||
+    (!isSelectionPhrase(normalized) && /\b(tienes?|tiene|hay|busco|busca|quiero|necesito|precio|costo|disponible|disponibilidad|medicamento|medicamentos|producto|productos)\b/.test(normalized))
   );
 
   if (medicineSearchIntent && !isGreetingOrMenu(normalized)) {
