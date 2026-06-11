@@ -832,6 +832,60 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const primaryTokens = focusTokens.length ? focusTokens : matchTokens;
   const primaryRoot = primaryTokens.join(' ');
 
+  function jaroWinklerSimilarity(a, b) {
+    const left = normalizeText(a);
+    const right = normalizeText(b);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+
+    const leftLen = left.length;
+    const rightLen = right.length;
+    const matchDistance = Math.max(Math.floor(Math.max(leftLen, rightLen) / 2) - 1, 0);
+
+    const leftMatches = new Array(leftLen).fill(false);
+    const rightMatches = new Array(rightLen).fill(false);
+
+    let matches = 0;
+    for (let i = 0; i < leftLen; i++) {
+      const start = Math.max(0, i - matchDistance);
+      const end = Math.min(i + matchDistance + 1, rightLen);
+      for (let j = start; j < end; j++) {
+        if (rightMatches[j]) continue;
+        if (left[i] !== right[j]) continue;
+        leftMatches[i] = true;
+        rightMatches[j] = true;
+        matches += 1;
+        break;
+      }
+    }
+
+    if (!matches) return 0;
+
+    let transpositions = 0;
+    for (let i = 0, j = 0; i < leftLen; i++) {
+      if (!leftMatches[i]) continue;
+      while (j < rightLen && !rightMatches[j]) j += 1;
+      if (j < rightLen && left[i] !== right[j]) transpositions += 1;
+      j += 1;
+    }
+
+    transpositions /= 2;
+
+    const jaro = (
+      (matches / leftLen) +
+      (matches / rightLen) +
+      ((matches - transpositions) / matches)
+    ) / 3;
+
+    let prefix = 0;
+    for (let i = 0; i < Math.min(4, leftLen, rightLen); i++) {
+      if (left[i] !== right[i]) break;
+      prefix += 1;
+    }
+
+    return jaro + (prefix * 0.1 * (1 - jaro));
+  }
+
   function tokenSimilarity(a, b) {
     const left = normalizeText(a);
     const right = normalizeText(b);
@@ -839,22 +893,21 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (left === right) return 1;
 
     const maxLen = Math.max(left.length, right.length);
-    const minLen = Math.min(left.length, right.length);
     const lengthGap = Math.abs(left.length - right.length);
     if (lengthGap > 4) return 0;
 
     const distance = levenshteinDistance(left, right);
-    const similarity = 1 - (distance / maxLen);
-    const relaxedThreshold = maxLen >= 10 ? 0.6 : maxLen >= 7 ? 0.7 : 0.8;
-    const maxDistance = maxLen >= 10 ? 4 : maxLen >= 7 ? 3 : 2;
+    const jw = jaroWinklerSimilarity(left, right);
 
-    if (distance <= maxDistance && similarity >= relaxedThreshold) return similarity;
-
-    if (minLen >= 5 && left[0] === right[0] && left[left.length - 1] === right[right.length - 1] && distance <= maxDistance + 1) {
-      return similarity;
+    if (maxLen <= 5) {
+      return (distance <= 1 || jw >= 0.94) ? Math.max(1 - (distance / maxLen), jw) : 0;
     }
 
-    return 0;
+    if (maxLen <= 8) {
+      return (distance <= 2 || jw >= 0.9) ? Math.max(1 - (distance / maxLen), jw) : 0;
+    }
+
+    return (distance <= 3 || jw >= 0.84) ? Math.max(1 - (distance / maxLen), jw) : 0;
   }
   const vitaminPhrases = extractVitaminFocusPhrases(matchQuery);
   const vitaminFocusWord = extractVitaminFocusTokens(matchQuery)[0] || '';
@@ -961,9 +1014,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
           if (bestSimilarity >= 0.92) break;
         }
 
-        if (bestSimilarity >= 0.9) score += 24;
-        else if (bestSimilarity >= 0.85) score += 16;
-        else if (bestSimilarity >= 0.8) score += 8;
+        if (bestSimilarity >= 0.95) score += 24;
+        else if (bestSimilarity >= 0.9) score += 18;
+        else if (bestSimilarity >= 0.85) score += 10;
+        else if (bestSimilarity >= 0.8) score += 4;
       }
     }
 
@@ -1091,7 +1145,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120);
     candidateMatches = similarityMatches.filter((item) => {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.score ?? 0) >= 140;
+      return (item.score ?? 0) >= 150;
     });
 
     if (!candidateMatches.length) {
