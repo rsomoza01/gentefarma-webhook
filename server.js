@@ -979,6 +979,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       tokenHitsIngredient,
       bestTokenHits,
       strongTokenCoverage,
+      fullFocusMatch,
       exactPhraseHit,
       phraseHit,
       vitaminHit: isVitaminQuery
@@ -1004,6 +1005,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
         ...signal,
         score: metrics.score,
         exactHit,
+        fullFocusMatch: metrics.fullFocusMatch,
         phraseHit: metrics.phraseHit,
         vitaminHit: metrics.vitaminHit,
         tokenCoverage: Math.max(metrics.tokenHitsTitle, metrics.tokenHitsArray, metrics.tokenHitsIngredient),
@@ -1049,16 +1051,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
     candidateMatches = focusedVitaminMatches;
   } else {
     const exactMatches = scoredProducts.filter((item) => item.exactHit || item.phraseHit || item.fullFocusMatch);
-    candidateMatches = exactMatches.length
-      ? exactMatches
-      : scoredProducts.filter((item) => (item.fullFocusMatch && (item.score ?? 0) >= 0) || ((item.score ?? 0) >= 120 && item.tokenCoverage >= 2));
+    candidateMatches = exactMatches.filter((item) => item.fullFocusMatch || (item.score ?? 0) >= 120 || item.exactHit);
 
     if (!candidateMatches.length) {
-      candidateMatches = scoredProducts.filter((item) => item.fullFocusMatch || (item.score ?? 0) >= 80);
-    }
-
-    if (!candidateMatches.length) {
-      candidateMatches = scoredProducts.filter((item) => item.fullFocusMatch);
+      candidateMatches = scoredProducts.filter((item) => item.fullFocusMatch && (item.score ?? 0) >= 120);
     }
 
     if (!candidateMatches.length) {
