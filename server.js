@@ -550,6 +550,10 @@ async function routeMessage(phone, text, session) {
     return null;
   }
 
+  if (/^(listo|resumen)\b/.test(normalized)) {
+    return buildSelectedProductsSummary(session);
+  }
+
   if (isThanksMessage(normalized)) {
     return 'Con gusto. Estoy aquí para ayudarte cuando necesites buscar otro medicamento.';
   }
