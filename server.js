@@ -65,8 +65,64 @@ initFirebase();
 // Session memory
 // ----------------------------------------------------
 const sessions = new Map();
+const processedInboundMessages = new Map();
 let botEnabled = true;
 const BOT_ADMIN_NUMBER = '584128840350';
+const INBOUND_MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
+const INBOUND_MESSAGE_NO_ID_DEDUP_WINDOW_MS = 2500;
+
+function cleanupProcessedInboundMessages(now = Date.now()) {
+  for (const [key, value] of processedInboundMessages.entries()) {
+    if (!value || now - value.seenAt > INBOUND_MESSAGE_DEDUP_TTL_MS) {
+      processedInboundMessages.delete(key);
+    }
+  }
+}
+
+function extractMessageId(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  const messageId =
+    node?.Info?.MessageID ||
+    node?.Info?.MessageId ||
+    node?.Info?.ID ||
+    node?.messageId ||
+    node?.messageID ||
+    node?.id ||
+    node?.key?.id ||
+    node?.message?.key?.id ||
+    node?.data?.key?.id ||
+    node?.messages?.[0]?.key?.id ||
+    '';
+
+  return String(messageId || '').trim();
+}
+
+function isDuplicateInboundMessage(payload, from, body) {
+  const now = Date.now();
+  cleanupProcessedInboundMessages(now);
+
+  const messageId = extractMessageId(payload);
+  if (messageId) {
+    const key = `id:${messageId}`;
+    if (processedInboundMessages.has(key)) return true;
+    processedInboundMessages.set(key, { seenAt: now });
+    return false;
+  }
+
+  const fallbackKey = `fallback:${normalizeText(from)}:${normalizeText(body)}`;
+  const previous = processedInboundMessages.get(fallbackKey);
+  if (previous && now - previous.seenAt < INBOUND_MESSAGE_NO_ID_DEDUP_WINDOW_MS) {
+    return true;
+  }
+
+  processedInboundMessages.set(fallbackKey, { seenAt: now });
+  return false;
+}
+
+function registerOutboundMessageId(messageId) {
+  if (!messageId) return;
+  processedInboundMessages.set(`out:${String(messageId).trim()}`, { seenAt: Date.now() });
+}
 
 function getSession(phone) {
   if (!sessions.has(phone)) {
@@ -512,6 +568,11 @@ async function processIncomingMessage(payload) {
 
     if (!body) {
       console.log('⚠️ No se pudo obtener el texto del mensaje.');
+      return;
+    }
+
+    if (isDuplicateInboundMessage(payload, from, body)) {
+      console.log('↩️ Mensaje duplicado detectado, ignorado.');
       return;
     }
 
@@ -1976,6 +2037,15 @@ async function sendWhatsAppMessage(phone, text) {
         timeout: 30000
       }
     );
+
+    const sentMessageId =
+      response?.data?.key?.id ||
+      response?.data?.messageId ||
+      response?.data?.data?.key?.id ||
+      response?.data?.data?.messageId ||
+      null;
+
+    registerOutboundMessageId(sentMessageId);
 
     console.log('✅ Mensaje enviado por WhatsApp:', response.data);
     return response.data;
