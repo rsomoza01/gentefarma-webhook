@@ -747,7 +747,10 @@ async function callGoogleVisionOCR(imageBase64) {
     {
       requests: [{
         image: { content: imageBase64 },
-        features: [{ type: 'TEXT_DETECTION' }]
+        features: [
+          { type: 'DOCUMENT_TEXT_DETECTION' },
+          { type: 'TEXT_DETECTION' }
+        ]
       }]
     },
     {
@@ -762,22 +765,38 @@ async function callGoogleVisionOCR(imageBase64) {
 function extractMediaDescriptor(payload) {
   const node = unwrapMessagePayload(payload) || {};
   const candidates = [
+    node,
     node?.Message,
     node?.message,
+    node?.data,
+    node?.data?.Message,
     node?.data?.message,
+    node?.messages?.[0],
     node?.messages?.[0]?.message,
+    node?.key,
     node?.key?.message
   ].filter(Boolean);
 
+  const mediaKeys = [
+    'imageMessage',
+    'documentMessage',
+    'mediaMessage',
+    'videoMessage',
+    'audioMessage'
+  ];
+
   for (const candidate of candidates) {
-    const image = candidate?.imageMessage;
-    const document = candidate?.documentMessage;
-    if (image?.url || image?.mediaUrl || image?.directPath || document?.url || document?.mediaUrl || document?.directPath) {
-      const media = image || document;
+    for (const mediaKey of mediaKeys) {
+      const media = candidate?.[mediaKey] || candidate?.message?.[mediaKey] || candidate?.Message?.[mediaKey];
+      if (!media) continue;
+
+      const url = media.url || media.mediaUrl || media.directPath || media.thumbnailDirectPath || media.thumbnailUrl || media.filePath || media.path || '';
+      if (!url) continue;
+
       return {
-        url: media.url || media.mediaUrl || media.directPath || '',
+        url,
         mimeType: media.mimetype || media.mimeType || media.type || '',
-        fileName: media.fileName || media.filename || '',
+        fileName: media.fileName || media.filename || media.fileName || '',
         headers: media.headers || {}
       };
     }
