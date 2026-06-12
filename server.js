@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const fs = require('fs');
 const admin = require('firebase-admin');
 
 const app = express();
@@ -12,6 +13,12 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go-dd3c.onrender.com';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
 const PORT = process.env.PORT || 3000;
+const MEDIA_ANALYSIS_TIMEOUT_MS = Number(process.env.MEDIA_ANALYSIS_TIMEOUT_MS || 45000);
+const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OCR_PROVIDER = process.env.OCR_PROVIDER || (GOOGLE_VISION_API_KEY ? 'google' : (OPENAI_API_KEY ? 'openai' : 'none'));
+const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
+const OPENAI_VISION_PROMPT = process.env.OPENAI_VISION_PROMPT || 'Transcribe all visible text from this prescription or medicine box image. Return only the extracted text, preserving line breaks when helpful.';
 
 // ----------------------------------------------------
 // Firebase init
@@ -548,9 +555,11 @@ async function processIncomingMessage(payload) {
     console.log('📨 Payload del mensaje:', JSON.stringify(payload, null, 2));
 
     const from = extractFrom(payload);
-    const body = extractBody(payload);
     const fromMe = extractFromMe(payload);
     const adminRecipient = extractRecipient(payload);
+    const media = extractMediaDescriptor(payload);
+    const mediaAnalysis = media ? await analyzeIncomingMedia(media) : null;
+    const body = extractBody(payload) || mediaAnalysis?.text || '';
     const normalizedBody = normalizeText(body);
     const normalizedFrom = normalizeText(from);
     const normalizedRecipient = normalizeText(adminRecipient);
@@ -558,7 +567,7 @@ async function processIncomingMessage(payload) {
     const isControlMessage = isBotControlMessage(body);
     const isControlCommand = isControlMessage && isAdmin;
 
-    console.log('🔎 Extraído:', { from, adminRecipient, body, fromMe });
+    console.log('🔎 Extraído:', { from, adminRecipient, body, fromMe, media: media ? { mimeType: media.mimeType, url: media.url ? '[url]' : '', fileName: media.fileName || '' } : null });
     console.log('🔎 Control bot:', { normalizedFrom, normalizedRecipient, isAdmin, isControlMessage, fromMe, botEnabled });
 
     if (!from) {
@@ -566,12 +575,13 @@ async function processIncomingMessage(payload) {
       return;
     }
 
-    if (!body) {
-      console.log('⚠️ No se pudo obtener el texto del mensaje.');
+    if (!body && !mediaAnalysis?.text) {
+      console.log('⚠️ No se pudo obtener el texto del mensaje ni OCR de imagen/documento.');
       return;
     }
 
-    if (isDuplicateInboundMessage(payload, from, body)) {
+    const dedupeBody = body || mediaAnalysis?.signature || media?.url || media?.fileName || '';
+    if (isDuplicateInboundMessage(payload, from, dedupeBody)) {
       console.log('↩️ Mensaje duplicado detectado, ignorado.');
       return;
     }
@@ -634,6 +644,146 @@ async function processMessageUpdate(messageUpdate) {
   } catch (error) {
     console.error('❌ Error en processMessageUpdate:', error);
   }
+}
+
+async function analyzeIncomingMedia(media) {
+  if (!media || !media.url) return null;
+
+  const mimeType = String(media.mimeType || '').toLowerCase();
+  const isImage = /^image\//.test(mimeType);
+  const isPdf = mimeType.includes('pdf');
+  if (!isImage && !isPdf) return null;
+
+  try {
+    const text = await extractTextFromMedia(media);
+    if (!text) return null;
+    return {
+      text,
+      signature: normalizeText(text).slice(0, 140)
+    };
+  } catch (error) {
+    console.error('❌ Error analizando media entrante:', error.message);
+    return null;
+  }
+}
+
+async function extractTextFromMedia(media) {
+  const url = String(media?.url || '').trim();
+  if (!url) return '';
+
+  const buffer = await downloadRemoteFile(url, media.headers || {});
+  if (!buffer || !buffer.length) return '';
+
+  const mimeType = String(media.mimeType || '').toLowerCase();
+  const imageBase64 = buffer.toString('base64');
+
+  if (OCR_PROVIDER === 'openai' && OPENAI_API_KEY) {
+    const openaiText = await callOpenAIVision(imageBase64, mimeType || 'image/jpeg');
+    if (openaiText) return openaiText;
+  }
+
+  if (OCR_PROVIDER === 'google' && GOOGLE_VISION_API_KEY) {
+    const visionText = await callGoogleVisionOCR(imageBase64);
+    if (visionText) return visionText;
+  }
+
+  if (OCR_PROVIDER === 'auto') {
+    if (GOOGLE_VISION_API_KEY) {
+      const visionText = await callGoogleVisionOCR(imageBase64);
+      if (visionText) return visionText;
+    }
+    if (OPENAI_API_KEY) {
+      const openaiText = await callOpenAIVision(imageBase64, mimeType || 'image/jpeg');
+      if (openaiText) return openaiText;
+    }
+  }
+
+  return '';
+}
+
+async function downloadRemoteFile(url, headers = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), MEDIA_ANALYSIS_TIMEOUT_MS);
+  try {
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
+      headers,
+      signal: controller.signal
+    });
+    return Buffer.from(response.data);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function callOpenAIVision(imageBase64, mimeType) {
+  const payload = {
+    model: OPENAI_VISION_MODEL,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: OPENAI_VISION_PROMPT },
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } }
+      ]
+    }],
+    temperature: 0
+  };
+
+  const response = await axios.post('https://api.openai.com/v1/chat/completions', payload, {
+    timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  return String(response?.data?.choices?.[0]?.message?.content || '').trim();
+}
+
+async function callGoogleVisionOCR(imageBase64) {
+  const response = await axios.post(
+    `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`,
+    {
+      requests: [{
+        image: { content: imageBase64 },
+        features: [{ type: 'TEXT_DETECTION' }]
+      }]
+    },
+    {
+      timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
+      headers: { 'Content-Type': 'application/json' }
+    }
+  );
+
+  return String(response?.data?.responses?.[0]?.fullTextAnnotation?.text || response?.data?.responses?.[0]?.textAnnotations?.[0]?.description || '').trim();
+}
+
+function extractMediaDescriptor(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  const candidates = [
+    node?.Message,
+    node?.message,
+    node?.data?.message,
+    node?.messages?.[0]?.message,
+    node?.key?.message
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const image = candidate?.imageMessage;
+    const document = candidate?.documentMessage;
+    if (image?.url || image?.mediaUrl || image?.directPath || document?.url || document?.mediaUrl || document?.directPath) {
+      const media = image || document;
+      return {
+        url: media.url || media.mediaUrl || media.directPath || '',
+        mimeType: media.mimetype || media.mimeType || media.type || '',
+        fileName: media.fileName || media.filename || '',
+        headers: media.headers || {}
+      };
+    }
+  }
+
+  return null;
 }
 
 // ----------------------------------------------------
@@ -1028,14 +1178,7 @@ async function searchAndBuildCatalogResponse(text, session) {
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ *${singleQuery.trim()}* no está disponible en este momento.
-
-Intenta con el nombre del medicamento o una presentación distinta.
-Ejemplos:
-• *atamel*
-• *histaler ped*
-• *desloratadina*
-• *ibuprofeno*`;
+    return `⚠️ *${singleQuery.trim()}* no está disponible en este momento.\n\nIntenta con el nombre del medicamento o una presentación distinta.\nEjemplos:\n• *atamel*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno*`;
   }
 
   session.lastSearch = result;
