@@ -1098,7 +1098,7 @@ function buildHumanAgentMessage() {
 }
 
 function buildLocationMessage() {
-  return `Somos una plataforma online, no tenemos local físico. A través de nuestra web o número de WhatsApp te ayudamos a buscar tus medicinas y comparar precios, para que encuentres la opción que más te convenga. Sin salir de casa 😉.`;
+  return `¡Hola!. Somos una plataforma online, no tenemos local físico. A través de nuestra web o número de WhatsApp te ayudamos a buscar tus medicinas y comparar precios, para que encuentres la opción que más te convenga. Sin salir de casa 😉. Visita http://www.gentefarma.com o escríbenos por WhatsApp y te ayudamos a gestionar tu pedido. 🙌`;
 }
 
 function buildMoreInfoMessage() {
