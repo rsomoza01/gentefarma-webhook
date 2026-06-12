@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const crypto = require('crypto');
 const fs = require('fs');
 const admin = require('firebase-admin');
 
@@ -647,7 +648,7 @@ async function processMessageUpdate(messageUpdate) {
 }
 
 async function analyzeIncomingMedia(media) {
-  if (!media || !media.url) return null;
+  if (!media || (!media.url && !media.downloadMessage)) return null;
 
   const mimeType = String(media.mimeType || '').toLowerCase();
   const isImage = /^image\//.test(mimeType);
@@ -668,10 +669,7 @@ async function analyzeIncomingMedia(media) {
 }
 
 async function extractTextFromMedia(media) {
-  const url = String(media?.url || '').trim();
-  if (!url) return '';
-
-  const buffer = await downloadRemoteFile(url, media.headers || {});
+  const buffer = await downloadMediaBuffer(media);
   if (!buffer || !buffer.length) return '';
 
   const mimeType = String(media.mimeType || '').toLowerCase();
@@ -701,7 +699,33 @@ async function extractTextFromMedia(media) {
   return '';
 }
 
-async function downloadRemoteFile(url, headers = {}) {
+async function downloadMediaBuffer(media) {
+  const downloadMessage = media?.downloadMessage || null;
+  if (downloadMessage) {
+    try {
+      const response = await axios.post(
+        `${EVOLUTION_API_URL}/message/downloadimage`,
+        { message: downloadMessage },
+        {
+          timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: EVOLUTION_API_KEY
+          }
+        }
+      );
+
+      const buffer = bufferFromEvolutionDownloadResponse(response?.data);
+      if (buffer && buffer.length) return buffer;
+    } catch (error) {
+      console.error('❌ Error descargando media vía Evolution GO:', error.response?.data || error.message);
+    }
+  }
+
+  const url = String(media?.url || '').trim();
+  if (!url) return Buffer.alloc(0);
+
+  const headers = media.headers || {};
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), MEDIA_ANALYSIS_TIMEOUT_MS);
   try {
@@ -715,6 +739,56 @@ async function downloadRemoteFile(url, headers = {}) {
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function bufferFromEvolutionDownloadResponse(data) {
+  if (!data) return null;
+
+  if (Buffer.isBuffer(data)) return data;
+  if (typeof data === 'string') {
+    const text = data.trim();
+    const base64Match = text.match(/^data:[^;]+;base64,(.+)$/i);
+    if (base64Match) return Buffer.from(base64Match[1], 'base64');
+    if (/^[A-Za-z0-9+/=\s]+$/.test(text) && text.length > 32) {
+      try {
+        return Buffer.from(text.replace(/\s+/g, ''), 'base64');
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  const candidates = [
+    data?.data,
+    data?.result,
+    data?.media,
+    data?.file,
+    data?.buffer,
+    data?.base64,
+    data?.dataUrl,
+    data?.dataURL,
+    data?.url
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (Buffer.isBuffer(candidate)) return candidate;
+    if (typeof candidate === 'string') {
+      const text = candidate.trim();
+      const base64Match = text.match(/^data:[^;]+;base64,(.+)$/i);
+      if (base64Match) return Buffer.from(base64Match[1], 'base64');
+      if (/^[A-Za-z0-9+/=\s]+$/.test(text) && text.length > 32) {
+        try {
+          return Buffer.from(text.replace(/\s+/g, ''), 'base64');
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 async function callOpenAIVision(imageBase64, mimeType) {
@@ -782,23 +856,36 @@ function extractMediaDescriptor(payload) {
     'documentMessage',
     'mediaMessage',
     'videoMessage',
-    'audioMessage'
+    'audioMessage',
+    'stickerMessage'
   ];
+
+  const buildDownloadMessage = (media, mediaType) => {
+    if (!media || !mediaType) return null;
+    const cloned = JSON.parse(JSON.stringify(media));
+    if (cloned.url && !cloned.URL) cloned.URL = cloned.url;
+    if (cloned.mediaUrl && !cloned.URL) cloned.URL = cloned.mediaUrl;
+    if (cloned.directPath && !cloned.URL) cloned.URL = cloned.directPath;
+    if (cloned.mimetype && !cloned.mimeType) cloned.mimeType = cloned.mimetype;
+    return {
+      [mediaType]: cloned,
+      mimeType: cloned.mimeType || cloned.mimetype || '',
+      url: cloned.URL || cloned.url || cloned.mediaUrl || cloned.directPath || '',
+      fileName: cloned.fileName || cloned.filename || '',
+      headers: cloned.headers || {},
+      downloadMessage: { [mediaType]: cloned }
+    };
+  };
 
   for (const candidate of candidates) {
     for (const mediaKey of mediaKeys) {
       const media = candidate?.[mediaKey] || candidate?.message?.[mediaKey] || candidate?.Message?.[mediaKey];
       if (!media) continue;
 
-      const url = media.url || media.mediaUrl || media.directPath || media.thumbnailDirectPath || media.thumbnailUrl || media.filePath || media.path || '';
-      if (!url) continue;
-
-      return {
-        url,
-        mimeType: media.mimetype || media.mimeType || media.type || '',
-        fileName: media.fileName || media.filename || media.fileName || '',
-        headers: media.headers || {}
-      };
+      const descriptor = buildDownloadMessage(media, mediaKey);
+      if (!descriptor) continue;
+      if (!descriptor.url && !descriptor.downloadMessage) continue;
+      return descriptor;
     }
   }
 
