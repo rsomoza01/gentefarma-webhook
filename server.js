@@ -328,92 +328,102 @@ function getCartTotals(session) {
   return { totalUsd, totalBs };
 }
 
-function parseSelectionAndQuantity(text) {
+function parseSelectionCommand(text) {
   const normalized = normalizeText(text)
-    .replace(/\b(quiero|quisiera|dame|agregar|agrega|sumar|sumame|añadir|anadir|seleccionar|selecciona|elegir|elige|escoger|escoje|de|la|el|las|los|porfavor|por favor)\b/g, ' ')
+    .replace(/\b(quiero|quisiera|dame|agregar|agrega|sumar|sumame|añadir|anadir|seleccionar|selecciona|elegir|elige|escoger|escoje|de|la|el|las|los|porfavor|por favor|solo)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
   if (!normalized) return null;
 
-  const optionMatch = normalized.match(/\b(?:opcion|opci[oó]n)\s*(?:nro\.?|numero|número)?\s*(\d+)\b/i);
-  const optionAfter = normalized.match(/\b(\d+)\s*(?:de\s+la\s+|de\s+)?(?:opcion|opci[oó]n)\b/i);
-  const quantityMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
-  const quantityBeforeOption = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(?:de\s+la\s+|de\s+)?(?:opcion|opci[oó]n)\s*(\d+)\b/i);
-  const optionBeforeQuantity = normalized.match(/\b(?:opcion|opci[oó]n)\s*(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(\d+)?\b/i);
-  const compactPattern = normalized.match(/^(\d+)\s*x\s*(\d+)$/i);
+  const optionMarker = normalized.match(/\b(?:opcion|opci[oó]n)\s*(?:nro\.?|numero|número)?\s*(.+)$/i);
+  const quantityBeforeOption = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(?:de\s+la\s+|de\s+)?(?:opcion|opci[oó]n)\s*(.+)$/i);
+  const quantityOnlyMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
+  const compactPattern = normalized.match(/^(\d+)\s*x\s*(\d+(?:\s*[,y]\s*\d+)*)$/i);
+  const shortPairPattern = normalized.match(/^(\d+)\s+(\d+(?:\s*[,y]\s*\d+)*)$/i);
+  const optionOnlyPattern = normalized.match(/^\s*(?:opcion|opci[oó]n)\s*(\d+(?:\s*[,y]\s*\d+)*)\s*$/i);
+  const plainListPattern = normalized.match(/^(?:\d+(?:\s*[,y]\s*\d+)+)$/i);
+
+  const parseOptionList = (value) => {
+    const matches = String(value || '').match(/\d+/g) || [];
+    return [...new Set(matches.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0))];
+  };
+
+  const buildResult = (options, quantity, rawText = normalized) => {
+    const uniqueOptions = [...new Set((options || []).filter((n) => Number.isInteger(n) && n > 0))];
+    if (!uniqueOptions.length) return null;
+    return {
+      quantity: Number.isInteger(quantity) && quantity > 0 ? quantity : 1,
+      options: uniqueOptions,
+      option: uniqueOptions[0],
+      raw: rawText
+    };
+  };
 
   if (quantityBeforeOption) {
     const quantity = Number(quantityBeforeOption[1]);
-    const option = Number(quantityBeforeOption[2]);
-    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
-      return { option, quantity };
-    }
+    const options = parseOptionList(quantityBeforeOption[2]);
+    const built = buildResult(options, quantity, normalized);
+    if (built) return built;
   }
 
-  if (optionMatch || optionAfter || optionBeforeQuantity) {
-    const option = Number((optionMatch || optionAfter || optionBeforeQuantity)[1]);
-    const quantity = quantityMatch ? Number(quantityMatch[1]) : (optionBeforeQuantity && optionBeforeQuantity[2] ? Number(optionBeforeQuantity[2]) : 1);
-    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
-      return { option, quantity };
-    }
+  if (optionMarker) {
+    const options = parseOptionList(optionMarker[1]);
+    const built = buildResult(options, quantityOnlyMatch ? Number(quantityOnlyMatch[1]) : 1, normalized);
+    if (built) return built;
   }
 
   if (compactPattern) {
-    const option = Number(compactPattern[1]);
-    const quantity = Number(compactPattern[2]);
-    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
-      return { option, quantity };
-    }
+    const quantity = Number(compactPattern[1]);
+    const options = parseOptionList(compactPattern[2]);
+    const built = buildResult(options, quantity, normalized);
+    if (built) return built;
   }
 
-  const quantityOnlyMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
+  if (shortPairPattern) {
+    const quantity = Number(shortPairPattern[1]);
+    const options = parseOptionList(shortPairPattern[2]);
+    const built = buildResult(options, quantity, normalized);
+    if (built) return built;
+  }
+
+  if (optionOnlyPattern) {
+    const options = parseOptionList(optionOnlyPattern[1]);
+    const built = buildResult(options, 1, normalized);
+    if (built) return built;
+  }
+
+  if (plainListPattern) {
+    const options = parseOptionList(normalized);
+    const built = buildResult(options, 1, normalized);
+    if (built) return built;
+  }
+
   if (quantityOnlyMatch) {
     const quantity = Number(quantityOnlyMatch[1]);
     if (Number.isInteger(quantity) && quantity > 0) {
-      return { option: 1, quantity };
-    }
-  }
-
-  const optionQuantityPattern = normalized.match(/^(?:opcion|opci[oó]n)\s*(\d+)\s*(?:x|por|de)?\s*(\d+)?$/i);
-  if (optionQuantityPattern) {
-    const option = Number(optionQuantityPattern[1]);
-    const quantity = optionQuantityPattern[2] ? Number(optionQuantityPattern[2]) : 1;
-    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
-      return { option, quantity };
-    }
-  }
-
-  const shortPattern = normalized.match(/^(\d+)\s+(\d+)$/);
-  if (shortPattern) {
-    const option = Number(shortPattern[1]);
-    const quantity = Number(shortPattern[2]);
-    if (Number.isInteger(option) && option > 0 && Number.isInteger(quantity) && quantity > 0) {
-      return { option, quantity };
+      const options = parseOptionList(normalized);
+      if (options.length) return buildResult(options, quantity, normalized);
     }
   }
 
   const numbers = normalized.match(/\d+/g) || [];
   if (!numbers.length) return null;
 
-  const option = Number(numbers[0]);
-  const quantity = numbers.length >= 2 ? Number(numbers[1]) : 1;
-
-  if (!Number.isInteger(option) || option <= 0) return null;
-  if (!Number.isInteger(quantity) || quantity <= 0) return null;
-
-  return { option, quantity };
+  const quantity = quantityOnlyMatch ? Number(quantityOnlyMatch[1]) : 1;
+  const options = parseOptionList(numbers.join(' '));
+  return buildResult(options, quantity, normalized);
 }
 
 function isSelectionPhrase(value) {
   const text = normalizeText(value);
-  return /\b(opcion|opci[oó]n|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x)\b/.test(text) && /\d+/.test(text);
+  return /\b(opcion|opci[oó]n|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x|opciones)\b/.test(text) && /\d+/.test(text);
 }
 
 
 function isSelectionIntent(value) {
   const text = normalizeText(value);
-  return /\b(opcion|opci[oó]n|seleccionar|selecciona|agregar|agrega|quiero|quisiera|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x)\b/.test(text) && /\d+/.test(text);
+  return /\b(opcion|opci[oó]n|opciones|seleccionar|selecciona|agregar|agrega|quiero|quisiera|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x)\b/.test(text) && /\d+/.test(text);
 }
 
 
@@ -996,16 +1006,50 @@ async function routeMessage(phone, text, session) {
 
   if (selectionCandidate && hasSelectionResults) {
     const results = resolveSelectionResults(session);
-    const selected = results[selectionCandidate.option - 1];
-    if (!selected) {
-      return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
+    const optionList = Array.isArray(selectionCandidate.options) && selectionCandidate.options.length
+      ? selectionCandidate.options
+      : [selectionCandidate.option].filter(Boolean);
+    const quantity = Number(selectionCandidate.quantity) || 1;
+    const selectedItems = [];
+    const missingOptions = [];
+
+    for (const optionNumber of optionList) {
+      const selected = results[optionNumber - 1];
+      if (!selected) {
+        missingOptions.push(optionNumber);
+        continue;
+      }
+
+      addItemToCart(session, selected, quantity);
+      pushSelectionHistory(session, selected, quantity);
+      selectedItems.push({ selected, quantity });
     }
 
-    addItemToCart(session, selected, selectionCandidate.quantity);
-    pushSelectionHistory(session, selected, selectionCandidate.quantity);
-    touchSession(session);
+    if (selectedItems.length) {
+      touchSession(session);
+      const savedLines = ['✅ *Agregado a tu selección*', ''];
+      selectedItems.forEach(({ selected, quantity }, index) => {
+        const title = selected.title || 'Medicamento';
+        const usdUnit = selected.priceUsd !== null ? `$${formatPrice(selected.priceUsd)}` : 'No disponible';
+        const bsUnit = selected.priceBs !== null ? `Bs ${formatPrice(selected.priceBs)}` : 'No disponible';
+        const totalUsd = selected.priceUsd !== null ? `$${formatPrice((Number(selected.priceUsd) || 0) * quantity)}` : 'No disponible';
+        const totalBs = selected.priceBs !== null ? `Bs ${formatPrice((Number(selected.priceBs) || 0) * quantity)}` : 'No disponible';
+        savedLines.push(`${index + 1}. 💊 *${title}*`);
+        savedLines.push(`   Cantidad: *${quantity}*`);
+        savedLines.push(`   Unitario: ${usdUnit}  |  ${bsUnit}`);
+        savedLines.push(`   Subtotal: ${totalUsd}  |  ${totalBs}`);
+        savedLines.push('');
+      });
+      const { totalUsd, totalBs } = getCartTotals(session);
+      savedLines.push(`🧾 Tu carrito actual: *$${formatPrice(totalUsd)}*  |  *Bs ${formatPrice(totalBs)}*`);
+      if (missingOptions.length) {
+        savedLines.push(`⚠️ No encontré la opción *${missingOptions.join(', ')}* en la lista actual.`);
+      }
+      savedLines.push('Puedes seguir agregando opciones de esta misma lista o escribir *LISTO* para ver el pedido completo.');
+      return savedLines.join('\n').trim();
+    }
 
-    return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+    return `⚠️ No encontré ninguna de las opciones solicitadas: *${optionList.join(', ')}*.`;
   }
 
   if (selectionCandidate && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global')) {
@@ -1018,16 +1062,50 @@ async function routeMessage(phone, text, session) {
       return '⚠️ Para agregar un producto, primero necesito la lista de opciones del medicamento. Busca el medicamento y luego escribe el número de opción y la cantidad.';
     }
 
-    const selected = results[selectionCandidate.option - 1];
-    if (!selected) {
-      return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Revisa el número y vuelve a intentarlo.`;
+    const optionList = Array.isArray(selectionCandidate.options) && selectionCandidate.options.length
+      ? selectionCandidate.options
+      : [selectionCandidate.option].filter(Boolean);
+    const quantity = Number(selectionCandidate.quantity) || 1;
+    const selectedItems = [];
+    const missingOptions = [];
+
+    for (const optionNumber of optionList) {
+      const selected = results[optionNumber - 1];
+      if (!selected) {
+        missingOptions.push(optionNumber);
+        continue;
+      }
+
+      addItemToCart(session, selected, quantity);
+      pushSelectionHistory(session, selected, quantity);
+      selectedItems.push({ selected, quantity });
     }
 
-    addItemToCart(session, selected, selectionCandidate.quantity);
-    pushSelectionHistory(session, selected, selectionCandidate.quantity);
-    touchSession(session);
+    if (!selectedItems.length) {
+      return `⚠️ No encontré ninguna de las opciones solicitadas: *${optionList.join(', ')}*.`;
+    }
 
-    return formatSelectionSavedMessage(selected, selectionCandidate.quantity, session);
+    touchSession(session);
+    const savedLines = ['✅ *Agregado a tu selección*', ''];
+    selectedItems.forEach(({ selected, quantity }, index) => {
+      const title = selected.title || 'Medicamento';
+      const usdUnit = selected.priceUsd !== null ? `$${formatPrice(selected.priceUsd)}` : 'No disponible';
+      const bsUnit = selected.priceBs !== null ? `Bs ${formatPrice(selected.priceBs)}` : 'No disponible';
+      const totalUsd = selected.priceUsd !== null ? `$${formatPrice((Number(selected.priceUsd) || 0) * quantity)}` : 'No disponible';
+      const totalBs = selected.priceBs !== null ? `Bs ${formatPrice((Number(selected.priceBs) || 0) * quantity)}` : 'No disponible';
+      savedLines.push(`${index + 1}. 💊 *${title}*`);
+      savedLines.push(`   Cantidad: *${quantity}*`);
+      savedLines.push(`   Unitario: ${usdUnit}  |  ${bsUnit}`);
+      savedLines.push(`   Subtotal: ${totalUsd}  |  ${totalBs}`);
+      savedLines.push('');
+    });
+    const { totalUsd, totalBs } = getCartTotals(session);
+    savedLines.push(`🧾 Tu carrito actual: *$${formatPrice(totalUsd)}*  |  *Bs ${formatPrice(totalBs)}*`);
+    if (missingOptions.length) {
+      savedLines.push(`⚠️ No encontré la opción *${missingOptions.join(', ')}* en la lista actual.`);
+    }
+    savedLines.push('Puedes seguir agregando opciones de esta misma lista o escribir *LISTO* para ver el pedido completo.');
+    return savedLines.join('\n').trim();
   }
 
   if (session.mode === 'awaiting_choice') {
@@ -1229,7 +1307,7 @@ function buildSearchDiagnosticMessage(result, query) {
     lines.push('');
   });
 
-  lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
+  lines.push('👉 Para agregar: quiero X cajas de la opción Z');
   lines.push('Ejemplo: quiero 2 cajas de la opción 3');
   lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
   lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
@@ -1877,7 +1955,7 @@ function buildCatalogResponse(result) {
   });
 
   lines.push('');
-  lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
+  lines.push('👉 Para agregar: quiero X cajas de la opción Z');
   lines.push('Ejemplo: quiero 2 cajas de la opción 3');
   lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
   lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
@@ -1931,7 +2009,7 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
   });
 
   lines.push('');
-  lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
+  lines.push('👉 Para agregar: quiero X cajas de la opción Z');
   lines.push('Ejemplo: quiero 2 cajas de la opción 3');
   lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
   lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
