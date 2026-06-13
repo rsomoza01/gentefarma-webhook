@@ -855,7 +855,7 @@ async function callOpenAIVision(imageBase64, mimeType) {
 
 async function callGoogleVisionOCR(imageBase64) {
   const response = await axios.post(
-    `https://vision.googleapis.com/v1/images:annotate?key=[REDACTED]`,
+    `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`,
     {
       requests: [{
         image: { content: imageBase64 },
@@ -1072,7 +1072,7 @@ async function routeMessage(phone, text, session) {
     if (!selectionIntent) {
       clearSelectionState(session);
     } else {
-      return '⚠️ Escribe el número global de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+      return '⚠️ Escribe solo el número global de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
   }
 
@@ -1474,7 +1474,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     const arrayTokens = tokenize(titleArrayTextFull);
     const ingredientTokens = tokenize(ingredient);
     const searchTokens = tokenize([productTitleFull, titleArrayTextFull, ingredient, productText].filter(Boolean).join(' '));
-    const tokenSet = new Set([...titleTokens, ...arrayTokens, ...ingredientTokens, ...searchTokens);
+    const tokenSet = new Set([...titleTokens, ...arrayTokens, ...ingredientTokens, ...searchTokens]);
 
     return {
       doc,
@@ -2217,42 +2217,10 @@ function buildShortProductLabel(doc) {
     doc?.productName ||
     doc?.medicineName ||
     doc?.medication ||
-    doc?.commercialName ||
-    doc?.brand ||
+    doc?.title ||
     doc?.description ||
     'Medicamento'
   );
-}
-
-function summarizeCatalogHealth(products) {
-  const total = Array.isArray(products) ? products.length : 0;
-  const withTitle = (products || []).filter((doc) => normalizeText(doc?.ProductTitle || buildShortProductLabel(doc))).length;
-  return {
-    total,
-    available: withTitle
-  };
-}
-
-function extractVitaminFocusTokens(value) {
-  const text = normalizeText(value);
-  if (!text) return [];
-  return tokenize(text).filter((token) => token !== 'vitamina' && token !== 'vit');
-}
-
-function extractVitaminFocusPhrases(value) {
-  const text = normalizeText(value);
-  if (!text) return [];
-  const matches = [];
-  const regex = /\b(?:vitamina|vit)\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/gi;
-  let match;
-  while ((match = regex.exec(text))) {
-    matches.push(`vitamina ${normalizeText(match[1])}`);
-  }
-  return [...new Set(matches)];
-}
-
-function formatProductTitle(doc) {
-  return buildShortProductLabel(doc);
 }
 
 function buildProductSearchText(doc) {
@@ -2395,21 +2363,439 @@ async function fetchCollectionDocuments(collectionName, limit = 500) {
 
 async function fetchCatalogProducts(limit = 500) {
   const primary = await fetchCollectionDocuments('products-market', limit);
-  const providers = await fetchCollectionDocuments('providers-products', limit);
-  const merged = [...primary, ...providers];
-  const seen = new Set();
-  return merged.filter((doc) => {
-    const key = normalizeText(doc?.ProductTitle || doc?.productTitle || doc?.name || doc?.productName || doc?.medicineName || doc?.medication || doc?.activeIngredient || doc?.description || doc?.brand || doc?.commercialName || doc?.id || '');
-    if (!key) return true;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  if (primary.length) return primary;
+
+  const fallback = await fetchCollectionDocuments('providers-products', limit);
+  if (fallback.length) return fallback;
+
+  return [];
 }
 
-function buildSummaryFromSelections(session) {
-  const items = ensureSelectedProducts(session);
-  if (!items.length) return '🧾 Aún no has agregado medicamentos a tu pedido.';
+function summarizeCatalogHealth(products) {
+  const list = Array.isArray(products) ? products : [];
+  const withTitle = list.filter((doc) => normalizeText(buildShortProductLabel(doc))).length;
+  const withSearchText = list.filter((doc) => normalizeText(buildProductSearchText(doc))).length;
+  return {
+    total: list.length,
+    available: Math.max(withTitle, withSearchText)
+  };
+}
 
-  const { totalUsd, totalBs } = getCartTotals(session);
+// ----------------------------------------------------
+// WhatsApp send via Evolution GO
+// ----------------------------------------------------
+async function sendOutboundWhatsAppMessage(phone, text) {
+  try {
+    const response = await axios.post(
+      `${EVOLUTION_API_URL}/send/text`,
+      {
+        number: phone,
+        text,
+        formatJid: false
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: EVOLUTION_API_KEY
+        },
+        timeout: 30000
+      }
+    );
 
+    const sentMessageId =
+      response?.data?.key?.id ||
+      response?.data?.messageId ||
+      response?.data?.data?.key?.id ||
+      response?.data?.data?.messageId ||
+      null;
+
+    registerOutboundMessageId(sentMessageId);
+
+    console.log('✅ Mensaje enviado por WhatsApp:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Error enviando WhatsApp:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// ----------------------------------------------------
+// Evolution payload extractors
+// ----------------------------------------------------
+function unwrapMessagePayload(payload) {
+  if (!payload) return null;
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = unwrapMessagePayload(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (payload.Info || payload.Message || payload.key || payload.message) return payload;
+  if (payload.data) {
+    const data = payload.data;
+    if (Array.isArray(data)) return unwrapMessagePayload(data);
+    if (data.Info || data.Message || data.key || data.message) return data;
+    if (Array.isArray(data.messages) && data.messages.length) return unwrapMessagePayload(data.messages[0]);
+    if (data.value) return unwrapMessagePayload(data.value);
+    return unwrapMessagePayload(data);
+  }
+
+  if (Array.isArray(payload.messages) && payload.messages.length) return unwrapMessagePayload(payload.messages[0]);
+  if (payload.value) return unwrapMessagePayload(payload.value);
+
+  return payload;
+}
+
+function extractJidValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/([0-9]{5,})(?=@s\.whatsapp\.net|@lid|$)/i);
+  if (match) return match[1];
+  return raw
+    .replace(/@s\.whatsapp\.net$/i, '')
+    .replace(/@lid$/i, '')
+    .replace(/:\d+$/, '')
+    .trim();
+}
+
+function extractFrom(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  const jid =
+    node?.Info?.Sender ||
+    node?.Info?.Chat ||
+    node?.Sender ||
+    node?.sender ||
+    node?.from ||
+    node?.key?.remoteJid ||
+    node?.message?.key?.remoteJid ||
+    node?.data?.key?.remoteJid ||
+    node?.messages?.[0]?.key?.remoteJid ||
+    '';
+
+  return extractJidValue(jid);
+}
+
+function extractBody(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  return (
+    node?.Message?.conversation ||
+    node?.Message?.extendedTextMessage?.text ||
+    node?.Message?.text ||
+    node?.message?.conversation ||
+    node?.message?.extendedTextMessage?.text ||
+    node?.message?.text ||
+    node?.body ||
+    node?.text ||
+    node?.data?.body ||
+    node?.data?.text ||
+    node?.messages?.[0]?.message?.conversation ||
+    node?.messages?.[0]?.message?.extendedTextMessage?.text ||
+    node?.messages?.[0]?.message?.text ||
+    ''
+  );
+}
+
+function extractFromMe(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  return Boolean(
+    node?.Info?.IsFromMe ??
+    node?.fromMe ??
+    node?.key?.fromMe ??
+    node?.message?.key?.fromMe ??
+    node?.data?.fromMe ??
+    node?.messages?.[0]?.key?.fromMe ??
+    false
+  );
+}
+
+function extractRecipient(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  const jid =
+    node?.Info?.RecipientAlt ||
+    node?.Info?.Chat ||
+    node?.RecipientAlt ||
+    node?.recipient ||
+    node?.to ||
+    node?.key?.remoteJid ||
+    node?.message?.key?.remoteJid ||
+    node?.data?.key?.remoteJid ||
+    '';
+
+  return String(jid)
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/:\d+$/, '')
+    .trim();
+}
+
+// ----------------------------------------------------
+// Text helpers
+// ----------------------------------------------------
+const STOPWORDS = new Set([
+  'quiero',
+  'busco',
+  'buscar',
+  'precio',
+  'precios',
+  'costo',
+  'cuanto',
+  'cuánto',
+  'medicamento',
+  'medicamentos',
+  'producto',
+  'productos',
+  'farmacia',
+  'farmacias',
+  'de',
+  'del',
+  'la',
+  'el',
+  'los',
+  'las',
+  'un',
+  'una',
+  'por',
+  'favor',
+  'hola',
+  'buenos',
+  'buenas',
+  'menu',
+  'menú',
+  'ayuda',
+  'pedir',
+  'pedido',
+  'comprar',
+  'tienes',
+  'tiene',
+  'hay'
+]);
+
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenize(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return [];
+  return normalized.split(' ').filter(Boolean);
+}
+
+function parsePositiveInteger(value) {
+  const text = normalizeText(value);
+  const match = text.match(/\b([1-9][0-9]*)\b/);
+  return match ? Number(match[1]) : null;
+}
+
+const GREETING_PHRASES = new Set([
+  'hola',
+  'hola bot',
+  'buen dia',
+  'buenos dias',
+  'buenas',
+  'buenas tardes',
+  'buenas noches',
+  'ey',
+  'alo',
+  'aló',
+  'menu',
+  'menú',
+  'ayuda',
+]);
+
+function isGreetingOrMenu(value) {
+  const text = normalizeText(value);
+  if (!text) return false;
+
+  if (GREETING_PHRASES.has(text)) return true;
+
+  return /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/.test(text);
+}
+
+function extractVitaminFocusTokens(query) {
+  const tokens = tokenize(query);
+  const focusTokens = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== 'vitamina' && tokens[i] !== 'vit') continue;
+
+    const next = tokens[i + 1];
+    const next2 = tokens[i + 2];
+
+    if (next && !STOPWORDS.has(next) && next !== 'vitamina' && next !== 'vit') {
+      if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
+        focusTokens.push(`${next}${next2}`);
+      } else {
+        focusTokens.push(next);
+      }
+    }
+  }
+
+  return [...new Set(focusTokens.filter(Boolean))];
+}
+
+function extractVitaminFocusPhrases(query) {
+  const tokens = tokenize(query);
+  const phrases = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== 'vitamina' && tokens[i] !== 'vit') continue;
+
+    const next = tokens[i + 1];
+    const next2 = tokens[i + 2];
+    if (!next) continue;
+
+    if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
+      phrases.push(`${tokens[i]} ${next}${next2}`);
+    } else {
+      phrases.push(`${tokens[i]} ${next}`);
+    }
+  }
+
+  return [...new Set(phrases.filter(Boolean))];
+}
+
+function queryHasMultipleWords(query) {
+  const meaningful = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  const vitaminFocus = extractVitaminFocusTokens(query);
+  return meaningful.length + vitaminFocus.length > 1;
+}
+
+function isHumanRequest(value) {
+  const text = normalizeText(value);
+  return /\b(humano|agente|asesor|persona|operador|atencion humana|atencion al cliente|auxiliar)\b/.test(text);
+}
+
+function isBotControlMessage(value) {
+  const text = normalizeText(value);
+  return /^(bot\s+off|bot\s+on|bot\s+status)$/i.test(text);
+}
+
+function isAdminSender(value) {
+  const text = normalizeText(value);
+  const normalizedAdmin = normalizeText(BOT_ADMIN_NUMBER);
+  const compactAdmin = normalizedAdmin.replace(/\s+/g, '');
+  const compactText = text.replace(/\s+/g, '');
+  return (
+    text === normalizedAdmin ||
+    compactText === compactAdmin ||
+    text === normalizeText(`${BOT_ADMIN_NUMBER}@s.whatsapp.net`)
+  );
+}
+
+function isProductSearchRequest(value) {
+  const text = normalizeText(value);
+  return /\b(precio|costo|cuanto cuesta|cuanto vale|catalogo|catalogo de productos|medicamento|producto|buscar)\b/.test(text);
+}
+
+function isThanksMessage(value) {
+  const text = normalizeText(value);
+  return /^(ok\s+)?gracias(\s+.*)?$/.test(text) || /\b(gracias|mil gracias|muchas gracias|thanks|thank you)\b/.test(text);
+}
+
+function looksLikeMedicineName(value) {
+  const text = normalizeText(value);
+  if (!text) return false;
+  if (isGreetingOrMenu(text) || isThanksMessage(text) || /^(listo|resumen|bot on|bot off|bot status)$/i.test(text)) return false;
+
+  const extracted = extractMedicineQuery(text);
+  if (extracted && extracted.length >= 4) {
+    const extractedTokens = tokenize(extracted);
+    if (extractedTokens.length >= 2) return true;
+  }
+
+  const tokens = tokenize(text).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+  if (!tokens.length) return false;
+
+  const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|cc|ui|iu)|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina|vit)\b/.test(text);
+  const hasUsefulMultiTokenPhrase = tokens.length >= 2;
+  const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 5 && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0]);
+
+  return hasDosageOrForm || hasUsefulMultiTokenPhrase || hasStrongSingleToken;
+}
+
+function isMenuOption(value) {
+  const text = normalizeText(value);
+  return text === '1' || text === '2' || text === '3' || text === '4';
+}
+
+function extractMedicineQuery(text) {
+  const cleaned = normalizeText(text);
+  if (!cleaned) return '';
+
+  const patterns = [
+    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
+    /^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
+  ];
+
+  let candidate = cleaned;
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match?.[1]) {
+      candidate = normalizeText(match[1]);
+      break;
+    }
+  }
+
+  candidate = candidate
+    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
+    .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
+    .trim();
+
+  const vitaminDirectMatch = candidate.match(/\bvitamina\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
+  if (vitaminDirectMatch) {
+    return `vitamina ${normalizeText(vitaminDirectMatch[1])}`.trim();
+  }
+
+  const vitaminLooseMatch = candidate.match(/\bvit\.?\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
+  if (vitaminLooseMatch) {
+    return `vitamina ${normalizeText(vitaminLooseMatch[1])}`.trim();
+  }
+
+  const tokens = tokenize(candidate)
+    .filter((token) => token.length > 1)
+    .filter((token) => !STOPWORDS.has(token));
+
+  if (!tokens.length) return '';
+
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?))\b/i;
+  const dosageMatch = candidate.match(dosagePattern);
+  if (dosageMatch) {
+    const dose = normalizeText(dosageMatch[1]);
+    const beforeDose = candidate.slice(0, dosageMatch.index).trim();
+    const beforeTokens = tokenize(beforeDose).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+    if (beforeTokens.length) {
+      return `${beforeTokens.slice(-3).join(' ')} ${dose}`.trim();
+    }
+    return dose;
+  }
+
+  const meaningful = tokens.join(' ').trim();
+  if (!meaningful) return '';
+
+  return meaningful;
+}
+
+// ----------------------------------------------------
+// Process safety logs
+// ----------------------------------------------------
+process.on('unhandledRejection', (error) => {
+  console.error('❌ Unhandled Rejection:', error);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+});
+
+// ----------------------------------------------------
+// Start
+// ----------------------------------------------------
+app.listen(PORT, () => {
+  console.log(`🚀 Gentefarma Webhook Service running on port ${PORT}`);
+});
