@@ -2846,6 +2846,20 @@ function extractMedicineQuery(text) {
 
   if (!tokens.length) return '';
 
+  const MED_FORM_TOKENS = new Set([
+    'ampolla', 'ampollas', 'vial', 'viales', 'frasco', 'frascos', 'tableta', 'tabletas', 'capsula', 'capsulas',
+    'cápsula', 'cápsulas', 'suspension', 'suspensión', 'jarabe', 'gotas', 'crema', 'gel', 'unguento', 'unguentos',
+    'sobres', 'sobresa', 'polvo', 'polvos', 'capsules', 'tablet', 'tabletass'
+  ]);
+  const MED_QUERY_WEAK_TOKENS = new Set([
+    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
+    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor'
+  ]);
+  const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/i.test(token);
+  const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
+  const dosageTokens = tokens.filter((token) => isDoseToken(token));
+  const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
+
   const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?))\b/i;
   const dosageMatch = candidate.match(dosagePattern);
   if (dosageMatch) {
@@ -2853,12 +2867,23 @@ function extractMedicineQuery(text) {
     const beforeDose = candidate.slice(0, dosageMatch.index).trim();
     const beforeTokens = tokenize(beforeDose).filter((t) => !STOPWORDS.has(t) && t.length > 1);
     if (beforeTokens.length) {
-      return `${beforeTokens.slice(-3).join(' ')} ${dose}`.trim();
+      const prioritizedBefore = [
+        ...beforeTokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token)),
+        ...beforeTokens.filter((token) => isDoseToken(token) || MED_FORM_TOKENS.has(token))
+      ];
+      return [...new Set([...prioritizedBefore, dose])].join(' ').trim();
     }
     return dose;
   }
 
-  const meaningful = tokens.join(' ').trim();
+  const prioritized = [...new Set([
+    ...strongTokens,
+    ...dosageTokens,
+    ...formTokens,
+    ...tokens.filter((token) => !strongTokens.includes(token) && !dosageTokens.includes(token) && !formTokens.includes(token) && !MED_QUERY_WEAK_TOKENS.has(token))
+  ])].filter(Boolean);
+
+  const meaningful = prioritized.join(' ').trim();
   if (!meaningful) return '';
 
   return meaningful;
