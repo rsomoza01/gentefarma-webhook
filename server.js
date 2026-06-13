@@ -990,7 +990,7 @@ async function routeMessage(phone, text, session) {
 
   const directMedicineQuery = extractMedicineQuery(text);
   const medicineRequests = extractMedicineRequests(text);
-  const selectionCandidate = parseSelectionAndQuantity(normalized);
+  const selectionCandidate = parseSelectionCommand(normalized);
   const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
   const hasMedicineSearchSignal = Boolean(
     directMedicineQuery ||
@@ -1197,7 +1197,7 @@ async function routeMessage(phone, text, session) {
       return await searchAndBuildCatalogResponse(text, session);
     }
 
-    const parsed = parseSelectionAndQuantity(normalized);
+    const parsed = parseSelectionCommand(normalized);
     if (parsed) {
       const results = session.pendingSelectionResults || [];
       const selected = results[parsed.option - 1];
@@ -1226,7 +1226,7 @@ async function routeMessage(phone, text, session) {
       return await searchAndBuildCatalogResponse(text, session);
     }
 
-    const parsed = parseSelectionAndQuantity(normalized);
+    const parsed = parseSelectionCommand(normalized);
     if (parsed) {
       const results = session.pendingSelectionResults || [];
       const selected = results[parsed.option - 1];
