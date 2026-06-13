@@ -817,7 +817,7 @@ async function callOpenAIVision(imageBase64, mimeType) {
 
 async function callGoogleVisionOCR(imageBase64) {
   const response = await axios.post(
-    `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`,
+    `https://vision.googleapis.com/v1/images:annotate?key=[REDACTED]`,
     {
       requests: [{
         image: { content: imageBase64 },
@@ -1034,7 +1034,7 @@ async function routeMessage(phone, text, session) {
     if (!selectionIntent) {
       clearSelectionState(session);
     } else {
-      return '⚠️ Escribe solo el número global de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
+      return '⚠️ Escribe el número global de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
   }
 
@@ -1703,6 +1703,20 @@ async function searchMedicinesByName(userQuery, options = {}) {
         const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
         return candidateHasAmount && candidateHasUnit && item.dosageExactMatch;
       });
+
+      if (!candidateMatches.length) {
+        const relaxedTokens = primaryTokens.length > 0 ? primaryTokens : matchTokens;
+        candidateMatches = scoredProducts.filter((item) => {
+          const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' '));
+          if (!candidateText) return false;
+
+          const tokenOverlap = relaxedTokens.some((token) => candidateText.includes(token));
+          const dosageOverlap = candidateText.includes(matchQuery) || candidateText.includes(dosageLessQuery) || candidateText.includes(exactRoot);
+          const relaxedScore = (item.score ?? 0) >= 80 || item.fullFocusMatch || item.exactHit || item.phraseHit;
+
+          return tokenOverlap && (dosageOverlap || relaxedScore);
+        });
+      }
     }
 
     if (!candidateMatches.length) {
@@ -2139,10 +2153,42 @@ function buildShortProductLabel(doc) {
     doc?.productName ||
     doc?.medicineName ||
     doc?.medication ||
-    doc?.title ||
+    doc?.commercialName ||
+    doc?.brand ||
     doc?.description ||
     'Medicamento'
   );
+}
+
+function summarizeCatalogHealth(products) {
+  const total = Array.isArray(products) ? products.length : 0;
+  const withTitle = (products || []).filter((doc) => normalizeText(doc?.ProductTitle || buildShortProductLabel(doc))).length;
+  return {
+    total,
+    available: withTitle
+  };
+}
+
+function extractVitaminFocusTokens(value) {
+  const text = normalizeText(value);
+  if (!text) return [];
+  return tokenize(text).filter((token) => token !== 'vitamina' && token !== 'vit');
+}
+
+function extractVitaminFocusPhrases(value) {
+  const text = normalizeText(value);
+  if (!text) return [];
+  const matches = [];
+  const regex = /\b(?:vitamina|vit)\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/gi;
+  let match;
+  while ((match = regex.exec(text))) {
+    matches.push(`vitamina ${normalizeText(match[1])}`);
+  }
+  return [...new Set(matches)];
+}
+
+function formatProductTitle(doc) {
+  return buildShortProductLabel(doc);
 }
 
 function buildProductSearchText(doc) {
@@ -2285,128 +2331,92 @@ async function fetchCollectionDocuments(collectionName, limit = 500) {
 
 async function fetchCatalogProducts(limit = 500) {
   const primary = await fetchCollectionDocuments('products-market', limit);
-  if (primary.length) return primary;
-
-  const fallback = await fetchCollectionDocuments('providers-products', limit);
-  if (fallback.length) return fallback;
-
-  return [];
+  const providers = await fetchCollectionDocuments('providers-products', limit);
+  const merged = [...primary, ...providers];
+  const seen = new Set();
+  return merged.filter((doc) => {
+    const key = normalizeText(doc?.ProductTitle || doc?.productTitle || doc?.name || doc?.productName || doc?.medicineName || doc?.medication || doc?.activeIngredient || doc?.description || doc?.brand || doc?.commercialName || doc?.id || '');
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-function summarizeCatalogHealth(products) {
-  const list = Array.isArray(products) ? products : [];
-  const withTitle = list.filter((doc) => normalizeText(buildShortProductLabel(doc))).length;
-  const withSearchText = list.filter((doc) => normalizeText(buildProductSearchText(doc))).length;
-  return {
-    total: list.length,
-    available: Math.max(withTitle, withSearchText)
-  };
+function buildSummaryFromSelections(session) {
+  const items = ensureSelectedProducts(session);
+  if (!items.length) return '🧾 Aún no has agregado medicamentos a tu pedido.';
+
+  const { totalUsd, totalBs } = getCartTotals(session);
+  const lines = ['🧾 *Resumen de medicamentos seleccionados*', ''];
+
+  items.forEach((item, idx) => {
+    const qty = Number(item.quantity) || 1;
+    const unitUsd = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+    const unitBs = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+    const subtotalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUsd) || 0) * qty)}` : 'No disponible';
+    const subtotalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs) || 0) * qty)}` : 'No disponible';
+
+    lines.push(`${idx + 1}. ${item.title || 'Medicamento'}`);
+    lines.push(`   Cantidad: ${qty}`);
+    lines.push(`   Unitario: ${unitUsd} | ${unitBs}`);
+    lines.push(`   Subtotal: ${subtotalUsd} | ${subtotalBs}`);
+    lines.push('');
+  });
+
+  lines.push(`💰 *Total pedido:* $${formatPrice(totalUsd)}  |  Bs ${formatPrice(totalBs)}`);
+  lines.push('');
+  lines.push('Perfecto! 🎉 Hemos recibido tu pedido.');
+  lines.push('');
+  lines.push('En breve, uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo para tramitarlo. 😊');
+  return lines.join('\n').trim();
 }
 
-// ----------------------------------------------------
-// WhatsApp send via Evolution GO
-// ----------------------------------------------------
-async function sendWhatsAppMessage(phone, text) {
-  try {
-    const response = await axios.post(
-      `${EVOLUTION_API_URL}/send/text`,
-      {
-        number: phone,
-        text,
-        formatJid: false
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: EVOLUTION_API_KEY
-        },
-        timeout: 30000
-      }
-    );
-
-    const sentMessageId =
-      response?.data?.key?.id ||
-      response?.data?.messageId ||
-      response?.data?.data?.key?.id ||
-      response?.data?.data?.messageId ||
-      null;
-
-    registerOutboundMessageId(sentMessageId);
-
-    console.log('✅ Mensaje enviado por WhatsApp:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('❌ Error enviando WhatsApp:', error.response?.data || error.message);
-    throw error;
-  }
+function isGreetingOrMenu(value) {
+  const text = normalizeText(value);
+  return /^(hola|buenas|buenos dias|buenas tardes|buenas noches|menu|menú|inicio|ayuda)$/i.test(text);
 }
 
-// ----------------------------------------------------
-// Evolution payload extractors
-// ----------------------------------------------------
-function unwrapMessagePayload(payload) {
-  if (!payload) return null;
-  if (Array.isArray(payload)) {
-    for (const item of payload) {
-      const found = unwrapMessagePayload(item);
-      if (found) return found;
-    }
-    return null;
-  }
+function isThanksMessage(value) {
+  const text = normalizeText(value);
+  return /^(gracias|muchas gracias|te lo agradezco|agradecido)$/i.test(text);
+}
 
-  if (payload.Info || payload.Message || payload.key || payload.message) return payload;
-  if (payload.data) {
-    const data = payload.data;
-    if (Array.isArray(data)) return unwrapMessagePayload(data);
-    if (data.Info || data.Message || data.key || data.message) return data;
-    if (Array.isArray(data.messages) && data.messages.length) return unwrapMessagePayload(data.messages[0]);
-    if (data.value) return unwrapMessagePayload(data.value);
-    return unwrapMessagePayload(data);
-  }
+function isHumanRequest(value) {
+  const text = normalizeText(value);
+  return /\b(auxiliar|humano|persona|asesor|agente)\b/.test(text) && !/\bbot\b/.test(text);
+}
 
-  if (Array.isArray(payload.messages) && payload.messages.length) return unwrapMessagePayload(payload.messages[0]);
-  if (payload.value) return unwrapMessagePayload(payload.value);
+function buildInstagramReelMessage() {
+  return `https://www.instagram.com/reel/DU3hPpJDquf/?igsh=MWJnczFxMDgyMTh3aQ==`;
+}
 
-  return payload;
+function isInstagramInfoRequest(value) {
+  const text = normalizeText(value);
+  return /\b(instagram|reel|video|redes|publicacion|publicación|mas info|más info|informacion|información)\b/.test(text);
+}
+
+function isBotControlMessage(value) {
+  const text = normalizeText(value);
+  return /^(bot\s+on|bot\s+off|bot\s+status)$/i.test(text);
+}
+
+function isAdminSender(value) {
+  const text = normalizeText(value).replace(/\D/g, '');
+  return text === BOT_ADMIN_NUMBER;
 }
 
 function extractFrom(payload) {
   const node = unwrapMessagePayload(payload) || {};
-  const jid =
+  return String(
     node?.Info?.Sender ||
     node?.Info?.Chat ||
-    node?.Sender ||
-    node?.sender ||
     node?.from ||
+    node?.sender ||
     node?.key?.remoteJid ||
-    node?.message?.key?.remoteJid ||
     node?.data?.key?.remoteJid ||
-    '';
-
-  return String(jid)
-    .replace(/@s\.whatsapp\.net$/, '')
-    .replace(/:\d+$/, '')
-    .trim();
-}
-
-function extractBody(payload) {
-  const node = unwrapMessagePayload(payload) || {};
-  return (
-    node?.Message?.conversation ||
-    node?.Message?.extendedTextMessage?.text ||
-    node?.Message?.text ||
-    node?.message?.conversation ||
-    node?.message?.extendedTextMessage?.text ||
-    node?.message?.text ||
-    node?.body ||
-    node?.text ||
-    node?.data?.body ||
-    node?.data?.text ||
-    node?.messages?.[0]?.message?.conversation ||
-    node?.messages?.[0]?.message?.extendedTextMessage?.text ||
-    node?.messages?.[0]?.message?.text ||
     ''
-  );
+  ).trim();
 }
 
 function extractFromMe(payload) {
@@ -2414,81 +2424,49 @@ function extractFromMe(payload) {
   return Boolean(
     node?.Info?.IsFromMe ??
     node?.fromMe ??
-    node?.key?.fromMe ??
     node?.message?.key?.fromMe ??
-    node?.data?.fromMe ??
-    node?.messages?.[0]?.key?.fromMe ??
+    node?.key?.fromMe ??
     false
   );
 }
 
 function extractRecipient(payload) {
   const node = unwrapMessagePayload(payload) || {};
-  const jid =
-    node?.Info?.RecipientAlt ||
-    node?.Info?.Chat ||
-    node?.RecipientAlt ||
-    node?.recipient ||
+  return String(
     node?.to ||
-    node?.key?.remoteJid ||
+    node?.recipient ||
+    node?.Info?.Recipient ||
     node?.message?.key?.remoteJid ||
-    node?.data?.key?.remoteJid ||
-    '';
-
-  return String(jid)
-    .replace(/@s\.whatsapp\.net$/, '')
-    .replace(/:\d+$/, '')
-    .trim();
+    ''
+  ).trim();
 }
 
-// ----------------------------------------------------
-// Text helpers
-// ----------------------------------------------------
-const STOPWORDS = new Set([
-  'quiero',
-  'busco',
-  'buscar',
-  'precio',
-  'precios',
-  'costo',
-  'cuanto',
-  'cuánto',
-  'medicamento',
-  'medicamentos',
-  'producto',
-  'productos',
-  'farmacia',
-  'farmacias',
-  'de',
-  'del',
-  'la',
-  'el',
-  'los',
-  'las',
-  'un',
-  'una',
-  'por',
-  'favor',
-  'hola',
-  'buenos',
-  'buenas',
-  'menu',
-  'menú',
-  'ayuda',
-  'pedir',
-  'pedido',
-  'comprar',
-  'tienes',
-  'tiene',
-  'hay'
-]);
+function extractBody(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  return String(
+    node?.Message?.conversation ||
+    node?.message?.conversation ||
+    node?.conversation ||
+    node?.text ||
+    node?.body ||
+    node?.Message?.extendedTextMessage?.text ||
+    node?.message?.extendedTextMessage?.text ||
+    node?.extendedTextMessage?.text ||
+    ''
+  ).trim();
+}
+
+function unwrapMessagePayload(payload) {
+  if (!payload) return null;
+  return payload?.data?.messages?.[0] || payload?.data || payload?.message || payload?.Message || payload;
+}
 
 function normalizeText(value) {
   return String(value || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -2499,127 +2477,9 @@ function tokenize(value) {
   return normalized.split(' ').filter(Boolean);
 }
 
-function parsePositiveInteger(value) {
-  const text = normalizeText(value);
-  const match = text.match(/\b([1-9][0-9]*)\b/);
-  return match ? Number(match[1]) : null;
-}
-
-const GREETING_PHRASES = new Set([
-  'hola',
-  'hola bot',
-  'buen dia',
-  'buenos dias',
-  'buenas',
-  'buenas tardes',
-  'buenas noches',
-  'ey',
-  'alo',
-  'aló',
-  'menu',
-  'menú',
-  'ayuda',
+const STOPWORDS = new Set([
+  'de', 'la', 'el', 'los', 'las', 'y', 'o', 'con', 'sin', 'por', 'para', 'del', 'al', 'un', 'una', 'unos', 'unas', 'que', 'en', 'a', 'es', 'se', 'su', 'sus', 'lo', 'como', 'mas', 'más', 'pero', 'ya', 'si', 'sí', 'no', 'me', 'mi', 'mis', 'tu', 'tus', 'te', 'le', 'les', 'nos', 'vos', 'esto', 'esta', 'este', 'estos', 'estas'
 ]);
-
-function isGreetingOrMenu(value) {
-  const text = normalizeText(value);
-  if (!text) return false;
-
-  if (GREETING_PHRASES.has(text)) return true;
-
-  return /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/.test(text);
-}
-
-function extractVitaminFocusTokens(query) {
-  const tokens = tokenize(query);
-  const focusTokens = [];
-
-  for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i] !== 'vitamina' && tokens[i] !== 'vit') continue;
-
-    const next = tokens[i + 1];
-    const next2 = tokens[i + 2];
-
-    if (next && !STOPWORDS.has(next) && next !== 'vitamina' && next !== 'vit') {
-      if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
-        focusTokens.push(`${next}${next2}`);
-      } else {
-        focusTokens.push(next);
-      }
-    }
-  }
-
-  return [...new Set(focusTokens.filter(Boolean))];
-}
-
-function extractVitaminFocusPhrases(query) {
-  const tokens = tokenize(query);
-  const phrases = [];
-
-  for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i] !== 'vitamina' && tokens[i] !== 'vit') continue;
-
-    const next = tokens[i + 1];
-    const next2 = tokens[i + 2];
-    if (!next) continue;
-
-    if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
-      phrases.push(`${tokens[i]} ${next}${next2}`);
-    } else {
-      phrases.push(`${tokens[i]} ${next}`);
-    }
-  }
-
-  return [...new Set(phrases.filter(Boolean))];
-}
-
-function queryHasMultipleWords(query) {
-  const meaningful = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
-  const vitaminFocus = extractVitaminFocusTokens(query);
-  return meaningful.length + vitaminFocus.length > 1;
-}
-
-function isHumanRequest(value) {
-  const text = normalizeText(value);
-  return /\b(humano|agente|asesor|persona|operador|atencion humana|atencion al cliente|auxiliar)\b/.test(text);
-}
-
-function isBotControlMessage(value) {
-  const text = normalizeText(value);
-  return /^(bot\s+off|bot\s+on|bot\s+status)$/i.test(text);
-}
-
-function isAdminSender(value) {
-  const text = normalizeText(value);
-  const normalizedAdmin = normalizeText(BOT_ADMIN_NUMBER);
-  const compactAdmin = normalizedAdmin.replace(/\s+/g, '');
-  const compactText = text.replace(/\s+/g, '');
-  return (
-    text === normalizedAdmin ||
-    compactText === compactAdmin ||
-    text === normalizeText(`${BOT_ADMIN_NUMBER}@s.whatsapp.net`)
-  );
-}
-
-function isProductSearchRequest(value) {
-  const text = normalizeText(value);
-  return /\b(precio|costo|cuanto cuesta|cuanto vale|catalogo|catalogo de productos|medicamento|producto|buscar)\b/.test(text);
-}
-
-function isThanksMessage(value) {
-  const text = normalizeText(value);
-  return /^(ok\s+)?gracias(\s+.*)?$/.test(text) || /\b(gracias|mil gracias|muchas gracias|thanks|thank you)\b/.test(text);
-}
-
-function looksLikeMedicineName(value) {
-  const text = normalizeText(value);
-  return text.length >= 4;
-}
-
-function isMenuOption(value) {
-  const text = normalizeText(value);
-  return text === '1' || text === '2' || text === '3' || text === '4';
-}
 
 function extractMedicineQuery(text) {
   const cleaned = normalizeText(text);
