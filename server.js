@@ -750,11 +750,16 @@ async function extractTextFromMedia(media) {
 async function downloadMediaBuffer(media) {
   const downloadMessage = media?.downloadMessage || null;
   if (downloadMessage) {
-    const endpoints = [
-      `${EVOLUTION_API_URL}/message/downloadmedia`,
-      `${EVOLUTION_API_URL}/message/downloadimage`
-    ];
+    const configuredEndpoints = String(process.env.EVOLUTION_MEDIA_DOWNLOAD_ENDPOINTS || '').trim();
+    const endpoints = (configuredEndpoints
+      ? configuredEndpoints.split(',').map((endpoint) => endpoint.trim()).filter(Boolean)
+      : [
+          '/message/downloadimage',
+          '/message/downloadmedia'
+        ]
+    ).map((endpoint) => endpoint.startsWith('http') ? endpoint : `${EVOLUTION_API_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`);
 
+    let lastError = null;
     for (const endpoint of endpoints) {
       try {
         const response = await axios.post(
@@ -771,12 +776,19 @@ async function downloadMediaBuffer(media) {
 
         const buffer = bufferFromEvolutionDownloadResponse(response?.data);
         if (buffer && buffer.length) return buffer;
+
+        console.error(`❌ Media descargada pero vacía desde ${endpoint}:`, typeof response?.data === 'string' ? response.data.slice(0, 120) : JSON.stringify(response?.data || {}).slice(0, 120));
       } catch (error) {
         const status = error.response?.status;
         const responseText = error.response?.data || error.message;
+        lastError = { endpoint, status, responseText };
         console.error(`❌ Error descargando media vía Evolution GO (${endpoint}${status ? ` ${status}` : ''}):`, responseText);
         if (status && status !== 404) break;
       }
+    }
+
+    if (lastError) {
+      console.error('⚠️ No se pudo descargar la media desde ningún endpoint configurado.', lastError);
     }
   }
 
