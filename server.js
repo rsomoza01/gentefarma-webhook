@@ -79,6 +79,44 @@ const BOT_ADMIN_NUMBER = '584128840350';
 const INBOUND_MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
 const INBOUND_MESSAGE_NO_ID_DEDUP_WINDOW_MS = 2500;
 
+// ----------------------------------------------------
+// WhatsApp send helper (defined early so it remains available even if the file is partially truncated)
+// ----------------------------------------------------
+async function sendOutboundWhatsAppMessage(phone, text) {
+  try {
+    const response = await axios.post(
+      `${EVOLUTION_API_URL}/send/text`,
+      {
+        number: phone,
+        text,
+        formatJid: false
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: EVOLUTION_API_KEY
+        },
+        timeout: 30000
+      }
+    );
+
+    const sentMessageId =
+      response?.data?.key?.id ||
+      response?.data?.messageId ||
+      response?.data?.data?.key?.id ||
+      response?.data?.data?.messageId ||
+      null;
+
+    registerOutboundMessageId(sentMessageId);
+
+    console.log('✅ Mensaje enviado por WhatsApp:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Error enviando WhatsApp:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
 function cleanupProcessedInboundMessages(now = Date.now()) {
   for (const [key, value] of processedInboundMessages.entries()) {
     if (!value || now - value.seenAt > INBOUND_MESSAGE_DEDUP_TTL_MS) {
@@ -596,7 +634,7 @@ async function processIncomingMessage(payload) {
           if (session.mode === 'human_handoff') session.mode = 'idle';
         });
         if (!fromMe) {
-          await sendWhatsAppMessage(from, '⛔ Bot desactivado.');
+          await sendOutboundWhatsAppMessage(from, '⛔ Bot desactivado.');
         }
         return;
       }
@@ -604,14 +642,14 @@ async function processIncomingMessage(payload) {
       if (normalizedBody === 'bot on') {
         botEnabled = true;
         if (!fromMe) {
-          await sendWhatsAppMessage(from, '🤖 Bot activado.');
+          await sendOutboundWhatsAppMessage(from, '🤖 Bot activado.');
         }
         return;
       }
 
       if (normalizedBody === 'bot status') {
         if (!fromMe) {
-          await sendWhatsAppMessage(from, botEnabled ? '🤖 Bot activo.' : '⛔ Bot desactivado.');
+          await sendOutboundWhatsAppMessage(from, botEnabled ? '🤖 Bot activo.' : '⛔ Bot desactivado.');
         }
         return;
       }
@@ -632,7 +670,7 @@ async function processIncomingMessage(payload) {
 
     const response = await routeMessage(from, body, session);
     if (response) {
-      await sendWhatsAppMessage(from, response);
+      await sendOutboundWhatsAppMessage(from, response);
     }
   } catch (error) {
     console.error('❌ Error procesando mensaje:', error);
@@ -2374,259 +2412,4 @@ function buildSummaryFromSelections(session) {
   if (!items.length) return '🧾 Aún no has agregado medicamentos a tu pedido.';
 
   const { totalUsd, totalBs } = getCartTotals(session);
-  const lines = ['🧾 *Resumen de medicamentos seleccionados*', ''];
 
-  items.forEach((item, idx) => {
-    const qty = Number(item.quantity) || 1;
-    const unitUsd = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
-    const unitBs = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
-    const subtotalUsd = item.priceUsd !== null ? `$${formatPrice((Number(item.priceUsd) || 0) * qty)}` : 'No disponible';
-    const subtotalBs = item.priceBs !== null ? `Bs ${formatPrice((Number(item.priceBs) || 0) * qty)}` : 'No disponible';
-
-    lines.push(`${idx + 1}. ${item.title || 'Medicamento'}`);
-    lines.push(`   Cantidad: ${qty}`);
-    lines.push(`   Unitario: ${unitUsd} | ${unitBs}`);
-    lines.push(`   Subtotal: ${subtotalUsd} | ${subtotalBs}`);
-    lines.push('');
-  });
-
-  lines.push(`💰 *Total pedido:* $${formatPrice(totalUsd)}  |  Bs ${formatPrice(totalBs)}`);
-  lines.push('');
-  lines.push('Perfecto! 🎉 Hemos recibido tu pedido.');
-  lines.push('');
-  lines.push('En breve, uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo para tramitarlo. 😊');
-  return lines.join('\n').trim();
-}
-
-function isGreetingOrMenu(value) {
-  const text = normalizeText(value);
-  return /^(hola|buenas|buenos dias|buenas tardes|buenas noches|menu|menú|inicio|ayuda)$/i.test(text);
-}
-
-function isThanksMessage(value) {
-  const text = normalizeText(value);
-  return /^(gracias|muchas gracias|te lo agradezco|agradecido)$/i.test(text);
-}
-
-function isHumanRequest(value) {
-  const text = normalizeText(value);
-  return /\b(auxiliar|humano|persona|asesor|agente)\b/.test(text) && !/\bbot\b/.test(text);
-}
-
-function buildInstagramReelMessage() {
-  return `https://www.instagram.com/reel/DU3hPpJDquf/?igsh=MWJnczFxMDgyMTh3aQ==`;
-}
-
-function isInstagramInfoRequest(value) {
-  const text = normalizeText(value);
-  return /\b(instagram|reel|video|redes|publicacion|publicación|mas info|más info|informacion|información)\b/.test(text);
-}
-
-function isBotControlMessage(value) {
-  const text = normalizeText(value);
-  return /^(bot\s+on|bot\s+off|bot\s+status)$/i.test(text);
-}
-
-function isAdminSender(value) {
-  const text = normalizeText(value).replace(/\D/g, '');
-  return text === BOT_ADMIN_NUMBER;
-}
-
-function extractFrom(payload) {
-  const node = unwrapMessagePayload(payload) || {};
-  const jid =
-    node?.Info?.Sender ||
-    node?.Info?.Chat ||
-    node?.Sender ||
-    node?.sender ||
-    node?.from ||
-    node?.key?.remoteJid ||
-    node?.message?.key?.remoteJid ||
-    node?.data?.key?.remoteJid ||
-    node?.messages?.[0]?.key?.remoteJid ||
-    '';
-
-  return extractJidValue(jid);
-}
-
-function extractJidValue(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  const match = raw.match(/([0-9]{5,})(?=@s\.whatsapp\.net|@lid|$)/i);
-  if (match) return match[1];
-  return raw
-    .replace(/@s\.whatsapp\.net$/i, '')
-    .replace(/@lid$/i, '')
-    .replace(/:\d+$/, '')
-    .trim();
-}
-
-function extractBody(payload) {
-  const node = unwrapMessagePayload(payload) || {};
-  return (
-    node?.Message?.conversation ||
-    node?.Message?.extendedTextMessage?.text ||
-    node?.Message?.text ||
-    node?.message?.conversation ||
-    node?.message?.extendedTextMessage?.text ||
-    node?.message?.text ||
-    node?.body ||
-    node?.text ||
-    node?.data?.body ||
-    node?.data?.text ||
-    node?.messages?.[0]?.message?.conversation ||
-    node?.messages?.[0]?.message?.extendedTextMessage?.text ||
-    node?.messages?.[0]?.message?.text ||
-    ''
-  );
-}
-
-function extractFromMe(payload) {
-  const node = unwrapMessagePayload(payload) || {};
-  return Boolean(
-    node?.Info?.IsFromMe ??
-    node?.fromMe ??
-    node?.key?.fromMe ??
-    node?.message?.key?.fromMe ??
-    node?.data?.fromMe ??
-    node?.messages?.[0]?.key?.fromMe ??
-    false
-  );
-}
-
-function extractRecipient(payload) {
-  const node = unwrapMessagePayload(payload) || {};
-  const jid =
-    node?.Info?.RecipientAlt ||
-    node?.Info?.Chat ||
-    node?.RecipientAlt ||
-    node?.recipient ||
-    node?.to ||
-    node?.key?.remoteJid ||
-    node?.message?.key?.remoteJid ||
-    node?.data?.key?.remoteJid ||
-    '';
-
-  return extractJidValue(jid);
-}
-
-function unwrapMessagePayload(payload) {
-  if (!payload) return null;
-  if (Array.isArray(payload)) {
-    for (const item of payload) {
-      const found = unwrapMessagePayload(item);
-      if (found) return found;
-    }
-    return null;
-  }
-
-  if (payload.Info || payload.Message || payload.key || payload.message) return payload;
-  if (payload.data) {
-    const data = payload.data;
-    if (Array.isArray(data)) return unwrapMessagePayload(data);
-    if (data.Info || data.Message || data.key || data.message) return data;
-    if (Array.isArray(data.messages) && data.messages.length) return unwrapMessagePayload(data.messages[0]);
-    if (data.value) return unwrapMessagePayload(data.value);
-    return unwrapMessagePayload(data);
-  }
-
-  if (Array.isArray(payload.messages) && payload.messages.length) return unwrapMessagePayload(payload.messages[0]);
-  if (payload.value) return unwrapMessagePayload(payload.value);
-
-  return payload;
-}
-
-function normalizeText(value) {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function tokenize(value) {
-  const normalized = normalizeText(value);
-  if (!normalized) return [];
-  return normalized.split(' ').filter(Boolean);
-}
-
-const STOPWORDS = new Set([
-  'de', 'la', 'el', 'los', 'las', 'y', 'o', 'con', 'sin', 'por', 'para', 'del', 'al', 'un', 'una', 'unos', 'unas', 'que', 'en', 'a', 'es', 'se', 'su', 'sus', 'lo', 'como', 'mas', 'más', 'pero', 'ya', 'si', 'sí', 'no', 'me', 'mi', 'mis', 'tu', 'tus', 'te', 'le', 'les', 'nos', 'vos', 'esto', 'esta', 'este', 'estos', 'estas'
-]);
-
-function extractMedicineQuery(text) {
-  const cleaned = normalizeText(text);
-  if (!cleaned) return '';
-
-  const patterns = [
-    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
-    /^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
-  ];
-
-  let candidate = cleaned;
-  for (const pattern of patterns) {
-    const match = cleaned.match(pattern);
-    if (match?.[1]) {
-      candidate = normalizeText(match[1]);
-      break;
-    }
-  }
-
-  candidate = candidate
-    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
-    .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
-    .trim();
-
-  const vitaminDirectMatch = candidate.match(/\bvitamina\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
-  if (vitaminDirectMatch) {
-    return `vitamina ${normalizeText(vitaminDirectMatch[1])}`.trim();
-  }
-
-  const vitaminLooseMatch = candidate.match(/\bvit\.?\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
-  if (vitaminLooseMatch) {
-    return `vitamina ${normalizeText(vitaminLooseMatch[1])}`.trim();
-  }
-
-  const tokens = tokenize(candidate)
-    .filter((token) => token.length > 1)
-    .filter((token) => !STOPWORDS.has(token));
-
-  if (!tokens.length) return '';
-
-  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?))\b/i;
-  const dosageMatch = candidate.match(dosagePattern);
-  if (dosageMatch) {
-    const dose = normalizeText(dosageMatch[1]);
-    const beforeDose = candidate.slice(0, dosageMatch.index).trim();
-    const beforeTokens = tokenize(beforeDose).filter((t) => !STOPWORDS.has(t) && t.length > 1);
-    if (beforeTokens.length) {
-      return `${beforeTokens.slice(-3).join(' ')} ${dose}`.trim();
-    }
-    return dose;
-  }
-
-  const meaningful = tokens.join(' ').trim();
-  if (!meaningful) return '';
-
-  return meaningful;
-}
-
-// ----------------------------------------------------
-// Process safety logs
-// ----------------------------------------------------
-process.on('unhandledRejection', (error) => {
-  console.error('❌ Unhandled Rejection:', error);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
-});
-
-// ----------------------------------------------------
-// Start
-// ----------------------------------------------------
-app.listen(PORT, () => {
-  console.log(`🚀 Gentefarma Webhook Service running on port ${PORT}`);
-});
