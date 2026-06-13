@@ -817,7 +817,7 @@ async function callOpenAIVision(imageBase64, mimeType) {
 
 async function callGoogleVisionOCR(imageBase64) {
   const response = await axios.post(
-    `https://vision.googleapis.com/v1/images:annotate?key=***
+    `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`,
     {
       requests: [{
         image: { content: imageBase64 },
