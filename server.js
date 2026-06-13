@@ -1198,3 +1198,1499 @@ function buildSearchDiagnosticMessage(result, query) {
 
   return lines.join('\n').trim();
 }
+
+function buildHumanAgentMessage() {
+  return `👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.`;
+}
+
+function buildLocationMessage() {
+  return `¡Hola!. Somos una plataforma online, no tenemos local físico. A través de nuestra web o número de WhatsApp te ayudamos a buscar tus medicinas y comparar precios, para que encuentres la opción que más te convenga. Sin salir de casa 😉. Visita http://www.gentefarma.com o escríbenos por WhatsApp y te ayudamos a gestionar tu pedido. 🙌`;
+}
+
+function buildMoreInfoMessage() {
+  return `¡Hola! gracias por tu mensaje. Somos una plataforma online, no tenemos local físico. A través de nuestra web o número de WhatsApp te ayudamos a buscar tus medicinas y comparar precios, para que encuentres la opción que más te convenga. Sin salir de casa 😉. Visita http://www.gentefarma.com o escríbenos por WhatsApp y te ayudamos a gestionar tu pedido. 🙌\n\nhttps://www.instagram.com/reel/DU3hPpJDquf/?igsh=MWJnczFxMDgyMTh3aQ==`;
+}
+
+function isLocationQuestion(value) {
+  const text = normalizeText(value);
+  return /\b(donde estan ubicados|donde estan|ubicados|ubicacion|ubicación|direccion|dirección|local fisico|local físico|tienen local|donde queda|dónde queda)\b/.test(text);
+}
+
+function isMoreInfoRequest(value) {
+  const text = normalizeText(value);
+  return /\b(hola.*mas informacion|hola.*informacion|hola.*info|hola.*quiero mas informacion|hola.*quiero mas info|quiero mas informacion|quiero mas info|mas informacion|más informacion|informacion|info)\b/.test(text);
+}
+
+function shouldSendInstagramReel(value) {
+  const text = normalizeText(value);
+  const isGentefarmaContext = /\b(gentefarma|farmacia|farmacias|como funciona|cómo funciona|beneficios|promocion|promoción|promo|planes|servicio|servicios|pedido|pedidos|catalogo|catálogo|quienes somos|quiénes somos)\b/.test(text);
+  const asksForMedia = /\b(reel|video|video de presentacion|presentacion|presentación|instagram|redes|publicacion|publicación)\b/.test(text);
+  const wantsInfo = /\b(quiero|necesito|me interesa|puedo ver|dame|envíame|enviame|mostrar|muéstrame|mostrame)\b/.test(text);
+
+  return Boolean((isGentefarmaContext && wantsInfo) || asksForMedia);
+}
+
+// ----------------------------------------------------
+// Catalog search
+// ----------------------------------------------------
+async function searchAndBuildCatalogResponse(text, session) {
+  if (!db) {
+    return '⚠️ No tengo conexión al catálogo en este momento. Intenta de nuevo más tarde.';
+  }
+
+  const requestedMedicines = extractMedicineRequests(text);
+  const fallbackMedicines = extractMedicineRequestsFromSegments(text);
+  const candidateMedicines = dedupeStrings([
+    ...requestedMedicines,
+    ...fallbackMedicines
+  ]);
+
+  if (candidateMedicines.length > 1) {
+    const exchangeRate = await getBcvRate();
+    const products = await fetchCatalogProducts(2000);
+    const groups = [];
+    const missingMedicines = [];
+    const missingMedicineSet = new Set();
+
+    for (const medicineQuery of candidateMedicines) {
+      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate, strictListMode: true });
+      if (result && result.matches && result.matches.length) {
+        groups.push(result);
+      } else {
+        const normalizedMissing = normalizeText(medicineQuery);
+        if (normalizedMissing && !missingMedicineSet.has(normalizedMissing)) {
+          missingMedicineSet.add(normalizedMissing);
+          missingMedicines.push(medicineQuery);
+        }
+      }
+    }
+
+    if (groups.length > 0 || missingMedicines.length > 0) {
+      const flattenedOptions = flattenCatalogResults(groups);
+      session.lastSearch = groups[0] || null;
+      session.pendingSelectionResults = flattenedOptions.length ? flattenedOptions : null;
+      session.mode = flattenedOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
+      rememberCatalogSnapshot(session, flattenedOptions, candidateMedicines.join(' • '), buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines));
+      touchSession(session);
+      return buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines);
+    }
+
+    session.mode = 'awaiting_product_name';
+    return buildNoMatchListMessage();
+  }
+
+  const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text;
+  const result = await searchMedicinesByName(singleQuery);
+
+  if (!result || !result.matches.length) {
+    session.mode = 'awaiting_product_name';
+    return `⚠️ *${singleQuery.trim()}* no está disponible en este momento.\n\nIntenta con el nombre del medicamento o una presentación distinta.\nEjemplos:\n• *atamel*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno*`;
+  }
+
+  session.lastSearch = result;
+  session.mode = 'idle';
+  touchSession(session);
+  rememberCatalogSnapshot(session, result.matches, result.query || singleQuery, buildSearchDiagnosticMessage(result, singleQuery));
+
+  return buildSearchDiagnosticMessage(result, singleQuery);
+}
+
+async function searchMedicinesByName(userQuery, options = {}) {
+  if (!db) return null;
+
+  const strictListMode = Boolean(options.strictListMode);
+  const strictReferenceThreshold = strictListMode ? 0.93 : 0.88;
+
+  const query = normalizeText(userQuery);
+  const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  if (!queryTokens.length) return null;
+
+  const exchangeRate = options.exchangeRate ?? await getBcvRate();
+  const products = options.products ?? await fetchCatalogProducts(2000);
+  const catalogHealth = summarizeCatalogHealth(products);
+  if (catalogHealth.available === 0) {
+    return { query, queryTokens, exchangeRate, matches: [] };
+  }
+
+  const exactQuery = query;
+  const exactRoot = queryTokens.join(' ');
+  const dosageLessQuery = queryTokens
+    .filter((token) => !/^(\d+(?:[.,]\d+)?)$/.test(token))
+    .filter((token) => !/^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/.test(token))
+    .join(' ')
+    .trim();
+  const matchQuery = dosageLessQuery || query;
+  const matchTokens = tokenize(matchQuery).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  if (!matchTokens.length) return { query, queryTokens, exchangeRate, matches: [] };
+
+  const isDosageToken = (token) => /^(\d+(?:[.,]\d+)?)$/.test(token) || /^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/.test(token);
+  const focusTokens = matchTokens.filter((token) => !isDosageToken(token));
+  const primaryTokens = focusTokens.length ? focusTokens : matchTokens;
+  const primaryRoot = primaryTokens.join(' ');
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|gr|ml|cc|ui|iu)\b/gi;
+  const extractDosageSignatures = (value) => {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue) return [];
+    const signatures = [];
+    let match;
+    while ((match = dosagePattern.exec(normalizedValue))) {
+      const amount = String(match[1]).replace(',', '.');
+      const unit = String(match[2]).replace(/mL/i, 'ml').toLowerCase();
+      signatures.push(`${amount}${unit}`);
+    }
+    dosagePattern.lastIndex = 0;
+    return [...new Set(signatures)];
+  };
+  const queryDosageSignatures = extractDosageSignatures(query);
+  const hasQueryDosage = queryDosageSignatures.length > 0;
+
+  function jaroWinklerSimilarity(a, b) {
+    const left = normalizeText(a);
+    const right = normalizeText(b);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+
+    const leftLen = left.length;
+    const rightLen = right.length;
+    const matchDistance = Math.max(Math.floor(Math.max(leftLen, rightLen) / 2) - 1, 0);
+
+    const leftMatches = new Array(leftLen).fill(false);
+    const rightMatches = new Array(rightLen).fill(false);
+
+    let matches = 0;
+    for (let i = 0; i < leftLen; i++) {
+      const start = Math.max(0, i - matchDistance);
+      const end = Math.min(i + matchDistance + 1, rightLen);
+      for (let j = start; j < end; j++) {
+        if (rightMatches[j]) continue;
+        if (left[i] !== right[j]) continue;
+        leftMatches[i] = true;
+        rightMatches[j] = true;
+        matches += 1;
+        break;
+      }
+    }
+
+    if (!matches) return 0;
+
+    let transpositions = 0;
+    for (let i = 0, j = 0; i < leftLen; i++) {
+      if (!leftMatches[i]) continue;
+      while (j < rightLen && !rightMatches[j]) j += 1;
+      if (j < rightLen && left[i] !== right[j]) transpositions += 1;
+      j += 1;
+    }
+
+    transpositions /= 2;
+
+    const jaro = (
+      (matches / leftLen) +
+      (matches / rightLen) +
+      ((matches - transpositions) / matches)
+    ) / 3;
+
+    let prefix = 0;
+    for (let i = 0; i < Math.min(4, leftLen, rightLen); i++) {
+      if (left[i] !== right[i]) break;
+      prefix += 1;
+    }
+
+    return jaro + (prefix * 0.1 * (1 - jaro));
+  }
+
+  function tokenSimilarity(a, b) {
+    const left = normalizeText(a);
+    const right = normalizeText(b);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+
+    const maxLen = Math.max(left.length, right.length);
+    const lengthGap = Math.abs(left.length - right.length);
+    if (lengthGap > 4) return 0;
+
+    const distance = levenshteinDistance(left, right);
+    const jw = jaroWinklerSimilarity(left, right);
+
+    if (maxLen <= 5) {
+      return (distance <= 1 || jw >= 0.94) ? Math.max(1 - (distance / maxLen), jw) : 0;
+    }
+
+    if (maxLen <= 8) {
+      return (distance <= 2 || jw >= 0.9) ? Math.max(1 - (distance / maxLen), jw) : 0;
+    }
+
+    return (distance <= 3 || jw >= 0.84) ? Math.max(1 - (distance / maxLen), jw) : 0;
+  }
+  const vitaminPhrases = extractVitaminFocusPhrases(matchQuery);
+  const vitaminFocusWord = extractVitaminFocusTokens(matchQuery)[0] || '';
+  const isVitaminQuery = /\bvitamina\b/.test(matchQuery) || /\bvit\.?\b/.test(matchQuery);
+
+  function buildCatalogSignal(doc) {
+    const productTitleFull = normalizeText(doc?.ProductTitle || '');
+    const titleArrayTextFull = Array.isArray(doc?.productTitleArray)
+      ? normalizeText(doc.productTitleArray.join(' '))
+      : '';
+    const ingredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
+    const productText = normalizeText(buildProductSearchText(doc));
+    const titleTokens = tokenize(productTitleFull);
+    const arrayTokens = tokenize(titleArrayTextFull);
+    const ingredientTokens = tokenize(ingredient);
+    const searchTokens = tokenize([productTitleFull, titleArrayTextFull, ingredient, productText].filter(Boolean).join(' '));
+    const tokenSet = new Set([...titleTokens, ...arrayTokens, ...ingredientTokens, ...searchTokens]);
+
+    return {
+      doc,
+      title: buildShortProductLabel(doc),
+      productTitleFull,
+      titleArrayTextFull,
+      ingredient,
+      productText,
+      titleTokens,
+      arrayTokens,
+      ingredientTokens,
+      searchTokens,
+      tokenSet
+    };
+  }
+
+  function signalHasToken(signal, token) {
+    if (!token) return false;
+    if (signal.tokenSet.has(token)) return true;
+
+    const normalizedToken = normalizeText(token);
+    if (!normalizedToken) return false;
+
+    return signal.searchTokens.includes(normalizedToken)
+      || signal.titleTokens.includes(normalizedToken)
+      || signal.arrayTokens.includes(normalizedToken)
+      || signal.ingredientTokens.includes(normalizedToken);
+  }
+
+  function signalMatchesVitaminFocus(signal, focus) {
+    if (!focus) return false;
+
+    const normalizedFocus = normalizeText(focus);
+    const hasVitaminFamily = signalHasToken(signal, 'vitamina') || signalHasToken(signal, 'vit');
+    const hasFocusToken = signalHasToken(signal, normalizedFocus);
+    const titlePhraseHit = signal.productTitleFull.includes(`vitamina ${normalizedFocus}`) || signal.titleArrayTextFull.includes(`vitamina ${normalizedFocus}`);
+    const compactPhraseHit = signal.productTitleFull.includes(`vit ${normalizedFocus}`) || signal.titleArrayTextFull.includes(`vit ${normalizedFocus}`);
+
+    return (hasVitaminFamily && hasFocusToken) || titlePhraseHit || compactPhraseHit;
+  }
+
+  function scoreSignal(signal) {
+    let score = 0;
+
+    const tokenHitsTitle = primaryTokens.filter((token) => signal.titleTokens.includes(token)).length;
+    const tokenHitsArray = primaryTokens.filter((token) => signal.arrayTokens.includes(token)).length;
+    const tokenHitsIngredient = primaryTokens.filter((token) => signal.ingredientTokens.includes(token)).length;
+    const bestTokenHits = Math.max(tokenHitsTitle, tokenHitsArray, tokenHitsIngredient);
+    const strongTokenCoverage = primaryTokens.length > 0 && bestTokenHits / primaryTokens.length >= 0.8;
+    const fullFocusMatch = primaryTokens.length > 0 && (
+      (tokenHitsTitle === primaryTokens.length) ||
+      (tokenHitsArray === primaryTokens.length) ||
+      (tokenHitsIngredient === primaryTokens.length)
+    );
+
+    const referenceCandidates = [matchQuery, primaryRoot, exactRoot].filter(Boolean);
+    const candidateTexts = [signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean);
+    let referenceSimilarity = 0;
+    for (const reference of referenceCandidates) {
+      for (const candidateText of candidateTexts) {
+        const similarity = jaroWinklerSimilarity(reference, candidateText);
+        if (similarity > referenceSimilarity) referenceSimilarity = similarity;
+        if (referenceSimilarity >= 0.98) break;
+      }
+      if (referenceSimilarity >= 0.98) break;
+    }
+
+    const candidateDosageSignatures = extractDosageSignatures([signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' '));
+    const dosageExactMatch = !hasQueryDosage || queryDosageSignatures.some((sig) => candidateDosageSignatures.includes(sig));
+
+    if (signal.productTitleFull === matchQuery) score += 600;
+    if (signal.titleArrayTextFull === matchQuery) score += 560;
+    if (signal.ingredient === matchQuery) score += 420;
+
+    if (referenceSimilarity >= strictReferenceThreshold + 0.03) score += 420;
+    else if (referenceSimilarity >= strictReferenceThreshold) score += 260;
+    else if (referenceSimilarity >= strictReferenceThreshold - 0.03) score += strictListMode ? 80 : 120;
+    else if (strictListMode) score -= 500;
+
+    if (signal.productTitleFull.includes(matchQuery) || matchQuery.includes(signal.productTitleFull)) score += 320;
+    if (signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)) score += 280;
+    if (signal.ingredient.includes(matchQuery) || matchQuery.includes(signal.ingredient)) score += 200;
+
+    if (hasQueryDosage && !dosageExactMatch) score -= strictListMode ? 700 : 500;
+    if (hasQueryDosage && dosageExactMatch) score += 260;
+
+    if (primaryTokens.length > 1) {
+      if (signal.productTitleFull.includes(primaryRoot)) score += 240;
+      if (signal.titleArrayTextFull.includes(primaryRoot)) score += 260;
+      if (signal.ingredient.includes(primaryRoot)) score += 160;
+      if (primaryRoot && signal.productText.includes(primaryRoot)) score += 120;
+    }
+
+    if (hasQueryDosage) {
+      const queryHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(query);
+      const queryHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(query);
+      const candidateText = [signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' ');
+      const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
+      const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
+      if (queryHasAmount && queryHasUnit && !(candidateHasAmount && candidateHasUnit)) {
+        score -= strictListMode ? 800 : 600;
+      }
+    }
+
+    if (primaryTokens.length > 0) {
+      score += (tokenHitsTitle / primaryTokens.length) * 180;
+      score += (tokenHitsArray / primaryTokens.length) * 240;
+      score += (tokenHitsIngredient / primaryTokens.length) * 120;
+    }
+
+    for (const token of primaryTokens) {
+      if (signal.productTitleFull.includes(token)) score += 28;
+      if (signal.titleArrayTextFull.includes(token)) score += 42;
+      if (signal.ingredient.includes(token)) score += 16;
+
+      if (!signal.productTitleFull.includes(token) && !signal.titleArrayTextFull.includes(token) && !signal.ingredient.includes(token)) {
+        let bestSimilarity = 0;
+        for (const candidate of [...signal.titleTokens, ...signal.arrayTokens, ...signal.ingredientTokens]) {
+          const similarity = tokenSimilarity(token, candidate);
+          if (similarity > bestSimilarity) bestSimilarity = similarity;
+          if (bestSimilarity >= 0.92) break;
+        }
+
+        if (bestSimilarity >= 0.95) score += 24;
+        else if (bestSimilarity >= 0.9) score += 18;
+        else if (bestSimilarity >= 0.85) score += 10;
+        else if (bestSimilarity >= 0.8) score += 4;
+      }
+    }
+
+    if (primaryTokens.length > 1) {
+      if (signal.productTitleFull.startsWith(primaryRoot)) score += 120;
+      if (signal.titleArrayTextFull.startsWith(primaryRoot)) score += 160;
+      if (signal.ingredient.startsWith(primaryRoot)) score += 70;
+    }
+
+    if (strongTokenCoverage) score += 120;
+    if (fullFocusMatch) score += 260;
+    else if (primaryTokens.length > 1 && bestTokenHits === 0) score -= 500;
+    else if (primaryTokens.length > 1 && bestTokenHits === 1) score -= 220;
+    else if (primaryTokens.length > 1 && bestTokenHits === 2) score -= 80;
+
+    if (isVitaminQuery && vitaminFocusWord && signalMatchesVitaminFocus(signal, vitaminFocusWord)) {
+      score += 420;
+    }
+
+    if (isVitaminQuery && vitaminPhrases.length) {
+      for (const phrase of vitaminPhrases) {
+        if (signal.productTitleFull.includes(phrase) || signal.titleArrayTextFull.includes(phrase) || signal.ingredient.includes(phrase)) {
+          score += 300;
+          break;
+        }
+      }
+    }
+
+    const exactPhraseHit = Boolean(
+      signal.productTitleFull === matchQuery ||
+      signal.titleArrayTextFull === matchQuery ||
+      signal.productTitleFull.includes(matchQuery) ||
+      signal.titleArrayTextFull.includes(matchQuery) ||
+      signal.ingredient.includes(matchQuery)
+    );
+
+    const phraseHit = primaryTokens.length > 1 && (
+      signal.productTitleFull.includes(matchQuery) ||
+      signal.titleArrayTextFull.includes(matchQuery) ||
+      signal.ingredient.includes(matchQuery) ||
+      signal.productTitleFull.includes(primaryRoot) ||
+      signal.titleArrayTextFull.includes(primaryRoot) ||
+      signal.ingredient.includes(primaryRoot) ||
+      (isVitaminQuery && vitaminPhrases.some((phrase) => signal.productTitleFull.includes(phrase) || signal.titleArrayTextFull.includes(phrase) || signal.ingredient.includes(phrase)))
+    );
+
+    return {
+      score,
+      tokenHitsTitle,
+      tokenHitsArray,
+      tokenHitsIngredient,
+      bestTokenHits,
+      strongTokenCoverage,
+      fullFocusMatch,
+      exactPhraseHit,
+      phraseHit,
+      vitaminHit: isVitaminQuery
+        ? (vitaminFocusWord
+            ? signalMatchesVitaminFocus(signal, vitaminFocusWord)
+            : (signalHasToken(signal, 'vitamina') || signalHasToken(signal, 'vit')))
+        : false,
+      titleContentMatch: signal.productTitleFull.includes(matchQuery) || matchQuery.includes(signal.productTitleFull),
+      arrayContentMatch: signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)
+    };
+  }
+
+  const scoredProducts = products
+    .map((doc) => {
+      const signal = buildCatalogSignal(doc);
+      const metrics = scoreSignal(signal);
+      const basePriceUsd = getPrice(doc);
+      const basePriceBs = getPriceBs(doc, exchangeRate);
+      const pricing = applySalesPricing(basePriceUsd, exchangeRate);
+      const exactHit = metrics.exactPhraseHit || metrics.strongTokenCoverage || metrics.vitaminHit || metrics.titleContentMatch || metrics.arrayContentMatch;
+
+      return {
+        ...signal,
+        score: metrics.score,
+        referenceSimilarity: metrics.referenceSimilarity,
+        exactHit,
+        fullFocusMatch: metrics.fullFocusMatch,
+        phraseHit: metrics.phraseHit,
+        vitaminHit: metrics.vitaminHit,
+        tokenCoverage: Math.max(metrics.tokenHitsTitle, metrics.tokenHitsArray, metrics.tokenHitsIngredient),
+        basePriceUsd,
+        basePriceBs,
+        priceUsd: pricing.displayUsd,
+        priceBs: pricing.displayBs,
+        feeRate: pricing.feeRate,
+        feeAmountUsd: pricing.feeAmountUsd
+      };
+    })
+    .sort((a, b) => {
+      const vitaminA = a.vitaminHit ? 1 : 0;
+      const vitaminB = b.vitaminHit ? 1 : 0;
+      if (vitaminA !== vitaminB) return vitaminB - vitaminA;
+
+      const exactA = a.exactHit ? 1 : 0;
+      const exactB = b.exactHit ? 1 : 0;
+      if (exactA !== exactB) return exactB - exactA;
+
+      const phraseA = a.phraseHit ? 1 : 0;
+      const phraseB = b.phraseHit ? 1 : 0;
+      if (phraseA !== phraseB) return phraseB - phraseA;
+
+      const scoreA = a.score ?? 0;
+      const scoreB = b.score ?? 0;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+
+      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      return priceA - priceB;
+    });
+
+  let candidateMatches = [];
+
+  if (isVitaminQuery) {
+    const focusedVitaminMatches = scoredProducts.filter((item) => item.vitaminHit);
+
+    if (!focusedVitaminMatches.length) {
+      return { query, queryTokens, exchangeRate, matches: [] };
+    }
+
+    candidateMatches = focusedVitaminMatches;
+  } else {
+    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.93);
+    candidateMatches = similarityMatches.filter((item) => {
+      if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
+      return (item.referenceSimilarity ?? 0) >= 0.93 || (item.score ?? 0) >= 180;
+    });
+
+    if (hasQueryDosage) {
+      candidateMatches = candidateMatches.filter((item) => {
+        const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
+        const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
+        const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
+        return candidateHasAmount && candidateHasUnit && dosageExactMatch;
+      });
+    }
+
+    if (!candidateMatches.length) {
+      return { query, queryTokens, exchangeRate, matches: [] };
+    }
+  }
+
+  const topMatches = candidateMatches
+    .slice(0, 5)
+    .sort((a, b) => {
+      const exactA = a.exactHit ? 1 : 0;
+      const exactB = b.exactHit ? 1 : 0;
+      if (exactA !== exactB) return exactB - exactA;
+
+      const phraseA = a.phraseHit ? 1 : 0;
+      const phraseB = b.phraseHit ? 1 : 0;
+      if (phraseA !== phraseB) return phraseB - phraseA;
+
+      const scoreA = a.score ?? 0;
+      const scoreB = b.score ?? 0;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+
+      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      return priceA - priceB;
+    });
+
+  const normalizedQuery = normalizeText(query);
+  const normalizedQueryTokens = tokenize(normalizedQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+  const leadingQueryTokens = normalizedQueryTokens.slice(0, 3);
+  const filteredTopMatches = leadingQueryTokens.length
+    ? topMatches.filter((item) => {
+        const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
+        if (!candidateText) return false;
+
+        return leadingQueryTokens.some((token) => {
+          if (candidateText.includes(token)) return true;
+          for (const candidateToken of tokenize(candidateText)) {
+            if (candidateToken === token) return true;
+            const similarity = tokenSimilarity(token, candidateToken);
+            if (similarity >= 0.9) return true;
+          }
+          return false;
+        });
+      })
+    : topMatches;
+
+  const strictSingleTokenQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length <= 2;
+  const finalMatches = strictSingleTokenQuery
+    ? filteredTopMatches
+    : (filteredTopMatches.length ? filteredTopMatches : topMatches);
+
+  return {
+    query,
+    queryTokens,
+    exchangeRate,
+    matches: finalMatches.map((item) => ({
+      title: item.title,
+      basePriceUsd: item.priceUsd,
+      basePriceBs: item.priceBs,
+      priceUsd: item.priceUsd,
+      priceBs: item.priceBs,
+      feeRate: item.feeRate,
+      feeAmountUsd: item.feeAmountUsd,
+      raw: item.doc,
+      score: item.score,
+      phraseHit: item.phraseHit,
+      tokenCoverage: item.tokenCoverage,
+      exactHit: item.exactHit,
+      focusTitleHit: item.vitaminHit
+    }))
+  };
+}
+
+function buildCatalogResponse(result) {
+  if (!result || !result.matches || !result.matches.length) {
+    return '⚠️ Necesito un poco más de detalle para ayudarte.';
+  }
+
+  const lines = [];
+  lines.push(`🔎 *${result.query}*`);
+  if (result.exchangeRate) {
+    lines.push(`💱 Tasa BCV: *Bs ${formatPrice(result.exchangeRate)}*`);
+  }
+  lines.push('');
+
+  result.matches.forEach((item, index) => {
+    const title = shortenText(item.title || 'Medicamento', 52);
+    const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+    const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+    lines.push(`💊 *${index + 1}. ${title}*`);
+    lines.push(`   ${usdText}  |  ${bsText}`);
+    lines.push('');
+  });
+
+  lines.push('');
+  lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
+  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
+  lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
+  lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
+
+  return lines.join('\n').trim();
+}
+
+function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines = []) {
+  if (!Array.isArray(results) || !results.length) {
+    const missingLines = Array.isArray(missingMedicines) && missingMedicines.length
+      ? [
+          '⚠️ Algunos medicamentos no están disponibles en este momento:',
+          ...missingMedicines.map((item) => `• *${item}*`),
+          '',
+          'Te muestro los que sí encontré abajo.'
+        ]
+      : ['⚠️ Necesito un poco más de detalle para ayudarte.'];
+
+    return missingLines.join('\n').trim();
+  }
+
+  const lines = [];
+  lines.push('🔎 *Resultados encontrados*');
+  lines.push('');
+
+  if (Array.isArray(missingMedicines) && missingMedicines.length) {
+    lines.push('⚠️ *No disponibles:*');
+    missingMedicines.forEach((item) => {
+      lines.push(`• *${item}*`);
+    });
+    lines.push('');
+    lines.push('Te muestro los que sí encontré abajo.');
+    lines.push('');
+  }
+
+  let optionNumber = 1;
+  results.forEach((result) => {
+    const groupTitle = shortenText(String(result.groupTitle || result.query || 'MEDICAMENTO').toUpperCase(), 52);
+    lines.push(`*${groupTitle}*`);
+
+    (result.matches || []).forEach((item) => {
+      const name = shortenText(item.title || 'Medicamento', 52);
+      const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
+      const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
+      lines.push(`💊 ${optionNumber}. ${name}`);
+      lines.push(`   ${usdText}  |  ${bsText}`);
+      optionNumber += 1;
+    });
+
+    lines.push('');
+  });
+
+  lines.push('');
+  lines.push('👉 *Para agregar:* quiero X cajas de la opción Z');
+  lines.push('Ejemplo: quiero 2 cajas de la opción 3');
+  lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
+  lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
+
+  return lines.join('\n').trim();
+}
+
+function extractMedicineRequests(text) {
+  const normalized = normalizeText(text);
+  if (!normalized) return [];
+
+  const rawText = String(text || '').trim();
+  if (!rawText) return [];
+
+  const explicitSegments = splitMedicineSegments(rawText);
+  const segments = explicitSegments.length > 1 ? explicitSegments : splitSingleLineMedicineList(rawText);
+  const results = [];
+
+  for (const segment of segments) {
+    const cleaned = normalizeText(segment);
+    if (!cleaned) continue;
+    if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina)/.test(cleaned)) continue;
+
+    const query = extractMedicineQuery(segment) || cleaned;
+    if (!query) continue;
+
+    if (!results.includes(query)) results.push(query);
+  }
+
+  return results;
+}
+
+function splitMedicineSegments(text) {
+  return String(text)
+    .split(/\n+|[•·●\-|;]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function splitSingleLineMedicineList(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+
+  const tokens = [...raw.matchAll(/\S+/g)].map((match) => ({
+    token: match[0],
+    start: match.index,
+    end: match.index + match[0].length
+  }));
+
+  const anchors = [...raw.matchAll(/\b\d+(?:[.,]\d+)?(?:\s*(?:mg|mcg|g|gr|ml|mL|ui|iu))?\b/gi)]
+    .map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length
+    }));
+
+  if (anchors.length < 2 || tokens.length < 2) return [raw];
+
+  const starts = anchors.map((anchor) => {
+    let tokenIndex = -1;
+
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].start <= anchor.start && tokens[i].end >= anchor.start) {
+        tokenIndex = i;
+        break;
+      }
+      if (tokens[i].start > anchor.start) break;
+    }
+
+    if (tokenIndex < 0) {
+      for (let i = tokens.length - 1; i >= 0; i--) {
+        if (tokens[i].end <= anchor.start) {
+          tokenIndex = i;
+          break;
+        }
+      }
+    }
+
+    if (tokenIndex < 1) return null;
+
+    let startIndex = tokenIndex - 1;
+    const prevToken = tokens[startIndex];
+    const prevPrevToken = tokens[startIndex - 1];
+
+    if (
+      startIndex > 0 &&
+      /^[A-ZÁÉÍÓÚÑ]$/.test(prevToken.token) &&
+      prevPrevToken &&
+      /^[A-ZÁÉÍÓÚÑ]/.test(prevPrevToken.token)
+    ) {
+      startIndex -= 1;
+    }
+
+    return tokens[startIndex].start;
+  }).filter((value) => Number.isInteger(value) && value >= 0);
+
+  const uniqueStarts = [...new Set(starts)].sort((a, b) => a - b);
+  if (uniqueStarts.length < 2) return [raw];
+
+  const chunks = [];
+  for (let i = 0; i < uniqueStarts.length; i++) {
+    const start = uniqueStarts[i];
+    const end = i + 1 < uniqueStarts.length ? uniqueStarts[i + 1] : raw.length;
+    const chunk = raw.slice(start, end).trim().replace(/^[,;\-–—]+\s*/, '').trim();
+    if (chunk) chunks.push(chunk);
+  }
+
+  if (!chunks.length) return [raw];
+  return chunks;
+}
+
+function extractMedicineRequestsFromSegments(text) {
+  const rawText = String(text || '').trim();
+  if (!rawText) return [];
+
+  const segments = splitMedicineSegments(rawText);
+  const pieces = segments.length > 1 ? segments : splitSingleLineMedicineList(rawText);
+  const results = [];
+
+  for (const piece of pieces) {
+    const cleaned = normalizeText(piece);
+    if (!cleaned) continue;
+    if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina)/.test(cleaned)) continue;
+
+    const query = extractMedicineQuery(piece) || cleaned;
+    if (!query) continue;
+    if (!results.includes(query)) results.push(query);
+  }
+
+  return results;
+}
+
+function dedupeStrings(values) {
+  return [...new Set((values || []).map((value) => normalizeText(value)).filter(Boolean))];
+}
+
+function looksLikeListToken(token) {
+  const value = String(token || '').trim();
+  if (!value) return false;
+  if (/^[A-ZÁÉÍÓÚÑ]/.test(value)) return true;
+  if (/^\d/.test(value)) return true;
+  return /^(mg|mcg|g|gr|ml|mL|ui|iu)$/i.test(value);
+}
+
+function flattenCatalogResults(results) {
+  const flattened = [];
+  for (const group of Array.isArray(results) ? results : []) {
+    const groupQuery = String(group?.query || '').trim();
+    const groupLabel = String(group?.groupTitle || group?.title || groupQuery || 'Medicamento').trim();
+    for (const item of group?.matches || []) {
+      flattened.push({
+        groupQuery,
+        groupTitle: groupLabel,
+        ...item
+      });
+    }
+  }
+  return flattened;
+}
+
+function computeMatchScore(query, queryTokens, docText, doc) {
+  let score = 0;
+  if (!docText) return 0;
+
+  const productTitle = normalizeText(doc?.ProductTitle || buildShortProductLabel(doc));
+  const titleArray = Array.isArray(doc?.productTitleArray)
+    ? doc.productTitleArray.map((value) => normalizeText(value)).filter(Boolean)
+    : [];
+  const titleArrayText = titleArray.join(' ');
+  const activeIngredient = normalizeText(doc?.activeIngredient || doc?.active_ingredient || doc?.ingredient || '');
+  const searchArea = [docText, productTitle, titleArrayText, activeIngredient].filter(Boolean).join(' | ');
+  const searchTokens = tokenize(searchArea).filter((t) => t.length > 1);
+  const phraseQuery = queryTokens.join(' ');
+  const querySet = new Set(queryTokens);
+  const multiWord = queryTokens.length > 1;
+
+  const queryHasVitalsFocus = queryTokens.includes('vitamina') || /^vit(?:amina)?$/i.test(query);
+  const titleTokens = tokenize(productTitle);
+  const ingredientTokens = tokenize(activeIngredient);
+  const arrayTokenSet = new Set(titleArray);
+
+  const arrayExactTokenHits = queryTokens.filter((token) => arrayTokenSet.has(token)).length;
+  const titleExactTokenHits = queryTokens.filter((token) => titleTokens.includes(token)).length;
+  const ingredientExactTokenHits = queryTokens.filter((token) => ingredientTokens.includes(token)).length;
+
+  const fullTitleMatchesQuery = productTitle === query;
+  const fullArrayMatchesQuery = titleArrayText === query;
+  const fullIngredientMatchesQuery = activeIngredient && activeIngredient === query;
+
+  if (fullTitleMatchesQuery) score += 500;
+  if (fullArrayMatchesQuery) score += 420;
+  if (fullIngredientMatchesQuery) score += 350;
+
+  if (productTitle.includes(query) || query.includes(productTitle)) score += 260;
+  if (titleArrayText.includes(query) || query.includes(titleArrayText)) score += 220;
+  if (activeIngredient && (activeIngredient.includes(query) || query.includes(activeIngredient))) score += 180;
+
+  if (multiWord && phraseQuery) {
+    if (productTitle.includes(phraseQuery)) score += 300;
+    if (titleArrayText.includes(phraseQuery)) score += 260;
+    if (activeIngredient.includes(phraseQuery)) score += 220;
+  }
+
+  if (queryTokens.length > 0) {
+    score += (titleExactTokenHits / queryTokens.length) * 180;
+    score += (arrayExactTokenHits / queryTokens.length) * 240;
+    score += (ingredientExactTokenHits / queryTokens.length) * 120;
+  }
+
+  for (const token of queryTokens) {
+    if (productTitle.includes(token)) score += 30;
+    if (titleArrayText.includes(token)) score += 40;
+    if (activeIngredient.includes(token)) score += 18;
+
+    if (!productTitle.includes(token) && !titleArrayText.includes(token) && !activeIngredient.includes(token)) {
+      let bestDistance = Infinity;
+      for (const candidate of searchTokens) {
+        if (candidate === token) {
+          bestDistance = 0;
+          break;
+        }
+        if (Math.abs(candidate.length - token.length) > 3) continue;
+        const distance = levenshteinDistance(token, candidate);
+        if (distance < bestDistance) bestDistance = distance;
+        if (bestDistance <= 1) break;
+      }
+
+      if (bestDistance <= 1) score += 20;
+      else if (bestDistance === 2) score += 12;
+      else if (bestDistance === 3) score += 6;
+    }
+  }
+
+  if (multiWord) {
+    const titleStartsWithPhrase = productTitle.startsWith(phraseQuery);
+    const arrayStartsWithPhrase = titleArrayText.startsWith(phraseQuery);
+    const ingredientStartsWithPhrase = activeIngredient.startsWith(phraseQuery);
+    if (titleStartsWithPhrase) score += 120;
+    if (arrayStartsWithPhrase) score += 150;
+    if (ingredientStartsWithPhrase) score += 80;
+  }
+
+  if (queryHasVitalsFocus && arrayExactTokenHits > 0) score += 90;
+  if (queryHasVitalsFocus && productTitle.includes('vitamina')) score += 50;
+
+  return score;
+}
+
+function levenshteinDistance(a, b) {
+  const s = String(a || '');
+  const t = String(b || '');
+  const m = s.length;
+  const n = t.length;
+
+  if (!m) return n;
+  if (!n) return m;
+
+  const prev = Array.from({ length: n + 1 }, (_, i) => i);
+  const curr = new Array(n + 1);
+
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    for (let j = 0; j <= n; j++) prev[j] = curr[j];
+  }
+
+  return prev[n];
+}
+
+function buildShortProductLabel(doc) {
+  return (
+    doc?.ProductTitle ||
+    doc?.productTitle ||
+    doc?.name ||
+    doc?.productName ||
+    doc?.medicineName ||
+    doc?.medication ||
+    doc?.title ||
+    doc?.description ||
+    'Medicamento'
+  );
+}
+
+function buildProductSearchText(doc) {
+  const titleArray = Array.isArray(doc?.productTitleArray) ? doc.productTitleArray.join(' ') : '';
+
+  return [
+    doc?.ProductTitle,
+    doc?.productTitle,
+    titleArray,
+    doc?.name,
+    doc?.productName,
+    doc?.medicineName,
+    doc?.medication,
+    doc?.brand,
+    doc?.commercialName,
+    doc?.activeIngredient,
+    doc?.description,
+    doc?.presentation,
+    doc?.form,
+    doc?.dosage,
+    doc?.strength,
+    doc?.concentration,
+    doc?.category,
+    doc?.aliases,
+    doc?.keywords
+  ]
+    .flat()
+    .filter(Boolean)
+    .join(' ');
+}
+
+function getPrice(doc) {
+  const raw =
+    doc?.ProductPrice ??
+    doc?.productPrice ??
+    doc?.price ??
+    doc?.Price ??
+    doc?.bestPrice ??
+    doc?.amount ??
+    doc?.salePrice ??
+    doc?.unitPrice ??
+    doc?.Valor ??
+    doc?.valor ??
+    null;
+
+  if (raw === null || raw === undefined || raw === '') return null;
+
+  const normalized = String(raw)
+    .replace(/\s/g, '')
+    .replace(',', '.')
+    .match(/-?\d+(\.\d+)?/);
+
+  return normalized ? Number(normalized[0]) : null;
+}
+
+async function getBcvRate() {
+  if (!db) return null;
+
+  try {
+    const snapshot = await db.collection('divisabcv').limit(1).get();
+    if (snapshot.empty) return null;
+
+    const doc = snapshot.docs[0];
+    const data = doc.data() || {};
+    const candidate = data?.DivisaBs;
+
+    const rate = candidate !== null && candidate !== undefined
+      ? Number(String(candidate).replace(',', '.'))
+      : null;
+
+    if (!rate || rate <= 0) return null;
+    return rate;
+  } catch (error) {
+    console.error('❌ Error leyendo tasa BCV:', error.message);
+    return null;
+  }
+}
+
+// Estrategia comercial fácil de ajustar en el futuro.
+const SALES_FEE_RULES = {
+  thresholdUsd: 20,
+  feeUnderThreshold: 0.03,
+  feeAtOrAboveThreshold: 0.05
+};
+
+function applySalesPricing(baseUsd, exchangeRate) {
+  if (baseUsd === null || baseUsd === undefined || Number.isNaN(Number(baseUsd))) {
+    return { baseUsd: null, feeRate: null, feeAmountUsd: null, displayUsd: null, displayBs: null };
+  }
+
+  const amount = Number(baseUsd);
+  const feeRate = amount < SALES_FEE_RULES.thresholdUsd
+    ? SALES_FEE_RULES.feeUnderThreshold
+    : SALES_FEE_RULES.feeAtOrAboveThreshold;
+  const feeAmountUsd = amount * feeRate;
+  const displayUsd = amount + feeAmountUsd;
+  const displayBs = exchangeRate ? displayUsd * exchangeRate : null;
+
+  return { baseUsd: amount, feeRate, feeAmountUsd, displayUsd, displayBs };
+}
+
+function getPriceBs(doc, exchangeRate) {
+  const usd = getPrice(doc);
+  if (usd === null || !exchangeRate) return null;
+  return usd * exchangeRate;
+}
+
+function formatPrice(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return String(value);
+  return new Intl.NumberFormat('es-VE', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(num);
+}
+
+function shortenText(value, maxLength = 52) {
+  const text = String(value || '').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+// ----------------------------------------------------
+// Firestore helpers
+// ----------------------------------------------------
+async function fetchCollectionDocuments(collectionName, limit = 500) {
+  if (!db) return [];
+
+  try {
+    const snapshot = await db.collection(collectionName).limit(limit).get();
+    return snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+  } catch (error) {
+    console.error(`❌ Error leyendo colección ${collectionName}:`, error.message);
+    return [];
+  }
+}
+
+async function fetchCatalogProducts(limit = 500) {
+  const primary = await fetchCollectionDocuments('products-market', limit);
+  if (primary.length) return primary;
+
+  const fallback = await fetchCollectionDocuments('providers-products', limit);
+  if (fallback.length) return fallback;
+
+  return [];
+}
+
+function summarizeCatalogHealth(products) {
+  const list = Array.isArray(products) ? products : [];
+  const withTitle = list.filter((doc) => normalizeText(buildShortProductLabel(doc))).length;
+  const withSearchText = list.filter((doc) => normalizeText(buildProductSearchText(doc))).length;
+  return {
+    total: list.length,
+    available: Math.max(withTitle, withSearchText)
+  };
+}
+
+// ----------------------------------------------------
+// WhatsApp send via Evolution GO
+// ----------------------------------------------------
+async function sendWhatsAppMessage(phone, text) {
+  try {
+    const response = await axios.post(
+      `${EVOLUTION_API_URL}/send/text`,
+      {
+        number: phone,
+        text,
+        formatJid: false
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: EVOLUTION_API_KEY
+        },
+        timeout: 30000
+      }
+    );
+
+    const sentMessageId =
+      response?.data?.key?.id ||
+      response?.data?.messageId ||
+      response?.data?.data?.key?.id ||
+      response?.data?.data?.messageId ||
+      null;
+
+    registerOutboundMessageId(sentMessageId);
+
+    console.log('✅ Mensaje enviado por WhatsApp:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('❌ Error enviando WhatsApp:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+// ----------------------------------------------------
+// Evolution payload extractors
+// ----------------------------------------------------
+function unwrapMessagePayload(payload) {
+  if (!payload) return null;
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = unwrapMessagePayload(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (payload.Info || payload.Message || payload.key || payload.message) return payload;
+  if (payload.data) {
+    const data = payload.data;
+    if (Array.isArray(data)) return unwrapMessagePayload(data);
+    if (data.Info || data.Message || data.key || data.message) return data;
+    if (Array.isArray(data.messages) && data.messages.length) return unwrapMessagePayload(data.messages[0]);
+    if (data.value) return unwrapMessagePayload(data.value);
+    return unwrapMessagePayload(data);
+  }
+
+  if (Array.isArray(payload.messages) && payload.messages.length) return unwrapMessagePayload(payload.messages[0]);
+  if (payload.value) return unwrapMessagePayload(payload.value);
+
+  return payload;
+}
+
+function extractFrom(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  const jid =
+    node?.Info?.Sender ||
+    node?.Info?.Chat ||
+    node?.Sender ||
+    node?.sender ||
+    node?.from ||
+    node?.key?.remoteJid ||
+    node?.message?.key?.remoteJid ||
+    node?.data?.key?.remoteJid ||
+    '';
+
+  return String(jid)
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/:\d+$/, '')
+    .trim();
+}
+
+function extractBody(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  return (
+    node?.Message?.conversation ||
+    node?.Message?.extendedTextMessage?.text ||
+    node?.Message?.text ||
+    node?.message?.conversation ||
+    node?.message?.extendedTextMessage?.text ||
+    node?.message?.text ||
+    node?.body ||
+    node?.text ||
+    node?.data?.body ||
+    node?.data?.text ||
+    node?.messages?.[0]?.message?.conversation ||
+    node?.messages?.[0]?.message?.extendedTextMessage?.text ||
+    node?.messages?.[0]?.message?.text ||
+    ''
+  );
+}
+
+function extractFromMe(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  return Boolean(
+    node?.Info?.IsFromMe ??
+    node?.fromMe ??
+    node?.key?.fromMe ??
+    node?.message?.key?.fromMe ??
+    node?.data?.fromMe ??
+    node?.messages?.[0]?.key?.fromMe ??
+    false
+  );
+}
+
+function extractRecipient(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  const jid =
+    node?.Info?.RecipientAlt ||
+    node?.Info?.Chat ||
+    node?.RecipientAlt ||
+    node?.recipient ||
+    node?.to ||
+    node?.key?.remoteJid ||
+    node?.message?.key?.remoteJid ||
+    node?.data?.key?.remoteJid ||
+    '';
+
+  return String(jid)
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/:\d+$/, '')
+    .trim();
+}
+
+// ----------------------------------------------------
+// Text helpers
+// ----------------------------------------------------
+const STOPWORDS = new Set([
+  'quiero',
+  'busco',
+  'buscar',
+  'precio',
+  'precios',
+  'costo',
+  'cuanto',
+  'cuánto',
+  'medicamento',
+  'medicamentos',
+  'producto',
+  'productos',
+  'farmacia',
+  'farmacias',
+  'de',
+  'del',
+  'la',
+  'el',
+  'los',
+  'las',
+  'un',
+  'una',
+  'por',
+  'favor',
+  'hola',
+  'buenos',
+  'buenas',
+  'menu',
+  'menú',
+  'ayuda',
+  'pedir',
+  'pedido',
+  'comprar',
+  'tienes',
+  'tiene',
+  'hay'
+]);
+
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenize(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return [];
+  return normalized.split(' ').filter(Boolean);
+}
+
+function parsePositiveInteger(value) {
+  const text = normalizeText(value);
+  const match = text.match(/\b([1-9][0-9]*)\b/);
+  return match ? Number(match[1]) : null;
+}
+
+const GREETING_PHRASES = new Set([
+  'hola',
+  'hola bot',
+  'buen dia',
+  'buenos dias',
+  'buenas',
+  'buenas tardes',
+  'buenas noches',
+  'ey',
+  'alo',
+  'aló',
+  'menu',
+  'menú',
+  'ayuda',
+]);
+
+function isGreetingOrMenu(value) {
+  const text = normalizeText(value);
+  if (!text) return false;
+
+  if (GREETING_PHRASES.has(text)) return true;
+
+  return /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/.test(text);
+}
+
+function extractVitaminFocusTokens(query) {
+  const tokens = tokenize(query);
+  const focusTokens = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== 'vitamina' && tokens[i] !== 'vit') continue;
+
+    const next = tokens[i + 1];
+    const next2 = tokens[i + 2];
+
+    if (next && !STOPWORDS.has(next) && next !== 'vitamina' && next !== 'vit') {
+      if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
+        focusTokens.push(`${next}${next2}`);
+      } else {
+        focusTokens.push(next);
+      }
+    }
+  }
+
+  return [...new Set(focusTokens.filter(Boolean))];
+}
+
+function extractVitaminFocusPhrases(query) {
+  const tokens = tokenize(query);
+  const phrases = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== 'vitamina' && tokens[i] !== 'vit') continue;
+
+    const next = tokens[i + 1];
+    const next2 = tokens[i + 2];
+    if (!next) continue;
+
+    if (/^[a-z]$/.test(next) && next2 && /^\d+$/.test(next2)) {
+      phrases.push(`${tokens[i]} ${next}${next2}`);
+    } else {
+      phrases.push(`${tokens[i]} ${next}`);
+    }
+  }
+
+  return [...new Set(phrases.filter(Boolean))];
+}
+
+function queryHasMultipleWords(query) {
+  const meaningful = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  const vitaminFocus = extractVitaminFocusTokens(query);
+  return meaningful.length + vitaminFocus.length > 1;
+}
+
+function isHumanRequest(value) {
+  const text = normalizeText(value);
+  return /\b(humano|agente|asesor|persona|operador|atencion humana|atencion al cliente|auxiliar)\b/.test(text);
+}
+
+function isBotControlMessage(value) {
+  const text = normalizeText(value);
+  return /^(bot\s+off|bot\s+on|bot\s+status)$/i.test(text);
+}
+
+function isAdminSender(value) {
+  const text = normalizeText(value);
+  const normalizedAdmin = normalizeText(BOT_ADMIN_NUMBER);
+  const compactAdmin = normalizedAdmin.replace(/\s+/g, '');
+  const compactText = text.replace(/\s+/g, '');
+  return (
+    text === normalizedAdmin ||
+    compactText === compactAdmin ||
+    text === normalizeText(`${BOT_ADMIN_NUMBER}@s.whatsapp.net`)
+  );
+}
+
+function isProductSearchRequest(value) {
+  const text = normalizeText(value);
+  return /\b(precio|costo|cuanto cuesta|cuanto vale|catalogo|catalogo de productos|medicamento|producto|buscar)\b/.test(text);
+}
+
+function isThanksMessage(value) {
+  const text = normalizeText(value);
+  return /^(ok\s+)?gracias(\s+.*)?$/.test(text) || /\b(gracias|mil gracias|muchas gracias|thanks|thank you)\b/.test(text);
+}
+
+function looksLikeMedicineName(value) {
+  const text = normalizeText(value);
+  return text.length >= 4;
+}
+
+function isMenuOption(value) {
+  const text = normalizeText(value);
+  return text === '1' || text === '2' || text === '3' || text === '4';
+}
+
+function extractMedicineQuery(text) {
+  const cleaned = normalizeText(text);
+  if (!cleaned) return '';
+
+  const patterns = [
+    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
+    /^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
+  ];
+
+  let candidate = cleaned;
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+    if (match?.[1]) {
+      candidate = normalizeText(match[1]);
+      break;
+    }
+  }
+
+  candidate = candidate
+    .replace(/^(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+/i, '')
+    .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+/i, '')
+    .trim();
+
+  const vitaminDirectMatch = candidate.match(/\bvitamina\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
+  if (vitaminDirectMatch) {
+    return `vitamina ${normalizeText(vitaminDirectMatch[1])}`.trim();
+  }
+
+  const vitaminLooseMatch = candidate.match(/\bvit\.?\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
+  if (vitaminLooseMatch) {
+    return `vitamina ${normalizeText(vitaminLooseMatch[1])}`.trim();
+  }
+
+  const tokens = tokenize(candidate)
+    .filter((token) => token.length > 1)
+    .filter((token) => !STOPWORDS.has(token));
+
+  if (!tokens.length) return '';
+
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?))\b/i;
+  const dosageMatch = candidate.match(dosagePattern);
+  if (dosageMatch) {
+    const dose = normalizeText(dosageMatch[1]);
+    const beforeDose = candidate.slice(0, dosageMatch.index).trim();
+    const beforeTokens = tokenize(beforeDose).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+    if (beforeTokens.length) {
+      return `${beforeTokens.slice(-3).join(' ')} ${dose}`.trim();
+    }
+    return dose;
+  }
+
+  const meaningful = tokens.join(' ').trim();
+  if (!meaningful) return '';
+
+  return meaningful;
+}
+
+// ----------------------------------------------------
+// Process safety logs
+// ----------------------------------------------------
+process.on('unhandledRejection', (error) => {
+  console.error('❌ Unhandled Rejection:', error);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+});
+
+// ----------------------------------------------------
+// Start
+// ----------------------------------------------------
+app.listen(PORT, () => {
+  console.log(`🚀 Gentefarma Webhook Service running on port ${PORT}`);
+});
