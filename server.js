@@ -1727,11 +1727,17 @@ async function searchMedicinesByName(userQuery, options = {}) {
         const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateCore) return false;
 
-        if (!candidateCore.includes('losartan')) return false;
-        if (!candidateCore.includes('100')) return false;
-        if (!candidateCore.includes('mg')) return false;
+        const tokenOverlap = alternativeTokens.length === 0
+          ? candidateCore.includes(queryCore)
+          : alternativeTokens.some((token) => {
+              if (candidateCore.includes(token)) return true;
+              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.9);
+            });
 
-        return alternativeTokens.length === 0 || alternativeTokens.some((token) => candidateCore.includes(token));
+        const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
+        const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.78 || item.fullFocusMatch || item.exactHit || item.phraseHit;
+
+        return tokenOverlap && (dosageOverlap || softScore);
       });
 
       if (degradedMatches.length) {
