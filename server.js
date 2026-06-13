@@ -1610,7 +1610,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       (isVitaminQuery && vitaminPhrases.some((phrase) => signal.productTitleFull.includes(phrase) || signal.titleArrayTextFull.includes(phrase) || signal.ingredient.includes(phrase)))
     );
 
-    return {
+      return {
       score,
       tokenHitsTitle,
       tokenHitsArray,
@@ -1620,6 +1620,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       fullFocusMatch,
       exactPhraseHit,
       phraseHit,
+      dosageExactMatch,
       vitaminHit: isVitaminQuery
         ? (vitaminFocusWord
             ? signalMatchesVitaminFocus(signal, vitaminFocusWord)
@@ -1628,7 +1629,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       titleContentMatch: signal.productTitleFull.includes(matchQuery) || matchQuery.includes(signal.productTitleFull),
       arrayContentMatch: signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)
     };
-  }
+}
 
   const scoredProducts = products
     .map((doc) => {
@@ -1700,7 +1701,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
         const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
         const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
         const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
-        return candidateHasAmount && candidateHasUnit && dosageExactMatch;
+        return candidateHasAmount && candidateHasUnit && item.dosageExactMatch;
       });
     }
 
