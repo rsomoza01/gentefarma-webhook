@@ -1436,7 +1436,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     const arrayTokens = tokenize(titleArrayTextFull);
     const ingredientTokens = tokenize(ingredient);
     const searchTokens = tokenize([productTitleFull, titleArrayTextFull, ingredient, productText].filter(Boolean).join(' '));
-    const tokenSet = new Set([...titleTokens, ...arrayTokens, ...ingredientTokens, ...searchTokens]);
+    const tokenSet = new Set([...titleTokens, ...arrayTokens, ...ingredientTokens, ...searchTokens);
 
     return {
       doc,
