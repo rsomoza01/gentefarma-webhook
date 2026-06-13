@@ -750,23 +750,33 @@ async function extractTextFromMedia(media) {
 async function downloadMediaBuffer(media) {
   const downloadMessage = media?.downloadMessage || null;
   if (downloadMessage) {
-    try {
-      const response = await axios.post(
-        `${EVOLUTION_API_URL}/message/downloadimage`,
-        { message: downloadMessage },
-        {
-          timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: EVOLUTION_API_KEY
-          }
-        }
-      );
+    const endpoints = [
+      `${EVOLUTION_API_URL}/message/downloadmedia`,
+      `${EVOLUTION_API_URL}/message/downloadimage`
+    ];
 
-      const buffer = bufferFromEvolutionDownloadResponse(response?.data);
-      if (buffer && buffer.length) return buffer;
-    } catch (error) {
-      console.error('❌ Error descargando media vía Evolution GO:', error.response?.data || error.message);
+    for (const endpoint of endpoints) {
+      try {
+        const response = await axios.post(
+          endpoint,
+          { message: downloadMessage },
+          {
+            timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: EVOLUTION_API_KEY
+            }
+          }
+        );
+
+        const buffer = bufferFromEvolutionDownloadResponse(response?.data);
+        if (buffer && buffer.length) return buffer;
+      } catch (error) {
+        const status = error.response?.status;
+        const responseText = error.response?.data || error.message;
+        console.error(`❌ Error descargando media vía Evolution GO (${endpoint}${status ? ` ${status}` : ''}):`, responseText);
+        if (status && status !== 404) break;
+      }
     }
   }
 
