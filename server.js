@@ -2434,15 +2434,51 @@ function isAdminSender(value) {
 
 function extractFrom(payload) {
   const node = unwrapMessagePayload(payload) || {};
-  return String(
+  const jid =
     node?.Info?.Sender ||
     node?.Info?.Chat ||
-    node?.from ||
+    node?.Sender ||
     node?.sender ||
+    node?.from ||
     node?.key?.remoteJid ||
+    node?.message?.key?.remoteJid ||
     node?.data?.key?.remoteJid ||
+    node?.messages?.[0]?.key?.remoteJid ||
+    '';
+
+  return extractJidValue(jid);
+}
+
+function extractJidValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/([0-9]{5,})(?=@s\.whatsapp\.net|@lid|$)/i);
+  if (match) return match[1];
+  return raw
+    .replace(/@s\.whatsapp\.net$/i, '')
+    .replace(/@lid$/i, '')
+    .replace(/:\d+$/, '')
+    .trim();
+}
+
+function extractBody(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  return (
+    node?.Message?.conversation ||
+    node?.Message?.extendedTextMessage?.text ||
+    node?.Message?.text ||
+    node?.message?.conversation ||
+    node?.message?.extendedTextMessage?.text ||
+    node?.message?.text ||
+    node?.body ||
+    node?.text ||
+    node?.data?.body ||
+    node?.data?.text ||
+    node?.messages?.[0]?.message?.conversation ||
+    node?.messages?.[0]?.message?.extendedTextMessage?.text ||
+    node?.messages?.[0]?.message?.text ||
     ''
-  ).trim();
+  );
 }
 
 function extractFromMe(payload) {
@@ -2450,41 +2486,54 @@ function extractFromMe(payload) {
   return Boolean(
     node?.Info?.IsFromMe ??
     node?.fromMe ??
-    node?.message?.key?.fromMe ??
     node?.key?.fromMe ??
+    node?.message?.key?.fromMe ??
+    node?.data?.fromMe ??
+    node?.messages?.[0]?.key?.fromMe ??
     false
   );
 }
 
 function extractRecipient(payload) {
   const node = unwrapMessagePayload(payload) || {};
-  return String(
-    node?.to ||
+  const jid =
+    node?.Info?.RecipientAlt ||
+    node?.Info?.Chat ||
+    node?.RecipientAlt ||
     node?.recipient ||
-    node?.Info?.Recipient ||
+    node?.to ||
+    node?.key?.remoteJid ||
     node?.message?.key?.remoteJid ||
-    ''
-  ).trim();
-}
+    node?.data?.key?.remoteJid ||
+    '';
 
-function extractBody(payload) {
-  const node = unwrapMessagePayload(payload) || {};
-  return String(
-    node?.Message?.conversation ||
-    node?.message?.conversation ||
-    node?.conversation ||
-    node?.text ||
-    node?.body ||
-    node?.Message?.extendedTextMessage?.text ||
-    node?.message?.extendedTextMessage?.text ||
-    node?.extendedTextMessage?.text ||
-    ''
-  ).trim();
+  return extractJidValue(jid);
 }
 
 function unwrapMessagePayload(payload) {
   if (!payload) return null;
-  return payload?.data?.messages?.[0] || payload?.data || payload?.message || payload?.Message || payload;
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = unwrapMessagePayload(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (payload.Info || payload.Message || payload.key || payload.message) return payload;
+  if (payload.data) {
+    const data = payload.data;
+    if (Array.isArray(data)) return unwrapMessagePayload(data);
+    if (data.Info || data.Message || data.key || data.message) return data;
+    if (Array.isArray(data.messages) && data.messages.length) return unwrapMessagePayload(data.messages[0]);
+    if (data.value) return unwrapMessagePayload(data.value);
+    return unwrapMessagePayload(data);
+  }
+
+  if (Array.isArray(payload.messages) && payload.messages.length) return unwrapMessagePayload(payload.messages[0]);
+  if (payload.value) return unwrapMessagePayload(payload.value);
+
+  return payload;
 }
 
 function normalizeText(value) {
