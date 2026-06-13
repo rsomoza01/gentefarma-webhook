@@ -1889,12 +1889,24 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const normalizedQuery = normalizeText(query);
   const normalizedQueryTokens = tokenize(normalizedQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   const leadingQueryTokens = normalizedQueryTokens.slice(0, 3);
-  const filteredTopMatches = leadingQueryTokens.length
+  const isShortNonDosageQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length <= 2;
+  const isSingleTokenQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length === 1;
+  const strictQueryTokens = isSingleTokenQuery ? normalizedQueryTokens : leadingQueryTokens;
+
+  const filteredTopMatches = strictQueryTokens.length
     ? topMatches.filter((item) => {
         const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateText) return false;
 
-        return leadingQueryTokens.some((token) => {
+        if (isSingleTokenQuery) {
+          const queryToken = strictQueryTokens[0];
+          const candidateTokens = tokenize(candidateText);
+          const exactWordMatch = candidateTokens.includes(queryToken) || candidateText.includes(` ${queryToken} `) || candidateText.startsWith(`${queryToken} `) || candidateText.endsWith(` ${queryToken}`) || candidateText === queryToken;
+          const closeWordMatch = exactWordMatch || candidateTokens.some((candidateToken) => tokenSimilarity(queryToken, candidateToken) >= 0.95);
+          return closeWordMatch;
+        }
+
+        return strictQueryTokens.every((token) => {
           if (candidateText.includes(token)) return true;
           for (const candidateToken of tokenize(candidateText)) {
             if (candidateToken === token) return true;
@@ -1906,8 +1918,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       })
     : topMatches;
 
-  const strictSingleTokenQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length <= 2;
-  const finalMatches = strictSingleTokenQuery
+  const finalMatches = isShortNonDosageQuery
     ? filteredTopMatches
     : (filteredTopMatches.length ? filteredTopMatches : topMatches);
 
