@@ -735,30 +735,44 @@ async function extractTextFromMedia(media) {
   const buffer = (inlineBuffer && inlineBuffer.length) ? inlineBuffer : await downloadMediaBuffer(media);
   if (!buffer || !buffer.length) return '';
 
-  const mimeType = String(media.mimeType || '').toLowerCase();
+  const mimeType = String(media.mimeType || media.mimetype || '').toLowerCase();
   const imageBase64 = buffer.toString('base64');
+
+  console.log('🧪 OCR media details:', {
+    provider: OCR_PROVIDER,
+    mimeType,
+    inlineBytes: inlineBuffer?.length || 0,
+    bufferBytes: buffer.length,
+    hasGoogleKey: Boolean(GOOGLE_VISION_API_KEY),
+    hasOpenAIKey: Boolean(OPENAI_API_KEY)
+  });
 
   if (OCR_PROVIDER === 'openai' && OPENAI_API_KEY) {
     const openaiText = await callOpenAIVision(imageBase64, mimeType || 'image/jpeg');
+    console.log('🧪 OCR openai result length:', openaiText ? openaiText.length : 0);
     if (openaiText) return openaiText;
   }
 
   if (OCR_PROVIDER === 'google' && GOOGLE_VISION_API_KEY) {
     const visionText = await callGoogleVisionOCR(imageBase64);
+    console.log('🧪 OCR google result length:', visionText ? visionText.length : 0);
     if (visionText) return visionText;
   }
 
   if (OCR_PROVIDER === 'auto') {
     if (GOOGLE_VISION_API_KEY) {
       const visionText = await callGoogleVisionOCR(imageBase64);
+      console.log('🧪 OCR google(auto) result length:', visionText ? visionText.length : 0);
       if (visionText) return visionText;
     }
     if (OPENAI_API_KEY) {
       const openaiText = await callOpenAIVision(imageBase64, mimeType || 'image/jpeg');
+      console.log('🧪 OCR openai(auto) result length:', openaiText ? openaiText.length : 0);
       if (openaiText) return openaiText;
     }
   }
 
+  console.warn('⚠️ OCR sin resultado. Revisa proveedor/configuración o calidad de la imagen.');
   return '';
 }
 
