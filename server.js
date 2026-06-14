@@ -814,38 +814,18 @@ async function downloadMediaBuffer(media) {
 function bufferFromEvolutionDownloadResponse(data) {
   if (!data) return null;
 
-  if (Buffer.isBuffer(data)) return data;
-  if (typeof data === 'string') {
-    const text = data.trim();
-    const base64Match = text.match(/^data:[^;]+;base64,(.+)$/i);
-    if (base64Match) return Buffer.from(base64Match[1], 'base64');
-    if (/^[A-Za-z0-9+/=\s]+$/.test(text) && text.length > 32) {
-      try {
-        return Buffer.from(text.replace(/\s+/g, ''), 'base64');
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
+  const seen = new Set();
+  const queue = [data];
+  const nestedKeys = ['data', 'result', 'media', 'file', 'buffer', 'base64', 'dataUrl', 'dataURL', 'url', 'content'];
 
-  const candidates = [
-    data?.data,
-    data?.result,
-    data?.media,
-    data?.file,
-    data?.buffer,
-    data?.base64,
-    data?.dataUrl,
-    data?.dataURL,
-    data?.url
-  ];
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) continue;
 
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    if (Buffer.isBuffer(candidate)) return candidate;
-    if (typeof candidate === 'string') {
-      const text = candidate.trim();
+    if (Buffer.isBuffer(current)) return current;
+
+    if (typeof current === 'string') {
+      const text = current.trim();
       const base64Match = text.match(/^data:[^;]+;base64,(.+)$/i);
       if (base64Match) return Buffer.from(base64Match[1], 'base64');
       if (/^[A-Za-z0-9+/=\s]+$/.test(text) && text.length > 32) {
@@ -853,6 +833,23 @@ function bufferFromEvolutionDownloadResponse(data) {
           return Buffer.from(text.replace(/\s+/g, ''), 'base64');
         } catch {
           continue;
+        }
+      }
+      continue;
+    }
+
+    if (Array.isArray(current)) {
+      for (const item of current) queue.push(item);
+      continue;
+    }
+
+    if (typeof current === 'object') {
+      if (seen.has(current)) continue;
+      seen.add(current);
+
+      for (const key of nestedKeys) {
+        if (Object.prototype.hasOwnProperty.call(current, key)) {
+          queue.push(current[key]);
         }
       }
     }
