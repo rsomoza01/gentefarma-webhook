@@ -696,22 +696,36 @@ async function processMessageUpdate(messageUpdate) {
 }
 
 async function analyzeIncomingMedia(media) {
-  if (!media || (!media.url && !media.downloadMessage)) return null;
+  const inlineBuffer = bufferFromInlineBase64(
+    media?.base64 ||
+    media?.inlineBase64 ||
+    media?.rawBase64 ||
+    media?.payloadBase64 ||
+    media?.content ||
+    media?.data
+  );
+  const hasInlineBase64 = Boolean(inlineBuffer && inlineBuffer.length);
 
-  const mimeType = String(media.mimeType || '').toLowerCase();
+  if (!media || (!hasInlineBase64 && !media.url && !media.downloadMessage)) return null;
+
+  const mimeType = String(media.mimeType || media.mimetype || '').toLowerCase();
   const isImage = /^image\//.test(mimeType);
   const isPdf = mimeType.includes('pdf');
-  if (!isImage && !isPdf) return null;
+  if (!hasInlineBase64 && !isImage && !isPdf) return null;
+
+  console.log(
+    `🖼️ Analizando media: inlineBase64=${hasInlineBase64 ? inlineBuffer.length : 0} url=${media?.url || media?.URL || media?.mediaUrl || media?.directPath || ''}`
+  );
 
   try {
     const text = await extractTextFromMedia(media);
     if (!text) return null;
     return {
       text,
-      signature: normalizeText(text).slice(0, 140)
+      signature: media?.fileSHA256 || media?.fileEncSHA256 || media?.mediaKey || media?.url || media?.fileName || ''
     };
   } catch (error) {
-    console.error('❌ Error analizando media entrante:', error.message);
+    console.error('❌ Error analizando media:', error?.message || error);
     return null;
   }
 }
