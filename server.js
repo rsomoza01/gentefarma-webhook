@@ -998,6 +998,17 @@ function extractMediaDescriptor(payload) {
   };
 
   for (const candidate of candidates) {
+    const inlineBuffer = bufferFromInlineBase64(candidate);
+    if (inlineBuffer && inlineBuffer.length) {
+      return {
+        mimeType: String(candidate?.mimeType || candidate?.mimetype || 'image/jpeg'),
+        url: candidate?.url || candidate?.URL || candidate?.mediaUrl || '',
+        fileName: candidate?.fileName || candidate?.filename || '',
+        headers: candidate?.headers || {},
+        base64: candidate?.base64 || candidate?.inlineBase64 || candidate?.rawBase64 || candidate?.payloadBase64 || candidate?.content || candidate?.data
+      };
+    }
+
     for (const mediaKey of mediaKeys) {
       const media = candidate?.[mediaKey] || candidate?.message?.[mediaKey] || candidate?.Message?.[mediaKey];
       if (!media) continue;
