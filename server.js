@@ -609,8 +609,9 @@ async function processIncomingMessage(payload) {
     const adminRecipient = extractRecipient(payload);
     const media = extractMediaDescriptor(payload);
     const mediaAnalysis = media ? await analyzeIncomingMedia(media) : null;
+    const rawBody = extractBody(payload) || '';
     const sanitizedOcrText = mediaAnalysis?.text ? sanitizeRecipeText(mediaAnalysis.text) : '';
-    const body = extractBody(payload) || sanitizedOcrText || '';
+    const body = [rawBody, sanitizedOcrText].filter(Boolean).join('\n\n').trim();
     const normalizedBody = normalizeText(body);
 
     if (mediaAnalysis?.text) {
