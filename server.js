@@ -331,20 +331,10 @@ function getCartTotals(session) {
 
 function parseSelectionCommand(text) {
   const normalized = normalizeText(text)
-    .replace(/\b(quiero|quisiera|dame|agregar|agrega|sumar|sumame|añadir|anadir|seleccionar|selecciona|elegir|elige|escoger|escoje|de|la|el|las|los|porfavor|por favor|solo)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
   if (!normalized) return null;
-
-  const multiChoicePattern = normalized.match(/^(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(?:de\s+)?(\d+(?:\s*[,y]\s*\d+)*)$/i);
-  const optionMarker = normalized.match(/\b(?:opcion|opci[oó]n)\s*(?:nro\.?|numero|número)?\s*(.+)$/i);
-  const quantityBeforeOption = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(?:de\s+la\s+|de\s+)?(?:opcion|opci[oó]n)\s*(.+)$/i);
-  const quantityOnlyMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
-  const compactPattern = normalized.match(/^(\d+)\s*x\s*(\d+(?:\s*[,y]\s*\d+)*)$/i);
-  const shortPairPattern = normalized.match(/^(\d+)\s+(\d+(?:\s*[,y]\s*\d+)*)$/i);
-  const optionOnlyPattern = normalized.match(/^\s*(?:opcion|opci[oó]n)\s*(\d+(?:\s*[,y]\s*\d+)*)\s*$/i);
-  const plainListPattern = normalized.match(/^(?:\d+(?:\s*[,y]\s*\d+)+)$/i);
 
   const parseOptionList = (value) => {
     const matches = String(value || '').match(/\d+/g) || [];
@@ -362,66 +352,44 @@ function parseSelectionCommand(text) {
     };
   };
 
-  if (multiChoicePattern) {
-    const quantity = Number(multiChoicePattern[1]);
-    const options = parseOptionList(multiChoicePattern[2]);
-    const built = buildResult(options, quantity, normalized);
-    if (built) return built;
-  }
+  const quantityPatterns = [
+    /^(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i,
+    /^(\d+)\s*x\b/i,
+    /^(\d+)\s+(?=\d)/i
+  ];
 
-  if (quantityBeforeOption) {
-    const quantity = Number(quantityBeforeOption[1]);
-    const options = parseOptionList(quantityBeforeOption[2]);
-    const built = buildResult(options, quantity, normalized);
-    if (built) return built;
-  }
+  let quantity = 1;
+  let optionSource = normalized;
 
-  if (optionMarker) {
-    const options = parseOptionList(optionMarker[1]);
-    const built = buildResult(options, quantityOnlyMatch ? Number(quantityOnlyMatch[1]) : 1, normalized);
-    if (built) return built;
-  }
-
-  if (compactPattern) {
-    const quantity = Number(compactPattern[1]);
-    const options = parseOptionList(compactPattern[2]);
-    const built = buildResult(options, quantity, normalized);
-    if (built) return built;
-  }
-
-  if (shortPairPattern) {
-    const quantity = Number(shortPairPattern[1]);
-    const options = parseOptionList(shortPairPattern[2]);
-    const built = buildResult(options, quantity, normalized);
-    if (built) return built;
-  }
-
-  if (optionOnlyPattern) {
-    const options = parseOptionList(optionOnlyPattern[1]);
-    const built = buildResult(options, 1, normalized);
-    if (built) return built;
-  }
-
-  if (plainListPattern) {
-    const options = parseOptionList(normalized);
-    const built = buildResult(options, 1, normalized);
-    if (built) return built;
-  }
-
-  if (quantityOnlyMatch) {
-    const quantity = Number(quantityOnlyMatch[1]);
-    if (Number.isInteger(quantity) && quantity > 0) {
-      const options = parseOptionList(normalized);
-      if (options.length) return buildResult(options, quantity, normalized);
+  for (const pattern of quantityPatterns) {
+    const match = normalized.match(pattern);
+    if (match) {
+      quantity = Number(match[1]) || 1;
+      optionSource = normalized.slice(match[0].length).trim();
+      break;
     }
   }
 
-  const numbers = normalized.match(/\d+/g) || [];
-  if (!numbers.length) return null;
+  const optionWordMatch = optionSource.match(/\b(?:opcion|opciones|opci[oó]n)\b/i);
+  if (optionWordMatch) {
+    optionSource = optionSource.slice(optionWordMatch.index + optionWordMatch[0].length).trim();
+  }
 
-  const quantity = quantityOnlyMatch ? Number(quantityOnlyMatch[1]) : 1;
-  const options = parseOptionList(numbers.join(' '));
-  return buildResult(options, quantity, normalized);
+  optionSource = optionSource
+    .replace(/^\b(?:de|del|la|las|el|los|y|e|con|para)\b\s*/i, '')
+    .trim();
+
+  const options = parseOptionList(optionSource);
+  if (options.length) {
+    return buildResult(options, quantity, normalized);
+  }
+
+  const listOnly = parseOptionList(normalized);
+  if (listOnly.length >= 2) {
+    return buildResult(listOnly, quantity, normalized);
+  }
+
+  return null;
 }
 
 function isSelectionPhrase(value) {
