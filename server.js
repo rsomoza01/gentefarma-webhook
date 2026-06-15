@@ -1710,7 +1710,7 @@ async function searchAndBuildCatalogResponse(text, session) {
 
   const requestedMedicines = extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
-  const recipeLineMedicines = extractRecipeMedicineLines(text);
+  const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
