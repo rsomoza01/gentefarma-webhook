@@ -1788,14 +1788,14 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const exactRoot = queryTokens.join(' ');
   const dosageLessQuery = queryTokens
     .filter((token) => !/^(\d+(?:[.,]\d+)?)$/.test(token))
-    .filter((token) => !/^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/.test(token))
+    .filter((token) => !/^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(token))
     .join(' ')
     .trim();
   const matchQuery = dosageLessQuery || query;
   const matchTokens = tokenize(matchQuery).filter((t) => !STOPWORDS.has(t) && t.length > 1);
   if (!matchTokens.length) return { query, queryTokens, exchangeRate, matches: [] };
 
-  const isDosageToken = (token) => /^(\d+(?:[.,]\d+)?)$/.test(token) || /^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/.test(token);
+  const isDosageToken = (token) => /^(\d+(?:[.,]\d+)?)$/.test(token) || /^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(token);
   const focusTokens = matchTokens.filter((token) => !isDosageToken(token));
   const primaryTokens = focusTokens.length ? focusTokens : matchTokens;
   const primaryRoot = primaryTokens.join(' ');
@@ -3040,13 +3040,47 @@ function sanitizeRecipeText(value) {
     /^(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|dr\.?|dra\.?|doctor|doctora|medico|médico|medica|médica)\b/i,
     /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\s+[a-záéíóúñ\s]+$/i,
     /^(fecha|edad|sexo|peso|talla|ci|c.i.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
-    /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/, 
+    /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/,
     /^(?:edad|peso|talla|ci|c.i.|cedula|cédula)[:\s]+[\w\d.,-]+$/i
   ];
 
   const cleaned = lines.filter((line) => !removalPatterns.some((pattern) => pattern.test(line)));
-  return cleaned.join(' ').replace(/\s+/g, ' ').trim();
+  return cleaned.join('\n').replace(/[\t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
+function extractRecipeMedicineLines(value) {
+  const raw = String(value || '');
+  if (!raw) return [];
+
+  const lines = raw
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const metaPatterns = [
+    /^(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro)\b/i,
+    /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i,
+    /^(fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
+    /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/,
+    /^(?:edad|peso|talla|ci|c\.i\.|cedula|cédula)[:\s]+[\w\d.,-]+$/i
+  ];
+
+  const formOrDose = /\b(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)\b/i;
+  const candidates = [];
+
+  for (const line of lines) {
+    const normalized = normalizeText(line);
+    if (!normalized) continue;
+    if (metaPatterns.some((pattern) => pattern.test(line) || pattern.test(normalized))) continue;
+    if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) continue;
+    if (!/[a-záéíóúñ]/i.test(line)) continue;
+    if (!formOrDose.test(line) && !/^[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s-]{2,}$/i.test(line)) continue;
+    if (normalized.split(' ').length > 8) continue;
+    candidates.push(line);
+  }
+
+  return [...new Set(candidates)];
+}
+
 function tokenize(value) {
   const normalized = normalizeText(value);
   if (!normalized) return [];
@@ -3243,12 +3277,12 @@ function extractMedicineQuery(text) {
     'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
     'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor'
   ]);
-  const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?)$/i.test(token);
+  const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
   const dosageTokens = tokens.filter((token) => isDoseToken(token));
   const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
 
-  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|unguentos|sobres?))\b/i;
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
   const dosageMatch = candidate.match(dosagePattern);
   if (dosageMatch) {
     const dose = normalizeText(dosageMatch[1]);
