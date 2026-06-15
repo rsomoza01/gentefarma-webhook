@@ -964,27 +964,147 @@ async function callOpenAIVision(imageBase64, mimeType) {
 }
 
 async function callGoogleVisionOCR(imageBase64) {
-  const response = await axios.post(
-    `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_VISION_API_KEY}`,
-    {
-      requests: [{
-        image: { content: imageBase64 },
-        features: [
-          { type: 'DOCUMENT_TEXT_DETECTION' },
-          { type: 'TEXT_DETECTION' }
-        ]
-      }]
-    },
-    {
-      timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
-      headers: { 'Content-Type': 'application/json' }
-    }
-  );
+  const visionEndpoint = 'https://vision.googleapis.com/v1/images:annotate';
+  const serviceAccount = getGoogleVisionServiceAccount();
 
-  return String(response?.data?.responses?.[0]?.fullTextAnnotation?.text || response?.data?.responses?.[0]?.textAnnotations?.[0]?.description || '').trim();
+  const tryWithApiKey = async () => {
+    if (!GOOGLE_VISION_API_KEY) return '';
+
+    const response = await axios.post(
+      `${visionEndpoint}?key=${encodeURIComponent(GOOGLE_VISION_API_KEY)}`,
+      {
+        requests: [{
+          image: { content: imageBase64 },
+          features: [
+            { type: 'DOCUMENT_TEXT_DETECTION' },
+            { type: 'TEXT_DETECTION' }
+          ]
+        }]
+      },
+      {
+        timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+
+    return String(response?.data?.responses?.[0]?.fullTextAnnotation?.text || response?.data?.responses?.[0]?.textAnnotations?.[0]?.description || '').trim();
+  };
+
+  const tryWithServiceAccount = async () => {
+    if (!serviceAccount) return '';
+    const accessToken = await getGoogleVisionAccessToken(serviceAccount);
+    if (!accessToken) return '';
+
+    const response = await axios.post(
+      visionEndpoint,
+      {
+        requests: [{
+          image: { content: imageBase64 },
+          features: [
+            { type: 'DOCUMENT_TEXT_DETECTION' },
+            { type: 'TEXT_DETECTION' }
+          ]
+        }]
+      },
+      {
+        timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`
+        }
+      }
+    );
+
+    return String(response?.data?.responses?.[0]?.fullTextAnnotation?.text || response?.data?.responses?.[0]?.textAnnotations?.[0]?.description || '').trim();
+  };
+
+  try {
+    if (serviceAccount) {
+      try {
+        const text = await tryWithServiceAccount();
+        if (text) return text;
+      } catch (error) {
+        const status = error.response?.status;
+        const details = error.response?.data;
+        console.warn('⚠️ Google Vision con service account falló:', status || '', typeof details === 'string' ? details : JSON.stringify(details || {}).slice(0, 300));
+        if (status !== 403 && status !== 401) throw error;
+      }
+    }
+
+    const text = await tryWithApiKey();
+    if (text) return text;
+    return '';
+  } catch (error) {
+    const status = error.response?.status;
+    const details = error.response?.data;
+    console.error('❌ Google Vision OCR error:', status || '', typeof details === 'string' ? details : JSON.stringify(details || {}).slice(0, 500));
+    throw error;
+  }
+}
+
+function getGoogleVisionServiceAccount() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed?.client_email || !parsed?.private_key) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+let googleVisionTokenCache = { token: '', expiresAt: 0 };
+
+async function getGoogleVisionAccessToken(serviceAccount) {
+  const now = Math.floor(Date.now() / 1000);
+  if (googleVisionTokenCache.token && googleVisionTokenCache.expiresAt > now + 60) {
+    return googleVisionTokenCache.token;
+  }
+
+  const header = base64UrlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const payload = base64UrlEncode(JSON.stringify({
+    iss: serviceAccount.client_email,
+    scope: 'https://www.googleapis.com/auth/cloud-platform',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600
+  }));
+  const signingInput = `${header}.${payload}`;
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(signingInput);
+  signer.end();
+  const signature = base64UrlEncode(signer.sign(serviceAccount.private_key));
+
+  const assertion = `${signingInput}.${signature}`;
+  const form = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion
+  });
+
+  const response = await axios.post('https://oauth2.googleapis.com/token', form.toString(), {
+    timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  });
+
+  const token = String(response?.data?.access_token || '');
+  const expiresIn = Number(response?.data?.expires_in || 3600);
+  if (token) {
+    googleVisionTokenCache = {
+      token,
+      expiresAt: now + Math.max(60, expiresIn - 120)
+    };
+  }
+  return token;
+}
+
+function base64UrlEncode(input) {
+  const buffer = Buffer.isBuffer(input) ? input : Buffer.from(String(input));
+  return buffer.toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 function extractMediaDescriptor(payload) {
+
   const node = unwrapMessagePayload(payload) || {};
   const candidates = [
     node,
