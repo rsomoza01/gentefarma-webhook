@@ -337,6 +337,7 @@ function parseSelectionCommand(text) {
 
   if (!normalized) return null;
 
+  const multiChoicePattern = normalized.match(/^(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(?:de\s+)?(\d+(?:\s*[,y]\s*\d+)*)$/i);
   const optionMarker = normalized.match(/\b(?:opcion|opci[oó]n)\s*(?:nro\.?|numero|número)?\s*(.+)$/i);
   const quantityBeforeOption = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\s*(?:de\s+la\s+|de\s+)?(?:opcion|opci[oó]n)\s*(.+)$/i);
   const quantityOnlyMatch = normalized.match(/\b(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/i);
@@ -360,6 +361,13 @@ function parseSelectionCommand(text) {
       raw: rawText
     };
   };
+
+  if (multiChoicePattern) {
+    const quantity = Number(multiChoicePattern[1]);
+    const options = parseOptionList(multiChoicePattern[2]);
+    const built = buildResult(options, quantity, normalized);
+    if (built) return built;
+  }
 
   if (quantityBeforeOption) {
     const quantity = Number(quantityBeforeOption[1]);
@@ -418,7 +426,7 @@ function parseSelectionCommand(text) {
 
 function isSelectionPhrase(value) {
   const text = normalizeText(value);
-  return /\b(opcion|opci[oó]n|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x|opciones)\b/.test(text) && /\d+/.test(text);
+  return /\b(opcion|opci[oó]n|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x|opciones|quiero|quisiera|agregar|agrega|seleccionar|selecciona|elegir|elige|escoger|escoje)\b/.test(text) && /\d+/.test(text);
 }
 
 
