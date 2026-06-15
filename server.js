@@ -679,7 +679,7 @@ async function processIncomingMessage(payload) {
     const session = getSession(from);
     touchSession(session);
 
-    const response = await routeMessage(from, body, session);
+    const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text) });
     if (response) {
       await sendOutboundWhatsAppMessage(from, response);
     }
@@ -1270,8 +1270,9 @@ function extractMediaDescriptor(payload) {
 // ----------------------------------------------------
 // Conversation router
 // ----------------------------------------------------
-async function routeMessage(phone, text, session) {
+async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
+  const hasOcrText = Boolean(context?.hasOcrText);
 
   if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
     disableHumanHandoff(session);
@@ -1317,14 +1318,19 @@ async function routeMessage(phone, text, session) {
 
   const directMedicineQuery = extractMedicineQuery(text);
   const medicineRequests = extractMedicineRequests(text);
-  const selectionCandidate = parseSelectionCommand(normalized);
   const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
+  const selectionCandidate = hasOcrText ? null : parseSelectionCommand(normalized);
   const hasMedicineSearchSignal = Boolean(
     directMedicineQuery ||
     medicineRequests.length > 0 ||
     isProductSearchRequest(normalized) ||
     (!selectionCandidate && looksLikeMedicineName(normalized) && !isSelectionPhrase(normalized))
   );
+
+  if (hasOcrText && !hasSelectionResults) {
+    clearSelectionState(session);
+    return await searchAndBuildCatalogResponse(text, session);
+  }
 
   if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
     clearSelectionState(session);
