@@ -611,6 +611,22 @@ async function processIncomingMessage(payload) {
     const mediaAnalysis = media ? await analyzeIncomingMedia(media) : null;
     const body = extractBody(payload) || mediaAnalysis?.text || '';
     const normalizedBody = normalizeText(body);
+
+    if (mediaAnalysis?.text) {
+      console.log('🧾 OCR text extracted:', mediaAnalysis.text.slice(0, 500));
+      console.log('🔎 OCR routed to catalog search:', {
+        textLength: mediaAnalysis.text.length,
+        signature: mediaAnalysis.signature || ''
+      });
+    }
+
+    if (!body && mediaAnalysis?.text) {
+      console.log('ℹ️ OCR text available, using it as message body.');
+    }
+
+    if (mediaAnalysis?.text && !body) {
+      // body already resolved from OCR; keep explicit log for traceability.
+    }
     const normalizedFrom = normalizeText(from);
     const normalizedRecipient = normalizeText(adminRecipient);
     const isAdmin = isAdminSender(from) || isAdminSender(adminRecipient);
