@@ -609,13 +609,18 @@ async function processIncomingMessage(payload) {
     const adminRecipient = extractRecipient(payload);
     const media = extractMediaDescriptor(payload);
     const mediaAnalysis = media ? await analyzeIncomingMedia(media) : null;
-    const body = extractBody(payload) || mediaAnalysis?.text || '';
+    const sanitizedOcrText = mediaAnalysis?.text ? sanitizeRecipeText(mediaAnalysis.text) : '';
+    const body = extractBody(payload) || sanitizedOcrText || '';
     const normalizedBody = normalizeText(body);
 
     if (mediaAnalysis?.text) {
       console.log('🧾 OCR text extracted:', mediaAnalysis.text.slice(0, 500));
+      if (sanitizedOcrText && sanitizedOcrText !== mediaAnalysis.text) {
+        console.log('🧽 OCR text sanitized:', sanitizedOcrText.slice(0, 500));
+      }
       console.log('🔎 OCR routed to catalog search:', {
         textLength: mediaAnalysis.text.length,
+        sanitizedTextLength: sanitizedOcrText.length,
         signature: mediaAnalysis.signature || ''
       });
     }
@@ -3019,6 +3024,24 @@ function normalizeText(value) {
     .trim();
 }
 
+
+function sanitizeRecipeText(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+
+  const lines = raw
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const removalPatterns = [
+    /^(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|dr\.?|dra\.?|doctor|doctora|medico|médico|medica|médica)\b/i,
+    /^(dr\.?|dra\.?|doctor|doctora)\s+[a-záéíóúñ\s]+$/i
+  ];
+
+  const cleaned = lines.filter((line) => !removalPatterns.some((pattern) => pattern.test(line)));
+  return cleaned.join(' ').replace(/\s+/g, ' ').trim();
+}
 function tokenize(value) {
   const normalized = normalizeText(value);
   if (!normalized) return [];
