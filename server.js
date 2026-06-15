@@ -611,8 +611,9 @@ async function processIncomingMessage(payload) {
     const mediaAnalysis = media ? await analyzeIncomingMedia(media) : null;
     const rawBody = extractBody(payload) || '';
     const sanitizedOcrText = mediaAnalysis?.text ? sanitizeRecipeText(mediaAnalysis.text) : '';
-    const body = [rawBody, sanitizedOcrText].filter(Boolean).join('\n\n').trim();
+    const body = mediaAnalysis?.text ? (sanitizedOcrText || rawBody) : rawBody;
     const normalizedBody = normalizeText(body);
+    const ocrSearchText = sanitizedOcrText || '';
 
     if (mediaAnalysis?.text) {
       console.log('🧾 OCR text extracted:', mediaAnalysis.text.slice(0, 500));
@@ -701,7 +702,7 @@ async function processIncomingMessage(payload) {
     const session = getSession(from);
     touchSession(session);
 
-    const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text) });
+    const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text), ocrSearchText });
     if (response) {
       await sendOutboundWhatsAppMessage(from, response);
     }
@@ -1295,6 +1296,7 @@ function extractMediaDescriptor(payload) {
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
   const hasOcrText = Boolean(context?.hasOcrText);
+  const ocrSearchText = normalizeText(context?.ocrSearchText || '');
 
   if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
     disableHumanHandoff(session);
@@ -1351,12 +1353,12 @@ async function routeMessage(phone, text, session, context = {}) {
 
     if (hasOcrText && !hasSelectionResults) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(text, session, { hasOcrText: true });
+      return await searchAndBuildCatalogResponse(ocrSearchText || text, session, { hasOcrText: true, ocrOnly: true });
     }
 
     if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(text, session, { hasOcrText });
+      return await searchAndBuildCatalogResponse(ocrSearchText || text, session, { hasOcrText });
     }
 
   if (selectionCandidate && hasSelectionResults) {
@@ -1704,19 +1706,20 @@ function shouldSendInstagramReel(value) {
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
-async function searchAndBuildCatalogResponse(text, session) {
+async function searchAndBuildCatalogResponse(text, session, options = {}) {
   if (!db) {
     return '⚠️ No tengo conexión al catálogo en este momento. Intenta de nuevo más tarde.';
   }
 
-  const requestedMedicines = extractMedicineRequests(text);
+  const ocrOnly = Boolean(options.ocrOnly);
+  const requestedMedicines = ocrOnly ? [] : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
     ...recipeLineMedicines
-  ]);
+  ]).filter((item) => !/\b(belen|belén|arcia|paciente|nombre|apellido|ano nac|año nac)\b/i.test(normalizeText(item)));
 
   if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
@@ -2495,9 +2498,10 @@ function extractMedicineRequestsFromSegments(text) {
 
   const segments = splitMedicineSegments(rawText);
   const pieces = segments.length > 1 ? segments : splitSingleLineMedicineList(rawText);
+  const filteredPieces = pieces.filter((piece) => !/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac)\b/i.test(normalizeText(piece)));
   const results = [];
 
-  for (const piece of pieces) {
+  for (const piece of filteredPieces) {
     const cleaned = normalizeText(piece);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
@@ -3040,7 +3044,7 @@ function sanitizeRecipeText(value) {
   const removalPatterns = [
     /^(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|dr\.?|dra\.?|doctor|doctora|medico|médico|medica|médica)\b/i,
     /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\s+[a-záéíóúñ\s]+$/i,
-    /^(fecha|edad|sexo|peso|talla|ci|c.i.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
+    /^(paciente|rp|rx|receta|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c.i.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
     /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/,
     /^(?:edad|peso|talla|ci|c.i.|cedula|cédula)[:\s]+[\w\d.,-]+$/i
   ];
@@ -3060,7 +3064,7 @@ function extractRecipeMedicineLines(value) {
   const metaPatterns = [
     /^(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro)\b/i,
     /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i,
-    /^(fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
+    /^(paciente|rp|rx|receta|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
     /^(no\s+disponibles?|resultados?\s+encontrados|te\s+muestro|tasa\s+bcv|cuando\s+termines|otro\s+medicamento|para\s+agregar|ejemplo|receta\s+detectada)\b/i,
     /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/,
     /^(?:edad|peso|talla|ci|c\.i\.|cedula|cédula)[:\s]+[\w\d.,-]+$/i
@@ -3078,6 +3082,7 @@ function extractRecipeMedicineLines(value) {
     if (!/[a-záéíóúñ]/i.test(candidate)) return;
     if (normalized.split(' ').length > 8) return;
     if (!formOrDose.test(candidate) && !shortBrandLike.test(normalized)) return;
+    if (/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac)\b/i.test(normalized)) return;
     candidates.push(candidate);
   };
 
