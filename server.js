@@ -2177,10 +2177,14 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     candidateMatches = focusedVitaminMatches;
   } else if (recipeMode) {
-    const recipeToken = primaryTokens[0] || matchTokens[0] || '';
-    const recipeMatches = scoredProducts.filter((item) => {
+  const recipeToken = primaryTokens[0] || matchTokens[0] || '';
+  if (!recipeToken) {
+    return { query, queryTokens, exchangeRate, matches: [] };
+  }
+
+  const recipeMatches = scoredProducts.filter((item) => {
       const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
-      if (!candidateText || !recipeToken) return false;
+      if (!candidateText) return false;
 
       const candidateTokens = tokenize(candidateText);
       const exactTokenMatch = candidateTokens.some((candidateToken) => (
@@ -2194,8 +2198,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
         item.fullFocusMatch ||
         item.exactHit ||
         item.phraseHit ||
-        (item.referenceSimilarity ?? 0) >= strictReferenceThreshold ||
-        (item.score ?? 0) >= 240
+        (item.referenceSimilarity ?? 0) >= strictReferenceThreshold
       );
     });
 
