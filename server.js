@@ -1728,7 +1728,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
     if (/\b(belen|belén|arcia|paciente|nombre|apellido|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
     return Boolean(normalizedItem);
-  });
+  }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
 
   if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
@@ -3246,13 +3246,52 @@ function isLikelyRecipeMedicineCandidate(value) {
   if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return false;
   if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return false;
 
-  const hasMedicineSignal = /(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|vit)\b/i.test(normalized);
+  return Boolean(extractPrimaryRecipeMedicineQuery(raw));
+}
+
+function extractPrimaryRecipeMedicineQuery(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalized = normalizeText(raw);
+  if (!normalized) return '';
+
+  if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return '';
+  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return '';
+
   const tokens = normalized.split(' ').filter(Boolean);
+  if (!tokens.length) return '';
 
-  if (hasMedicineSignal) return true;
-  if (tokens.length === 1) return /^[a-z0-9.-]{3,}$/i.test(tokens[0]);
+  const MED_FORM_TOKENS = new Set([
+    'ampolla', 'ampollas', 'vial', 'viales', 'frasco', 'frascos', 'tableta', 'tabletas', 'capsula', 'capsulas',
+    'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
+    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
+  ]);
+  const MED_QUERY_WEAK_TOKENS = new Set([
+    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
+    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor'
+  ]);
+  const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
+  const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
+  const dosageTokens = tokens.filter((token) => isDoseToken(token));
+  const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
 
-  return false;
+  const firstStrongToken = tokens.find((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
+  if (firstStrongToken) return firstStrongToken;
+
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
+  const dosageMatch = raw.match(dosagePattern);
+  if (dosageMatch) {
+    const dose = normalizeText(dosageMatch[1]);
+    const beforeDose = raw.slice(0, dosageMatch.index).trim();
+    const beforeTokens = normalizeText(beforeDose).split(' ').filter((t) => t.length > 1 && !STOPWORDS.has(t));
+    const mainBefore = beforeTokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
+    if (mainBefore.length) return mainBefore[0];
+    return dose;
+  }
+
+  if (strongTokens.length) return strongTokens[0];
+  if (formTokens.length && tokens.length > 1) return tokens[0];
+  return tokens[0] || '';
 }
 
 function looksLikeMedicineName(value) {
