@@ -1348,15 +1348,15 @@ async function routeMessage(phone, text, session, context = {}) {
     (!selectionCandidate && looksLikeMedicineName(normalized) && !isSelectionPhrase(normalized))
   );
 
-  if (hasOcrText && !hasSelectionResults) {
-    clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(text, session);
-  }
+    if (hasOcrText && !hasSelectionResults) {
+      clearSelectionState(session);
+      return await searchAndBuildCatalogResponse(text, session, { hasOcrText: true });
+    }
 
-  if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
-    clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(text, session);
-  }
+    if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
+      clearSelectionState(session);
+      return await searchAndBuildCatalogResponse(text, session, { hasOcrText });
+    }
 
   if (selectionCandidate && hasSelectionResults) {
     const results = resolveSelectionResults(session);
