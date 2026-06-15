@@ -1511,7 +1511,7 @@ async function routeMessage(phone, text, session, context = {}) {
   const medicineSearchIntent = Boolean(
     directMedicineQuery ||
     medicineRequests.length > 0 ||
-    (!isSelectionPhrase(normalized) && /(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina|dosis|presentacion|presentación)/.test(normalized)) ||
+    (!isSelectionPhrase(normalized) && /(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|dosis|presentacion|presentación)/.test(normalized)) ||
     (!isSelectionPhrase(normalized) && /\b(tienes?|tiene|hay|busco|busca|quiero|necesito|precio|costo|disponible|disponibilidad|medicamento|medicamentos|producto|productos)\b/.test(normalized))
   );
 
@@ -1710,9 +1710,11 @@ async function searchAndBuildCatalogResponse(text, session) {
 
   const requestedMedicines = extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
+  const recipeLineMedicines = extractRecipeMedicineLines(text);
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
-    ...fallbackMedicines
+    ...fallbackMedicines,
+    ...recipeLineMedicines
   ]);
 
   if (candidateMedicines.length > 1) {
@@ -2397,7 +2399,7 @@ function extractMedicineRequests(text) {
     const cleaned = normalizeText(segment);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
-    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina)/.test(cleaned)) continue;
+    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned)) continue;
 
     const query = extractMedicineQuery(segment) || cleaned;
     if (!query) continue;
@@ -2498,7 +2500,7 @@ function extractMedicineRequestsFromSegments(text) {
     const cleaned = normalizeText(piece);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
-    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina)/.test(cleaned)) continue;
+    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned)) continue;
 
     const query = extractMedicineQuery(piece) || cleaned;
     if (!query) continue;
@@ -3177,7 +3179,7 @@ function looksLikeMedicineName(value) {
   const tokens = tokenize(text).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   if (!tokens.length) return false;
 
-  const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|cc|ui|iu)|tabletas?|capsulas?|capsules?|ampollas?|suspension|jarabe|gotas|crema|gel|unguento|sobres?|vitamina|vit)\b/.test(text);
+  const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|cc|ui|iu)|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|vit)\b/.test(text);
   const hasUsefulMultiTokenPhrase = tokens.length >= 2;
   const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 5 && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0]);
 
@@ -3234,8 +3236,8 @@ function extractMedicineQuery(text) {
 
   const MED_FORM_TOKENS = new Set([
     'ampolla', 'ampollas', 'vial', 'viales', 'frasco', 'frascos', 'tableta', 'tabletas', 'capsula', 'capsulas',
-    'cápsula', 'cápsulas', 'suspension', 'suspensión', 'jarabe', 'gotas', 'crema', 'gel', 'unguento', 'unguentos',
-    'sobres', 'sobresa', 'polvo', 'polvos', 'capsules', 'tablet', 'tabletass'
+    'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
+    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
   const MED_QUERY_WEAK_TOKENS = new Set([
     'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
