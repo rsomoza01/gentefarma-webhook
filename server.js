@@ -996,7 +996,11 @@ function extractMediaDescriptor(payload) {
     node?.messages?.[0],
     node?.messages?.[0]?.message,
     node?.key,
-    node?.key?.message
+    node?.key?.message,
+    payload,
+    payload?.data,
+    payload?.Message,
+    payload?.message
   ].filter(Boolean);
 
   const mediaKeys = [
@@ -1021,19 +1025,46 @@ function extractMediaDescriptor(payload) {
       url: cloned.URL || cloned.url || cloned.mediaUrl || cloned.directPath || '',
       fileName: cloned.fileName || cloned.filename || '',
       headers: cloned.headers || {},
-      downloadMessage: { [mediaType]: cloned }
+      downloadMessage: { [mediaType]: cloned },
+      base64: cloned.base64 || cloned.inlineBase64 || cloned.rawBase64 || cloned.payloadBase64 || cloned.content || cloned.data || ''
     };
   };
 
+  const collectBase64FromNode = (candidate) => {
+    if (!candidate || typeof candidate !== 'object') return '';
+    return (
+      candidate?.base64 ||
+      candidate?.inlineBase64 ||
+      candidate?.rawBase64 ||
+      candidate?.payloadBase64 ||
+      candidate?.content ||
+      candidate?.data ||
+      candidate?.Message?.base64 ||
+      candidate?.Message?.inlineBase64 ||
+      candidate?.Message?.rawBase64 ||
+      candidate?.Message?.payloadBase64 ||
+      candidate?.message?.base64 ||
+      candidate?.message?.inlineBase64 ||
+      candidate?.message?.rawBase64 ||
+      candidate?.message?.payloadBase64 ||
+      candidate?.data?.base64 ||
+      candidate?.data?.inlineBase64 ||
+      candidate?.data?.rawBase64 ||
+      candidate?.data?.payloadBase64 ||
+      ''
+    );
+  };
+
   for (const candidate of candidates) {
-    const inlineBuffer = bufferFromInlineBase64(candidate);
+    const base64Value = collectBase64FromNode(candidate);
+    const inlineBuffer = bufferFromInlineBase64(base64Value || candidate);
     if (inlineBuffer && inlineBuffer.length) {
       return {
         mimeType: String(candidate?.mimeType || candidate?.mimetype || 'image/jpeg'),
-        url: candidate?.url || candidate?.URL || candidate?.mediaUrl || '',
+        url: candidate?.url || candidate?.URL || candidate?.mediaUrl || candidate?.directPath || '',
         fileName: candidate?.fileName || candidate?.filename || '',
         headers: candidate?.headers || {},
-        base64: candidate?.base64 || candidate?.inlineBase64 || candidate?.rawBase64 || candidate?.payloadBase64 || candidate?.content || candidate?.data
+        base64: base64Value || candidate?.base64 || candidate?.inlineBase64 || candidate?.rawBase64 || candidate?.payloadBase64 || candidate?.content || candidate?.data || ''
       };
     }
 
@@ -1043,7 +1074,7 @@ function extractMediaDescriptor(payload) {
 
       const descriptor = buildDownloadMessage(media, mediaKey);
       if (!descriptor) continue;
-      if (!descriptor.url && !descriptor.downloadMessage) continue;
+      if (!descriptor.url && !descriptor.downloadMessage && !descriptor.base64) continue;
       return descriptor;
     }
   }
