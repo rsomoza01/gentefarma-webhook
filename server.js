@@ -993,13 +993,28 @@ async function callOpenAIVision(imageBase64, mimeType) {
     temperature: 0
   };
 
+  const isOpenRouter = /openrouter\.ai/i.test(OPENAI_BASE_URL);
   const response = await axios.post(`${OPENAI_BASE_URL.replace(/\/$/, '')}/chat/completions`, payload, {
     timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
     headers: {
       Authorization: `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      ...(isOpenRouter ? {
+        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://gentefarma.app',
+        'X-Title': process.env.OPENROUTER_APP_NAME || 'Gentefarma WhatsApp OCR'
+      } : {})
     }
   });
+
+  if (isOpenRouter) {
+    console.log('🧪 OpenRouter OCR request sent:', {
+      baseUrl: OPENAI_BASE_URL,
+      model: OPENAI_VISION_MODEL,
+      hasKey: Boolean(OPENAI_API_KEY),
+      referer: process.env.OPENROUTER_HTTP_REFERER || 'https://gentefarma.app',
+      title: process.env.OPENROUTER_APP_NAME || 'Gentefarma WhatsApp OCR'
+    });
+  }
 
   return String(response?.data?.choices?.[0]?.message?.content || '').trim();
 }
