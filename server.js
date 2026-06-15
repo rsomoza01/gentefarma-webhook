@@ -3051,8 +3051,8 @@ function extractRecipeMedicineLines(value) {
   const raw = String(value || '');
   if (!raw) return [];
 
-  const lines = raw
-    .split(/\r?\n+/)
+  const chunks = raw
+    .split(/\r?\n+|[•·●\u2022]+|(?:\s+[-–—]\s+)/g)
     .map((line) => line.trim())
     .filter(Boolean);
 
@@ -3060,22 +3060,37 @@ function extractRecipeMedicineLines(value) {
     /^(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro)\b/i,
     /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i,
     /^(fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
+    /^(no\s+disponibles?|resultados?\s+encontrados|te\s+muestro|tasa\s+bcv|cuando\s+termines|otro\s+medicamento|para\s+agregar|ejemplo|receta\s+detectada)\b/i,
     /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/,
     /^(?:edad|peso|talla|ci|c\.i\.|cedula|cédula)[:\s]+[\w\d.,-]+$/i
   ];
 
   const formOrDose = /\b(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)\b/i;
+  const shortBrandLike = /^(?:[a-záéíóúñ][a-záéíóúñ0-9.-]{2,}(?:\s+[a-záéíóúñ0-9().-]{2,}){0,5})$/i;
   const candidates = [];
 
-  for (const line of lines) {
-    const normalized = normalizeText(line);
-    if (!normalized) continue;
-    if (metaPatterns.some((pattern) => pattern.test(line) || pattern.test(normalized))) continue;
-    if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) continue;
-    if (!/[a-záéíóúñ]/i.test(line)) continue;
-    if (!formOrDose.test(line) && !/^[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s-]{2,}$/i.test(line)) continue;
-    if (normalized.split(' ').length > 8) continue;
-    candidates.push(line);
+  const pushCandidate = (candidate) => {
+    const normalized = normalizeText(candidate);
+    if (!normalized) return;
+    if (metaPatterns.some((pattern) => pattern.test(candidate) || pattern.test(normalized))) return;
+    if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return;
+    if (!/[a-záéíóúñ]/i.test(candidate)) return;
+    if (normalized.split(' ').length > 8) return;
+    if (!formOrDose.test(candidate) && !shortBrandLike.test(normalized)) return;
+    candidates.push(candidate);
+  };
+
+  for (const chunk of chunks) {
+    const normalizedChunk = normalizeText(chunk);
+    if (!normalizedChunk) continue;
+
+    const pieces = chunk.split(/\s*(?:,|;|\/|\|)\s*/g).map((part) => part.trim()).filter(Boolean);
+    if (pieces.length > 1) {
+      for (const piece of pieces) pushCandidate(piece);
+      continue;
+    }
+
+    pushCandidate(chunk);
   }
 
   return [...new Set(candidates)];
