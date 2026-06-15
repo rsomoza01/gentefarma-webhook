@@ -1355,22 +1355,25 @@ async function routeMessage(phone, text, session, context = {}) {
   const medicineRequests = extractMedicineRequests(text);
   const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
   const selectionCandidate = hasOcrText ? null : parseSelectionCommand(normalized);
+  const isSelectionMessage = Boolean(selectionCandidate) || isSelectionPhrase(normalized);
   const hasMedicineSearchSignal = Boolean(
-    directMedicineQuery ||
-    medicineRequests.length > 0 ||
-    isProductSearchRequest(normalized) ||
-    (!selectionCandidate && looksLikeMedicineName(normalized) && !isSelectionPhrase(normalized))
+    !isSelectionMessage && (
+      directMedicineQuery ||
+      medicineRequests.length > 0 ||
+      isProductSearchRequest(normalized) ||
+      looksLikeMedicineName(normalized)
+    )
   );
 
-    if (hasOcrText && !hasSelectionResults) {
-      clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText: true, ocrOnly: true, recipeMode: true });
-    }
+  if (hasOcrText && !hasSelectionResults) {
+    clearSelectionState(session);
+    return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText: true, ocrOnly: true, recipeMode: true });
+  }
 
-    if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
-      clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText });
-    }
+  if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
+    clearSelectionState(session);
+    return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText });
+  }
 
   if (selectionCandidate && hasSelectionResults) {
     const results = resolveSelectionResults(session);
