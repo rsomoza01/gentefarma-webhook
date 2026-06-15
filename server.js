@@ -2176,6 +2176,42 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
 
     candidateMatches = focusedVitaminMatches;
+  } else if (recipeMode) {
+    const recipeToken = primaryTokens[0] || matchTokens[0] || '';
+    const recipeMatches = scoredProducts.filter((item) => {
+      const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
+      if (!candidateText || !recipeToken) return false;
+
+      const candidateTokens = tokenize(candidateText);
+      const exactTokenMatch = candidateTokens.some((candidateToken) => (
+        candidateToken === recipeToken ||
+        candidateToken.startsWith(recipeToken) ||
+        recipeToken.startsWith(candidateToken) ||
+        tokenSimilarity(recipeToken, candidateToken) >= 0.96
+      ));
+
+      return exactTokenMatch && (
+        item.fullFocusMatch ||
+        item.exactHit ||
+        item.phraseHit ||
+        (item.referenceSimilarity ?? 0) >= strictReferenceThreshold ||
+        (item.score ?? 0) >= 240
+      );
+    });
+
+    candidateMatches = recipeMatches;
+    if (hasQueryDosage) {
+      candidateMatches = candidateMatches.filter((item) => {
+        const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
+        const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
+        const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
+        return candidateHasAmount && candidateHasUnit && item.dosageExactMatch;
+      });
+    }
+
+    if (!candidateMatches.length) {
+      return { query, queryTokens, exchangeRate, matches: [] };
+    }
   } else {
     const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.93);
     candidateMatches = similarityMatches.filter((item) => {
