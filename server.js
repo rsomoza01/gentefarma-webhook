@@ -1785,7 +1785,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
-  const strictReferenceThreshold = recipeMode ? 0.82 : (strictListMode ? 0.93 : 0.88);
+  const strictReferenceThreshold = recipeMode ? 0.9 : (strictListMode ? 0.93 : 0.88);
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
@@ -3275,7 +3275,8 @@ function extractPrimaryRecipeMedicineQuery(value) {
   const dosageTokens = tokens.filter((token) => isDoseToken(token));
   const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
 
-  const firstStrongToken = tokens.find((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
   if (firstStrongToken) return firstStrongToken;
 
   const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
@@ -3290,6 +3291,7 @@ function extractPrimaryRecipeMedicineQuery(value) {
   }
 
   if (strongTokens.length) return strongTokens[0];
+  if (cleanedTokens.length) return cleanedTokens[0];
   if (formTokens.length && tokens.length > 1) return tokens[0];
   return tokens[0] || '';
 }
