@@ -17,6 +17,7 @@ const PORT = process.env.PORT || 3000;
 const MEDIA_ANALYSIS_TIMEOUT_MS = Number(process.env.MEDIA_ANALYSIS_TIMEOUT_MS || 45000);
 const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const OCR_PROVIDER = process.env.OCR_PROVIDER || (GOOGLE_VISION_API_KEY ? 'google' : (OPENAI_API_KEY ? 'openai' : 'none'));
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
 const OPENAI_VISION_PROMPT = process.env.OPENAI_VISION_PROMPT || 'Transcribe all visible text from this prescription or medicine box image. Return only the extracted text, preserving line breaks when helpful.';
@@ -992,7 +993,7 @@ async function callOpenAIVision(imageBase64, mimeType) {
     temperature: 0
   };
 
-  const response = await axios.post('https://api.openai.com/v1/chat/completions', payload, {
+  const response = await axios.post(`${OPENAI_BASE_URL.replace(/\/$/, '')}/chat/completions`, payload, {
     timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
     headers: {
       Authorization: `Bearer ${OPENAI_API_KEY}`,
