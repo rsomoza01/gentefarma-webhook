@@ -614,6 +614,7 @@ async function processIncomingMessage(payload) {
     const body = mediaAnalysis?.text ? (sanitizedOcrText || rawBody) : rawBody;
     const normalizedBody = normalizeText(body);
     const ocrSearchText = sanitizedOcrText || '';
+    const rawOcrText = mediaAnalysis?.text || '';
 
     if (mediaAnalysis?.text) {
       console.log('🧾 OCR text extracted:', mediaAnalysis.text.slice(0, 500));
@@ -702,7 +703,7 @@ async function processIncomingMessage(payload) {
     const session = getSession(from);
     touchSession(session);
 
-    const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text), ocrSearchText });
+    const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text), ocrSearchText, rawOcrText });
     if (response) {
       await sendOutboundWhatsAppMessage(from, response);
     }
@@ -1297,6 +1298,8 @@ async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
   const hasOcrText = Boolean(context?.hasOcrText);
   const ocrSearchText = normalizeText(context?.ocrSearchText || '');
+  const rawOcrText = String(context?.rawOcrText || '');
+  const recipeSourceText = rawOcrText || ocrSearchText;
 
   if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
     disableHumanHandoff(session);
@@ -1353,12 +1356,12 @@ async function routeMessage(phone, text, session, context = {}) {
 
     if (hasOcrText && !hasSelectionResults) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(ocrSearchText || text, session, { hasOcrText: true, ocrOnly: true });
+      return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText: true, ocrOnly: true });
     }
 
     if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(ocrSearchText || text, session, { hasOcrText });
+      return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText });
     }
 
   if (selectionCandidate && hasSelectionResults) {
@@ -1729,7 +1732,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
     const missingMedicineSet = new Set();
 
     for (const medicineQuery of candidateMedicines) {
-      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate, strictListMode: true });
+      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate, strictListMode: !ocrOnly });
       if (result && result.matches && result.matches.length) {
         groups.push(result);
       } else {
@@ -3082,7 +3085,7 @@ function extractRecipeMedicineLines(value) {
     if (!/[a-záéíóúñ]/i.test(candidate)) return;
     if (normalized.split(' ').length > 8) return;
     if (!formOrDose.test(candidate) && !shortBrandLike.test(normalized)) return;
-    if (/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac)\b/i.test(normalized)) return;
+    if (/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac|dr\.|dra\.|doctor|doctora|unidad|gastroenterologia|gastroenterología)\b/i.test(normalized)) return;
     candidates.push(candidate);
   };
 
