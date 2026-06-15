@@ -1785,7 +1785,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
-  const strictReferenceThreshold = recipeMode ? 0.9 : (strictListMode ? 0.93 : 0.88);
+  const strictReferenceThreshold = recipeMode ? 0.96 : (strictListMode ? 0.93 : 0.88);
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
@@ -2269,9 +2269,14 @@ async function searchMedicinesByName(userQuery, options = {}) {
         if (!candidateText) return false;
 
         if (recipeMode) {
-          return strictQueryTokens.some((token) => {
-            if (candidateText.includes(token)) return true;
-            return tokenize(candidateText).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.82);
+          const candidateTokens = tokenize(candidateText);
+          return strictQueryTokens.every((token) => {
+            if (candidateText.includes(` ${token} `) || candidateText.startsWith(`${token} `) || candidateText.endsWith(` ${token}`) || candidateText === token) return true;
+            return candidateTokens.some((candidateToken) => {
+              if (candidateToken === token) return true;
+              if (candidateToken.startsWith(token) || token.startsWith(candidateToken)) return true;
+              return tokenSimilarity(token, candidateToken) >= 0.97;
+            });
           });
         }
 
@@ -3285,14 +3290,18 @@ function extractPrimaryRecipeMedicineQuery(value) {
     const dose = normalizeText(dosageMatch[1]);
     const beforeDose = raw.slice(0, dosageMatch.index).trim();
     const beforeTokens = normalizeText(beforeDose).split(' ').filter((t) => t.length > 1 && !STOPWORDS.has(t));
-    const mainBefore = beforeTokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
-    if (mainBefore.length) return mainBefore[0];
+    const beforeStrong = beforeTokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
+    if (beforeStrong.length) return beforeStrong[0];
     return dose;
   }
 
   if (strongTokens.length) return strongTokens[0];
   if (cleanedTokens.length) return cleanedTokens[0];
-  if (formTokens.length && tokens.length > 1) return tokens[0];
+  if (formTokens.length && tokens.length > 1) {
+    const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
+    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
+    if (afterStrong) return afterStrong;
+  }
   return tokens[0] || '';
 }
 
