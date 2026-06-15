@@ -1718,11 +1718,17 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
   const requestedMedicines = ocrOnly ? [] : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
+  const recipeMode = ocrOnly || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
     ...recipeLineMedicines
-  ]).filter((item) => !/\b(belen|belén|arcia|paciente|nombre|apellido|ano nac|año nac)\b/i.test(normalizeText(item)));
+  ]).filter((item) => {
+    const normalizedItem = normalizeText(item);
+    if (/\b(belen|belén|arcia|paciente|nombre|apellido|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
+    if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
+    return Boolean(normalizedItem);
+  });
 
   if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
@@ -3221,6 +3227,24 @@ function isProductSearchRequest(value) {
 function isThanksMessage(value) {
   const text = normalizeText(value);
   return /^(ok\s+)?gracias(\s+.*)?$/.test(text) || /\b(gracias|mil gracias|muchas gracias|thanks|thank you)\b/.test(text);
+}
+
+function isLikelyRecipeMedicineCandidate(value) {
+  const raw = String(value || '').trim();
+  const normalized = normalizeText(raw);
+  if (!normalized) return false;
+
+  if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return false;
+  if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return false;
+  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return false;
+
+  const hasMedicineSignal = /(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|vit)\b/i.test(normalized);
+  const tokens = normalized.split(' ').filter(Boolean);
+
+  if (hasMedicineSignal) return true;
+  if (tokens.length === 1) return /^[a-z0-9.-]{3,}$/i.test(tokens[0]);
+
+  return false;
 }
 
 function looksLikeMedicineName(value) {
