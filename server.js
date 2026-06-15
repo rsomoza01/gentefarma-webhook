@@ -1356,7 +1356,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
     if (hasOcrText && !hasSelectionResults) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText: true, ocrOnly: true });
+      return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText: true, ocrOnly: true, recipeMode: true });
     }
 
     if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
@@ -1718,7 +1718,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
   const requestedMedicines = ocrOnly ? [] : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
-  const recipeMode = ocrOnly || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
+  const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
@@ -1738,7 +1738,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
     const missingMedicineSet = new Set();
 
     for (const medicineQuery of candidateMedicines) {
-      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate, strictListMode: !ocrOnly });
+      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate, strictListMode: !ocrOnly, recipeMode });
       if (result && result.matches && result.matches.length) {
         groups.push(result);
       } else {
@@ -1784,7 +1784,8 @@ async function searchMedicinesByName(userQuery, options = {}) {
   if (!db) return null;
 
   const strictListMode = Boolean(options.strictListMode);
-  const strictReferenceThreshold = strictListMode ? 0.93 : 0.88;
+  const recipeMode = Boolean(options.recipeMode);
+  const strictReferenceThreshold = recipeMode ? 0.82 : (strictListMode ? 0.93 : 0.88);
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
@@ -2267,6 +2268,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
         const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateText) return false;
 
+        if (recipeMode) {
+          return strictQueryTokens.some((token) => {
+            if (candidateText.includes(token)) return true;
+            return tokenize(candidateText).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.82);
+          });
+        }
+
         if (isSingleTokenQuery) {
           const queryToken = strictQueryTokens[0];
           const candidateTokens = tokenize(candidateText);
@@ -2287,9 +2295,9 @@ async function searchMedicinesByName(userQuery, options = {}) {
       })
     : topMatches;
 
-  const finalMatches = isShortNonDosageQuery
-    ? filteredTopMatches
-    : (filteredTopMatches.length ? filteredTopMatches : topMatches);
+  const finalMatches = recipeMode
+    ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
+    : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches));
 
   return {
     query,
