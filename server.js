@@ -3036,7 +3036,10 @@ function sanitizeRecipeText(value) {
 
   const removalPatterns = [
     /^(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|dr\.?|dra\.?|doctor|doctora|medico|médico|medica|médica)\b/i,
-    /^(dr\.?|dra\.?|doctor|doctora)\s+[a-záéíóúñ\s]+$/i
+    /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\s+[a-záéíóúñ\s]+$/i,
+    /^(fecha|edad|sexo|peso|talla|ci|c.i.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
+    /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/, 
+    /^(?:edad|peso|talla|ci|c.i.|cedula|cédula)[:\s]+[\w\d.,-]+$/i
   ];
 
   const cleaned = lines.filter((line) => !removalPatterns.some((pattern) => pattern.test(line)));
