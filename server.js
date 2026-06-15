@@ -1031,8 +1031,17 @@ async function callGoogleVisionOCR(imageBase64) {
       }
     }
 
-    const text = await tryWithApiKey();
-    if (text) return text;
+    try {
+      const text = await tryWithApiKey();
+      if (text) return text;
+    } catch (error) {
+      const status = error.response?.status;
+      const details = error.response?.data;
+      const errorText = typeof details === 'string' ? details : JSON.stringify(details || {}).slice(0, 500);
+      console.warn('⚠️ Google Vision con API key falló:', status || '', errorText);
+      if (status !== 403 && status !== 401) throw error;
+    }
+
     return '';
   } catch (error) {
     const status = error.response?.status;
