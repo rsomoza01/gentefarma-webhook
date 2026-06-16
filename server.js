@@ -1295,6 +1295,22 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildOrderNotificationReply();
   }
 
+  if (isDeliveryQuestion(normalized)) {
+    return buildDeliveryPriceMessage();
+  }
+
+  if (isOrderSentConfirmation(normalized)) {
+    return buildOrderSentMessage();
+  }
+
+  if (isHowToOrderQuestion(normalized)) {
+    return buildHowToOrderMessage();
+  }
+
+  if (isAppQuestion(normalized)) {
+    return buildAppMessage();
+  }
+
   if (/^(listo|resumen)\b/.test(normalized)) {
     return buildSelectedProductsSummary(session);
   }
@@ -1674,11 +1690,47 @@ function buildOrderNotificationReply() {
   return 'En breve, uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo para tramitarlo. 😊';
 }
 
+function buildDeliveryPriceMessage() {
+  return 'Depende de su ubicacion. El rango de precio esta entre 1.5$ a 4$.';
+}
+
+function buildHowToOrderMessage() {
+  return 'Claro 😊 Solo busca el medicamento, elige la opción que prefieras y escribe la cantidad. Si necesitas ayuda, te puedo orientar paso a paso.';
+}
+
+function buildAppMessage() {
+  return 'La aplicación de Gentefarma te permite buscar productos y gestionar pedidos. Si quieres, te explico cómo usarla.';
+}
+
+function buildOrderSentMessage() {
+  return 'Perfecto, ya lo recibimos. En breve uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo. 😊';
+}
+
 function isNewOrderNotification(value) {
   const text = normalizeText(value);
   return /\bnuevo\s+pedido\s+gentefarma\b/.test(text)
     && /\bresumen\s+del\s+pedido\b/.test(text)
     && /\bmonto\s+total\s+general\b/.test(text);
+}
+
+function isDeliveryQuestion(value) {
+  const text = normalizeText(value);
+  return /\b(cuanto sale el delivery|cuánto sale el delivery|precio del delivery|costo del delivery|costo envio|costo de envio|cuanto cobran por envio|cuánto cobran por envío|envio|envío)\b/.test(text);
+}
+
+function isOrderSentConfirmation(value) {
+  const text = normalizeText(value);
+  return /\b(acabo de enviar el pedido|acabo de mandar el pedido|ya envie el pedido|ya envié el pedido|ya mande el pedido|ya mandé el pedido|pedido enviado|ya lo envie|ya lo envié|ya lo mande|ya lo mandé)\b/.test(text);
+}
+
+function isHowToOrderQuestion(value) {
+  const text = normalizeText(value);
+  return /\b(no entiendo como hacer el pedido|no entiendo como pedir|como hacer el pedido|cómo hacer el pedido|como hago el pedido|cómo hago el pedido|como se hace el pedido|cómo se hace el pedido|explicame como pedir|explícame como pedir|ayuda para pedir)\b/.test(text);
+}
+
+function isAppQuestion(value) {
+  const text = normalizeText(value);
+  return /\b(aplicacion de gentefarma|aplicación de gentefarma|app de gentefarma|como usar la app|cómo usar la app|aplicacion gentefarma|aplicación gentefarma|app gentefarma)\b/.test(text);
 }
 
 function isLocationQuestion(value) {
