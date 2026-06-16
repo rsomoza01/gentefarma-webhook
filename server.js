@@ -1291,6 +1291,10 @@ async function routeMessage(phone, text, session, context = {}) {
     return null;
   }
 
+  if (isNewOrderNotification(normalized)) {
+    return buildOrderNotificationReply();
+  }
+
   if (/^(listo|resumen)\b/.test(normalized)) {
     return buildSelectedProductsSummary(session);
   }
@@ -1664,6 +1668,17 @@ function buildLocationMessage() {
 
 function buildMoreInfoMessage() {
   return `¡Hola! gracias por tu mensaje. Somos una plataforma online, no tenemos local físico. A través de nuestra web o número de WhatsApp te ayudamos a buscar tus medicinas y comparar precios, para que encuentres la opción que más te convenga. Sin salir de casa 😉. Visita http://www.gentefarma.com o escríbenos por WhatsApp y te ayudamos a gestionar tu pedido. 🙌\n\nhttps://www.instagram.com/reel/DU3hPpJDquf/?igsh=MWJnczFxMDgyMTh3aQ==`;
+}
+
+function buildOrderNotificationReply() {
+  return 'En breve, uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo para tramitarlo. 😊';
+}
+
+function isNewOrderNotification(value) {
+  const text = normalizeText(value);
+  return /\bnuevo\s+pedido\s+gentefarma\b/.test(text)
+    && /\bresumen\s+del\s+pedido\b/.test(text)
+    && /\bmonto\s+total\s+general\b/.test(text);
 }
 
 function isLocationQuestion(value) {
