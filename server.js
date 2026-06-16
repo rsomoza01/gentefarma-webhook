@@ -1315,6 +1315,16 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildSelectedProductsSummary(session);
   }
 
+  if (isGreetingOrMenu(normalized)) {
+    clearSelectionState(session);
+    if (session.mode === 'awaiting_product_name') {
+      return buildMenuMessage();
+    }
+    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized)) {
+      return buildMenuMessage();
+    }
+  }
+
   if (isThanksMessage(normalized)) {
     return 'Con gusto. Estoy aquí para ayudarte cuando necesites buscar otro medicamento.';
   }
@@ -1633,7 +1643,7 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildCatalogResponse(searchResult);
   }
 
-  return buildMenuMessage();
+  return buildDefaultFallbackMessage();
 }
 
 function buildMenuMessage() {
@@ -1688,6 +1698,10 @@ function buildMoreInfoMessage() {
 
 function buildOrderNotificationReply() {
   return 'En breve, uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo para tramitarlo. 😊';
+}
+
+function buildDefaultFallbackMessage() {
+  return 'En breve uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo. 😊';
 }
 
 function buildDeliveryPriceMessage() {
