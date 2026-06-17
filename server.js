@@ -1272,8 +1272,9 @@ function extractMediaDescriptor(payload) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
+  const directMedicineQuery = extractMedicineQuery(text);
   const isMedicineSignal = Boolean(
-    extractMedicineQuery(text) ||
+    directMedicineQuery ||
     extractMedicineRequests(text).length > 0 ||
     isProductSearchRequest(normalized) ||
     looksLikeMedicineName(normalized)
@@ -1319,7 +1320,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(text, session, { hasOcrText });
+    return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: true });
   }
 
   if (/^(listo|resumen)\b/.test(normalized)) {
@@ -1360,7 +1361,6 @@ async function routeMessage(phone, text, session, context = {}) {
     return snapshot.message || '🔎 *Lista anterior*\n\nBusca nuevamente el medicamento para volver a mostrar opciones.';
   }
 
-  const directMedicineQuery = extractMedicineQuery(text);
   const medicineRequests = extractMedicineRequests(text);
   const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
   const selectionCandidate = hasOcrText ? null : parseSelectionCommand(normalized);
@@ -1779,6 +1779,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
   }
 
   const ocrOnly = Boolean(options.ocrOnly);
+  const strictConsultationMode = Boolean(options.strictConsultationMode);
   const requestedMedicines = ocrOnly ? [] : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
@@ -1854,6 +1855,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
   if (!queryTokens.length) return null;
+
+  if (options.strictConsultationMode && queryTokens.length < 2 && !/^(empaglu|empaglifozina|vitamina|vit)$/i.test(query)) {
+    return { query, queryTokens, exchangeRate: options.exchangeRate ?? await getBcvRate(), matches: [] };
+  }
 
   const exchangeRate = options.exchangeRate ?? await getBcvRate();
   const products = options.products ?? await fetchCatalogProducts(2000);
