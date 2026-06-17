@@ -1553,7 +1553,7 @@ async function routeMessage(phone, text, session, context = {}) {
     if (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || session.mode === 'awaiting_product_name') {
       clearSelectionState(session);
     }
-    return await searchAndBuildCatalogResponse(text, session);
+    return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: Boolean(isMedicineConsultationPhrase(normalized)) });
   }
 
   if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
@@ -1862,7 +1862,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
     exchangeRate: await getBcvRate(),
     strictListMode: !ocrOnly,
     recipeMode,
-    strictConsultationMode: consultationMode
+    strictConsultationMode: consultationMode,
+    forceExactConsultationToken: consultationMode && !recipeMode
   });
 
   if (!result || !result.matches.length) {
@@ -2271,12 +2272,14 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   if (consultationMode && primaryTokens.length > 0) {
     const q = primaryTokens[0];
+    const beforeCount = scoredProducts.length;
     scoredProducts = scoredProducts.filter((item) => (
       item.tokenSet.has(q)
       || item.productTitleFull === q || item.productTitleFull.startsWith(q + ' ') || item.productTitleFull.endsWith(' ' + q) || item.productTitleFull.includes(' ' + q + ' ')
       || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
       || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
     ));
+    console.log(`[CONSULTATION] Filtering for '${q}': ${beforeCount} -> ${scoredProducts.length} products`);
     if (!scoredProducts.length) return { query, queryTokens, exchangeRate, matches: [] };
   }
 
