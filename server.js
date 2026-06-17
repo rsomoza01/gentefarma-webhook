@@ -3406,7 +3406,12 @@ function isMedicineConsultationPhrase(value) {
   const extraction = extractMedicineQuery(text);
   if (!extraction) return false;
 
-  const tokens = tokenize(extraction).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+  const cleanedExtraction = normalizeText(extraction)
+    .replace(/^(?:buen\s+(?:dia|día|tarde|tardes|noche|noches)|hola|buenas(?:\s+tardes|\s+noches)?|buenos(?:\s+días)?|saludos)\b[\s,.-]*/i, '')
+    .trim();
+  if (!cleanedExtraction) return false;
+
+  const tokens = tokenize(cleanedExtraction).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   if (!tokens.length) return false;
 
   const weakTokens = new Set(['hola', 'buenas', 'tardes', 'gracias', 'muchas', 'precio', 'costo', 'comprar', 'consigo', 'encuentro', 'donde', 'dónde']);
@@ -3526,7 +3531,7 @@ function extractMedicineQuery(text) {
   }
 
   candidate = candidate
-    .replace(/^(?:por\s+favor\s+)?(?:hola|buenas(?:\s+tardes|\s+noches)?|buenos(?:\s+días)?|saludos)\b[\s,.-]*/i, '')
+    .replace(/^(?:por\s+favor\s+)?(?:hola|buenas(?:\s+tardes|\s+noches)?|buenos(?:\s+días)?|buen\s+(?:dia|día|tarde|tardes|noche|noches)|saludos)\b[\s,.-]*/i, '')
     .replace(/^(?:donde\s+puedo\s+comprar|dónde\s+puedo\s+comprar|donde\s+comprar|dónde\s+comprar|donde\s+consigo|dónde\s+consigo|donde\s+encuentro|dónde\s+encuentro)\s+/i, '')
     .replace(/^(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|saber(?:\s+el)?(?:\s+precio)?(?:\s+de)?|cuanto\s+cuesta|cuánto\s+cuesta|conoces|vendes|venden)\s+/i, '')
     .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a|la|el|las|los|unos|unas|y)\s+/i, '')
