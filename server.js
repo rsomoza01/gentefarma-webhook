@@ -1273,8 +1273,9 @@ function extractMediaDescriptor(payload) {
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
   const directMedicineQuery = extractMedicineQuery(text);
+  const strictConsultationQuery = extractStrictConsultationMedicineQuery(text);
   const extractedMedicineRequests = extractMedicineRequests(text);
-  const consultationQuery = directMedicineQuery || extractedMedicineRequests[0] || text;
+  const consultationQuery = strictConsultationQuery || directMedicineQuery || extractedMedicineRequests[0] || text;
   const consultationIsMedicine = isMedicineConsultationPhrase(normalized);
   const isMedicineSignal = Boolean(
     directMedicineQuery ||
@@ -1329,7 +1330,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true });
+    return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true });
   }
 
   if (/^(listo|resumen)\b/.test(normalized)) {
@@ -3563,6 +3564,10 @@ function extractMedicineQuery(text) {
   const dosageTokens = tokens.filter((token) => isDoseToken(token));
   const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
 
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  if (firstStrongToken) return firstStrongToken;
+
   const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
   const dosageMatch = candidate.match(dosagePattern);
   if (dosageMatch) {
@@ -3579,20 +3584,27 @@ function extractMedicineQuery(text) {
     return dose;
   }
 
-  const prioritized = [...new Set([
-    ...strongTokens,
-    ...dosageTokens,
-    ...formTokens,
-    ...tokens.filter((token) => !strongTokens.includes(token) && !dosageTokens.includes(token) && !formTokens.includes(token) && !MED_QUERY_WEAK_TOKENS.has(token))
-  ])].filter(Boolean);
-
-  const meaningful = prioritized.join(' ').trim();
-  if (!meaningful) return '';
-
-  return meaningful;
+  if (strongTokens.length) return strongTokens[0];
+  if (cleanedTokens.length) return cleanedTokens[0];
+  if (formTokens.length && tokens.length > 1) {
+    const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
+    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
+    if (afterStrong) return afterStrong;
+  }
+  return tokens[0] || '';
 }
 
-// ----------------------------------------------------
+function extractStrictConsultationMedicineQuery(text) {
+  const extracted = extractMedicineQuery(text);
+  if (!extracted) return '';
+
+  const tokens = tokenize(extracted).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+  if (!tokens.length) return '';
+
+  if (/^vitamina\b/i.test(extracted)) return extracted;
+  return extracted;
+}
+
 // Process safety logs
 // ----------------------------------------------------
 process.on('unhandledRejection', (error) => {
