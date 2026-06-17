@@ -15,10 +15,9 @@ const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://evolution-go
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'd40b6635-752d-438a-9cfc-a8eff38385f9';
 const PORT = process.env.PORT || 3000;
 const MEDIA_ANALYSIS_TIMEOUT_MS = Number(process.env.MEDIA_ANALYSIS_TIMEOUT_MS || 45000);
-const GOOGLE_VISION_API_KEY = process.env.GOOGLE_VISION_API_KEY || '';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const OCR_PROVIDER = process.env.OCR_PROVIDER || (GOOGLE_VISION_API_KEY ? 'google' : (OPENAI_API_KEY ? 'openai' : 'none'));
+const OCR_PROVIDER = process.env.OCR_PROVIDER || (OPENAI_API_KEY ? 'openai' : 'none');
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
 const OPENAI_VISION_PROMPT = process.env.OPENAI_VISION_PROMPT || 'Transcribe all visible text from this prescription or medicine box image. Return only the extracted text, preserving line breaks when helpful.';
 
@@ -749,7 +748,6 @@ async function extractTextFromMedia(media) {
     mimeType,
     inlineBytes: inlineBuffer?.length || 0,
     bufferBytes: buffer.length,
-    hasGoogleKey: Boolean(GOOGLE_VISION_API_KEY),
     hasOpenAIKey: Boolean(OPENAI_API_KEY)
   });
 
@@ -761,61 +759,16 @@ async function extractTextFromMedia(media) {
     return text || '';
   };
 
-  const shouldFallbackToOpenAI = (error) => {
-    const status = error?.response?.status;
-    const details = error?.response?.data;
-    const payloadText = typeof details === 'string' ? details : JSON.stringify(details || {});
-    return status === 403 || status === 401 || /API_KEY_SERVICE_BLOCKED|SERVICE_DISABLED|PERMISSION_DENIED|blocked/i.test(payloadText);
-  };
-
   if (OCR_PROVIDER === 'openai' && OPENAI_API_KEY) {
     const openaiText = await tryOpenAI('openai');
     if (openaiText) return openaiText;
   }
 
-  if (OCR_PROVIDER === 'google' && GOOGLE_VISION_API_KEY) {
-    try {
-      const visionText = await callGoogleVisionOCR(imageBase64);
-      console.log('🧪 OCR google result length:', visionText ? visionText.length : 0);
-      if (visionText) return visionText;
-    } catch (error) {
-      const status = error?.response?.status;
-      const details = error?.response?.data;
-      const errorText = typeof details === 'string' ? details : JSON.stringify(details || {}).slice(0, 500);
-      console.warn('⚠️ Google Vision falló:', status || '', errorText);
-      if (shouldFallbackToOpenAI(error)) {
-        const openaiText = await tryOpenAI('fallback');
-        if (openaiText) return openaiText;
-      }
-    }
-  }
-
   if (OCR_PROVIDER === 'auto') {
-    if (GOOGLE_VISION_API_KEY) {
-      try {
-        const visionText = await callGoogleVisionOCR(imageBase64);
-        console.log('🧪 OCR google(auto) result length:', visionText ? visionText.length : 0);
-        if (visionText) return visionText;
-      } catch (error) {
-        const status = error?.response?.status;
-        const details = error?.response?.data;
-        const errorText = typeof details === 'string' ? details : JSON.stringify(details || {}).slice(0, 500);
-        console.warn('⚠️ Google Vision(auto) falló:', status || '', errorText);
-        if (shouldFallbackToOpenAI(error)) {
-          const openaiText = await tryOpenAI('auto-fallback');
-          if (openaiText) return openaiText;
-        }
-      }
-    }
     if (OPENAI_API_KEY) {
       const openaiText = await tryOpenAI('auto');
       if (openaiText) return openaiText;
     }
-  }
-
-  if (OPENAI_API_KEY && OCR_PROVIDER === 'google') {
-    const openaiText = await tryOpenAI('google-fallback-final');
-    if (openaiText) return openaiText;
   }
 
   console.warn('⚠️ OCR sin resultado. Revisa proveedor/configuración o calidad de la imagen.');
@@ -1022,150 +975,6 @@ async function callOpenAIVision(imageBase64, mimeType) {
   }
 
   return String(response?.data?.choices?.[0]?.message?.content || '').trim();
-}
-
-async function callGoogleVisionOCR(imageBase64) {
-  const visionEndpoint = 'https://vision.googleapis.com/v1/images:annotate';
-  const serviceAccount = getGoogleVisionServiceAccount();
-
-  const tryWithApiKey = async () => {
-    if (!GOOGLE_VISION_API_KEY) return '';
-
-    const response = await axios.post(
-      `${visionEndpoint}?key=${encodeURIComponent(GOOGLE_VISION_API_KEY)}`,
-      {
-        requests: [{
-          image: { content: imageBase64 },
-          features: [
-            { type: 'DOCUMENT_TEXT_DETECTION' },
-            { type: 'TEXT_DETECTION' }
-          ]
-        }]
-      },
-      {
-        timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
-        headers: { 'Content-Type': 'application/json' }
-      }
-    );
-
-    return String(response?.data?.responses?.[0]?.fullTextAnnotation?.text || response?.data?.responses?.[0]?.textAnnotations?.[0]?.description || '').trim();
-  };
-
-  const tryWithServiceAccount = async () => {
-    if (!serviceAccount) return '';
-    const accessToken = await getGoogleVisionAccessToken(serviceAccount);
-    if (!accessToken) return '';
-
-    const response = await axios.post(
-      visionEndpoint,
-      {
-        requests: [{
-          image: { content: imageBase64 },
-          features: [
-            { type: 'DOCUMENT_TEXT_DETECTION' },
-            { type: 'TEXT_DETECTION' }
-          ]
-        }]
-      },
-      {
-        timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`
-        }
-      }
-    );
-
-    return String(response?.data?.responses?.[0]?.fullTextAnnotation?.text || response?.data?.responses?.[0]?.textAnnotations?.[0]?.description || '').trim();
-  };
-
-  try {
-    if (serviceAccount) {
-      try {
-        const text = await tryWithServiceAccount();
-        if (text) return text;
-      } catch (error) {
-        const status = error.response?.status;
-        const details = error.response?.data;
-        console.warn('⚠️ Google Vision con service account falló:', status || '', typeof details === 'string' ? details : JSON.stringify(details || {}).slice(0, 300));
-        if (status !== 403 && status !== 401) throw error;
-      }
-    }
-
-    try {
-      const text = await tryWithApiKey();
-      if (text) return text;
-    } catch (error) {
-      const status = error.response?.status;
-      const details = error.response?.data;
-      const errorText = typeof details === 'string' ? details : JSON.stringify(details || {}).slice(0, 500);
-      console.warn('⚠️ Google Vision con API key falló:', status || '', errorText);
-      if (status !== 403 && status !== 401) throw error;
-    }
-
-    return '';
-  } catch (error) {
-    const status = error.response?.status;
-    const details = error.response?.data;
-    console.error('❌ Google Vision OCR error:', status || '', typeof details === 'string' ? details : JSON.stringify(details || {}).slice(0, 500));
-    throw error;
-  }
-}
-
-function getGoogleVisionServiceAccount() {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed?.client_email || !parsed?.private_key) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-let googleVisionTokenCache = { token: '', expiresAt: 0 };
-
-async function getGoogleVisionAccessToken(serviceAccount) {
-  const now = Math.floor(Date.now() / 1000);
-  if (googleVisionTokenCache.token && googleVisionTokenCache.expiresAt > now + 60) {
-    return googleVisionTokenCache.token;
-  }
-
-  const header = base64UrlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const payload = base64UrlEncode(JSON.stringify({
-    iss: serviceAccount.client_email,
-    scope: 'https://www.googleapis.com/auth/cloud-platform',
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600
-  }));
-  const signingInput = `${header}.${payload}`;
-  const signer = crypto.createSign('RSA-SHA256');
-  signer.update(signingInput);
-  signer.end();
-  const signature = base64UrlEncode(signer.sign(serviceAccount.private_key));
-
-  const assertion = `${signingInput}.${signature}`;
-  const form = new URLSearchParams({
-    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-    assertion
-  });
-
-  const response = await axios.post('https://oauth2.googleapis.com/token', form.toString(), {
-    timeout: MEDIA_ANALYSIS_TIMEOUT_MS,
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-  });
-
-  const token = String(response?.data?.access_token || '');
-  const expiresIn = Number(response?.data?.expires_in || 3600);
-  if (token) {
-    googleVisionTokenCache = {
-      token,
-      expiresAt: now + Math.max(60, expiresIn - 120)
-    };
-  }
-  return token;
 }
 
 function base64UrlEncode(input) {
