@@ -668,6 +668,39 @@ async function processIncomingMessage(payload) {
         }
         return;
       }
+
+      // --- Admin: forzar/revertir handoff en un chat específico ---
+      if (normalizedBody.startsWith('handoff ')) {
+        const targetPhone = normalizedBody.replace('handoff ', '').trim();
+        if (!targetPhone) {
+          if (!fromMe) await sendOutboundWhatsAppMessage(from, '⚠️ Uso: handoff <teléfono>');
+          return;
+        }
+        const targetSession = sessions.get(targetPhone);
+        if (!targetSession) {
+          if (!fromMe) await sendOutboundWhatsAppMessage(from, `⚠️ No hay sesión activa para ${targetPhone}`);
+          return;
+        }
+        enableHumanHandoff(targetSession);
+        if (!fromMe) await sendOutboundWhatsAppMessage(from, `✅ Handoff forzado para ${targetPhone}. El bot no responderá a ese chat hasta que se reactive.`);
+        return;
+      }
+
+      if (normalizedBody.startsWith('returnhandoff ')) {
+        const targetPhone = normalizedBody.replace('returnhandoff ', '').trim();
+        if (!targetPhone) {
+          if (!fromMe) await sendOutboundWhatsAppMessage(from, '⚠️ Uso: returnhandoff <teléfono>');
+          return;
+        }
+        const targetSession = sessions.get(targetPhone);
+        if (!targetSession) {
+          if (!fromMe) await sendOutboundWhatsAppMessage(from, `⚠️ No hay sesión activa para ${targetPhone}`);
+          return;
+        }
+        disableHumanHandoff(targetSession);
+        if (!fromMe) await sendOutboundWhatsAppMessage(from, `✅ Handoff revertido para ${targetPhone}. El bot vuelve a responder en ese chat.`);
+        return;
+      }
     }
 
     if (fromMe) {
@@ -3229,7 +3262,7 @@ function isHumanRequest(value) {
 
 function isBotControlMessage(value) {
   const text = normalizeText(value);
-  return /^(bot\s+off|bot\s+on|bot\s+status)$/i.test(text);
+  return /^(bot\s+off|bot\s+on|bot\s+status|handoff\s+.+|returnhandoff\s+.+)$/i.test(text);
 }
 
 function isAdminSender(value) {
