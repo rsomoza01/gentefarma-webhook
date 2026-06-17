@@ -1272,6 +1272,12 @@ function extractMediaDescriptor(payload) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
+  const isMedicineSignal = Boolean(
+    extractMedicineQuery(text) ||
+    extractMedicineRequests(text).length > 0 ||
+    isProductSearchRequest(normalized) ||
+    looksLikeMedicineName(normalized)
+  );
   const hasOcrText = Boolean(context?.hasOcrText);
   const ocrSearchText = normalizeText(context?.ocrSearchText || '');
   const rawOcrText = String(context?.rawOcrText || '');
@@ -1354,14 +1360,7 @@ async function routeMessage(phone, text, session, context = {}) {
   const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
   const selectionCandidate = hasOcrText ? null : parseSelectionCommand(normalized);
   const isSelectionMessage = Boolean(selectionCandidate) || isSelectionPhrase(normalized);
-  const hasMedicineSearchSignal = Boolean(
-    !isSelectionMessage && (
-      directMedicineQuery ||
-      medicineRequests.length > 0 ||
-      isProductSearchRequest(normalized) ||
-      looksLikeMedicineName(normalized)
-    )
-  );
+  const hasMedicineSearchSignal = Boolean(isMedicineSignal && !isSelectionMessage);
 
   if (hasOcrText && !hasSelectionResults) {
     clearSelectionState(session);
