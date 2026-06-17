@@ -2222,7 +2222,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     };
 }
 
-  const scoredProducts = products
+  let scoredProducts = products
     .map((doc) => {
       const signal = buildCatalogSignal(doc);
       const metrics = scoreSignal(signal);
