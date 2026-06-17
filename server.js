@@ -1891,7 +1891,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
   if (!queryTokens.length) return null;
 
-  if (options.strictConsultationMode && queryTokens.length < 2 && !/^(empaglu|empaglifozina|vitamina|vit)$/i.test(query)) {
+  if (options.strictConsultationMode && queryTokens.length < 2 && !looksLikeMedicineName(userQuery)) {
     return { query, queryTokens, exchangeRate: options.exchangeRate ?? await getBcvRate(), matches: [] };
   }
   const consultationMode = Boolean(options.strictConsultationMode);
