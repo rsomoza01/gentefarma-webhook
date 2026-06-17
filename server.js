@@ -1317,11 +1317,16 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildAppMessage();
   }
 
+  if (isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) {
+    clearSelectionState(session);
+    return await searchAndBuildCatalogResponse(text, session, { hasOcrText });
+  }
+
   if (/^(listo|resumen)\b/.test(normalized)) {
     return buildSelectedProductsSummary(session);
   }
 
-  if (isGreetingOrMenu(normalized)) {
+  if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
     clearSelectionState(session);
     if (session.mode === 'awaiting_product_name') {
       return buildMenuMessage();
@@ -1536,7 +1541,7 @@ async function routeMessage(phone, text, session, context = {}) {
     return await searchAndBuildCatalogResponse(text, session);
   }
 
-  if (isGreetingOrMenu(normalized)) {
+  if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
     clearSelectionState(session);
     if (session.mode === 'awaiting_product_name') {
       return buildMenuMessage();
@@ -3333,6 +3338,18 @@ function isAdminSender(value) {
 function isProductSearchRequest(value) {
   const text = normalizeText(value);
   return /\b(precio|costo|cuanto cuesta|cuanto vale|catalogo|catalogo de productos|medicamento|producto|buscar)\b/.test(text);
+}
+
+function isMedicineConsultationPhrase(value) {
+  const text = normalizeText(value);
+  if (!text) return false;
+
+  const consultIntent = /\b(comprar|comprarlo|consigo|consigue|conseguir|encuentro|encuentra|precio|costo|cuanto|cuánto|donde|dónde)\b/.test(text);
+  if (!consultIntent) return false;
+
+  const tokens = tokenize(text).filter((token) => !STOPWORDS.has(token) && token.length > 3);
+  const weakTokens = new Set(['hola', 'buenas', 'tardes', 'gracias', 'muchas', 'precio', 'costo', 'comprar', 'consigo', 'encuentro', 'donde', 'dónde']);
+  return tokens.some((token) => !weakTokens.has(token));
 }
 
 function isThanksMessage(value) {
