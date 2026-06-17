@@ -1799,6 +1799,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
 
   const ocrOnly = Boolean(options.ocrOnly);
   const consultationMode = Boolean(options.strictConsultationMode);
+  const forceExactConsultationToken = Boolean(options.forceExactConsultationToken);
   const requestedMedicines = ocrOnly ? [] : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
@@ -1827,7 +1828,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
         exchangeRate,
         strictListMode: !ocrOnly,
         recipeMode,
-        strictConsultationMode: consultationMode
+        strictConsultationMode: consultationMode,
+        forceExactConsultationToken: consultationMode && !recipeMode
       });
       if (result && result.matches && result.matches.length) {
         groups.push(result);
@@ -2401,6 +2403,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const leadingQueryTokens = normalizedQueryTokens.slice(0, 3);
   const consultationQuery = consultationMode ? (extractStrictConsultationMedicineQuery(query) || extractMedicineQuery(query) || query) : query;
   const consultationTokens = tokenize(consultationQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+  const consultationExactToken = consultationTokens[0] || '';
   const isShortNonDosageQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length <= 2;
   const isSingleTokenQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length === 1;
   const strictQueryTokens = isSingleTokenQuery ? normalizedQueryTokens : leadingQueryTokens;
@@ -2414,20 +2417,23 @@ async function searchMedicinesByName(userQuery, options = {}) {
           const candidateTokens = tokenize(candidateText);
           if (!consultationTokens.length) return false;
 
-          const tokenMatches = (queryToken) => (
-            candidateTokens.includes(queryToken)
-            || candidateText === queryToken
-            || candidateText.startsWith(`${queryToken} `)
-            || candidateText.endsWith(` ${queryToken}`)
-            || candidateText.includes(` ${queryToken} `)
-            || candidateTokens.some((candidateToken) => (
-              candidateToken.startsWith(queryToken)
-              || queryToken.startsWith(candidateToken)
-              || tokenSimilarity(queryToken, candidateToken) >= 0.88
-            ))
-          );
+          const tokenMatches = (queryToken) => {
+            const normalizedToken = normalizeText(queryToken);
+            if (!normalizedToken) return false;
 
-          return consultationTokens.every(tokenMatches);
+            return candidateTokens.includes(normalizedToken)
+              || candidateText === normalizedToken
+              || candidateText.startsWith(`${normalizedToken} `)
+              || candidateText.endsWith(` ${normalizedToken}`)
+              || candidateText.includes(` ${normalizedToken} `)
+              || candidateTokens.some((candidateToken) => (
+                candidateToken === normalizedToken
+                || candidateToken.startsWith(normalizedToken)
+                || normalizedToken.startsWith(candidateToken)
+              ));
+          };
+
+          return consultationTokens.every(tokenMatches) || (consultationExactToken && tokenMatches(consultationExactToken));
         }
 
         if (recipeMode) {
