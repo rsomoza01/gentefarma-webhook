@@ -1320,7 +1320,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: true });
+    return await searchAndBuildCatalogResponse(directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true });
   }
 
   if (/^(listo|resumen)\b/.test(normalized)) {
