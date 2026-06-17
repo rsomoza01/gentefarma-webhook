@@ -1564,7 +1564,7 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildInstagramReelMessage();
   }
 
-  if (isInstagramInfoRequest(normalized)) {
+  if (isMoreInfoRequest(normalized)) {
     return buildInstagramReelMessage();
   }
 
