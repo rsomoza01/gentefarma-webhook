@@ -2403,22 +2403,20 @@ async function searchMedicinesByName(userQuery, options = {}) {
           const candidateTokens = tokenize(candidateText);
           if (!consultationTokens.length) return false;
 
-          if (consultationTokens.length === 1) {
-            const queryToken = consultationTokens[0];
-            return candidateTokens.includes(queryToken)
-              || candidateText === queryToken
-              || candidateText.startsWith(`${queryToken} `)
-              || candidateText.endsWith(` ${queryToken}`)
-              || candidateText.includes(` ${queryToken} `);
-          }
+          const tokenMatches = (queryToken) => (
+            candidateTokens.includes(queryToken)
+            || candidateText === queryToken
+            || candidateText.startsWith(`${queryToken} `)
+            || candidateText.endsWith(` ${queryToken}`)
+            || candidateText.includes(` ${queryToken} `)
+            || candidateTokens.some((candidateToken) => (
+              candidateToken.startsWith(queryToken)
+              || queryToken.startsWith(candidateToken)
+              || tokenSimilarity(queryToken, candidateToken) >= 0.88
+            ))
+          );
 
-          return consultationTokens.every((token) => (
-            candidateTokens.includes(token)
-            || candidateText === token
-            || candidateText.startsWith(`${token} `)
-            || candidateText.endsWith(` ${token}`)
-            || candidateText.includes(` ${token} `)
-          ));
+          return consultationTokens.every(tokenMatches);
         }
 
         if (recipeMode) {
@@ -3602,7 +3600,7 @@ function extractStrictConsultationMedicineQuery(text) {
   if (!tokens.length) return '';
 
   if (/^vitamina\b/i.test(extracted)) return extracted;
-  return extracted;
+  return tokens[0] || extracted;
 }
 
 // Process safety logs
