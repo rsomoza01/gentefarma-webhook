@@ -2404,21 +2404,19 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
           if (consultationTokens.length === 1) {
             const queryToken = consultationTokens[0];
-            const directTokenHit = candidateText.includes(queryToken)
-              || candidateTokens.includes(queryToken)
-              || candidateTokens.some((candidateToken) => (
-                candidateToken.startsWith(queryToken)
-                || queryToken.startsWith(candidateToken)
-                || tokenSimilarity(queryToken, candidateToken) >= 0.9
-              ));
-            const strongReferenceHit = (item.referenceSimilarity ?? 0) >= 0.9;
-            return directTokenHit || strongReferenceHit;
+            return candidateTokens.includes(queryToken)
+              || candidateText === queryToken
+              || candidateText.startsWith(`${queryToken} `)
+              || candidateText.endsWith(` ${queryToken}`)
+              || candidateText.includes(` ${queryToken} `);
           }
 
           return consultationTokens.every((token) => (
-            candidateText.includes(token)
-            || candidateTokens.includes(token)
-            || candidateTokens.some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.92)
+            candidateTokens.includes(token)
+            || candidateText === token
+            || candidateText.startsWith(`${token} `)
+            || candidateText.endsWith(` ${token}`)
+            || candidateText.includes(` ${token} `)
           ));
         }
 
