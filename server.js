@@ -336,6 +336,11 @@ function parseSelectionCommand(text) {
 
   if (!normalized) return null;
 
+  const hasSelectionWords = /\b(opcion|opciones|opci[oó]n|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x|seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|quiero|quisiera)\b/.test(normalized);
+  const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|cc|ui|iu)|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/.test(normalized);
+  if (hasDosageOrForm && !hasSelectionWords) return null;
+
+
   const parseOptionList = (value) => {
     const matches = String(value || '').match(/\d+/g) || [];
     return [...new Set(matches.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0))];
