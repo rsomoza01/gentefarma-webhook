@@ -1273,16 +1273,25 @@ function extractMediaDescriptor(payload) {
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
   const directMedicineQuery = extractMedicineQuery(text);
+  const extractedMedicineRequests = extractMedicineRequests(text);
+  const consultationQuery = directMedicineQuery || extractedMedicineRequests[0] || text;
+  const consultationIsMedicine = isMedicineConsultationPhrase(normalized);
   const isMedicineSignal = Boolean(
     directMedicineQuery ||
-    extractMedicineRequests(text).length > 0 ||
+    extractedMedicineRequests.length > 0 ||
     isProductSearchRequest(normalized) ||
-    looksLikeMedicineName(normalized)
+    looksLikeMedicineName(normalized) ||
+    consultationIsMedicine
   );
   const hasOcrText = Boolean(context?.hasOcrText);
   const ocrSearchText = normalizeText(context?.ocrSearchText || '');
   const rawOcrText = String(context?.rawOcrText || '');
   const recipeSourceText = rawOcrText || ocrSearchText;
+
+  if (consultationIsMedicine) {
+    clearSelectionState(session);
+    return await searchAndBuildCatalogResponse(consultationQuery, session, { hasOcrText, strictConsultationMode: true });
+  }
 
   if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
     disableHumanHandoff(session);
@@ -1337,7 +1346,7 @@ async function routeMessage(phone, text, session, context = {}) {
     }
   }
 
-  if (isThanksMessage(normalized)) {
+  if (isThanksMessage(normalized) && !isMedicineSignal) {
     return 'Con gusto. Estoy aquí para ayudarte cuando necesites buscar otro medicamento.';
   }
 
