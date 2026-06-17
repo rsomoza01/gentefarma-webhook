@@ -2367,6 +2367,8 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const normalizedQuery = normalizeText(query);
   const normalizedQueryTokens = tokenize(normalizedQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   const leadingQueryTokens = normalizedQueryTokens.slice(0, 3);
+  const consultationQuery = strictConsultationMode ? (extractMedicineQuery(query) || query) : query;
+  const consultationTokens = tokenize(consultationQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   const isShortNonDosageQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length <= 2;
   const isSingleTokenQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length === 1;
   const strictQueryTokens = isSingleTokenQuery ? normalizedQueryTokens : leadingQueryTokens;
@@ -2375,6 +2377,16 @@ async function searchMedicinesByName(userQuery, options = {}) {
     ? topMatches.filter((item) => {
         const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateText) return false;
+
+        if (strictConsultationMode) {
+          const candidateTokens = tokenize(candidateText);
+          return consultationTokens.every((token) => candidateTokens.some((candidateToken) => (
+            candidateToken === token ||
+            candidateToken.startsWith(token) ||
+            token.startsWith(candidateToken) ||
+            tokenSimilarity(token, candidateToken) >= 0.97
+          )));
+        }
 
         if (recipeMode) {
           const candidateTokens = tokenize(candidateText);
@@ -2408,9 +2420,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
       })
     : topMatches;
 
-  const finalMatches = recipeMode
-    ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
-    : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches));
+  const finalMatches = strictConsultationMode
+    ? filteredTopMatches
+    : (recipeMode
+      ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
+      : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches)));
 
   return {
     query,
