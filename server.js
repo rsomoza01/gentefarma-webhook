@@ -1850,7 +1850,13 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
   }
 
   const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text;
-  const result = await searchMedicinesByName(singleQuery);
+  const result = await searchMedicinesByName(singleQuery, {
+    products: await fetchCatalogProducts(2000),
+    exchangeRate: await getBcvRate(),
+    strictListMode: !ocrOnly,
+    recipeMode,
+    strictConsultationMode: consultationMode
+  });
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
@@ -2388,7 +2394,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const normalizedQuery = normalizeText(query);
   const normalizedQueryTokens = tokenize(normalizedQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   const leadingQueryTokens = normalizedQueryTokens.slice(0, 3);
-  const consultationQuery = consultationMode ? (extractMedicineQuery(query) || query) : query;
+  const consultationQuery = consultationMode ? (extractStrictConsultationMedicineQuery(query) || extractMedicineQuery(query) || query) : query;
   const consultationTokens = tokenize(consultationQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   const isShortNonDosageQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length <= 2;
   const isSingleTokenQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length === 1;
