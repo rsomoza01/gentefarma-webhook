@@ -1779,7 +1779,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
   }
 
   const ocrOnly = Boolean(options.ocrOnly);
-  const strictConsultationMode = Boolean(options.strictConsultationMode);
+  const consultationMode = Boolean(options.strictConsultationMode);
   const requestedMedicines = ocrOnly ? [] : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
@@ -1859,6 +1859,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   if (options.strictConsultationMode && queryTokens.length < 2 && !/^(empaglu|empaglifozina|vitamina|vit)$/i.test(query)) {
     return { query, queryTokens, exchangeRate: options.exchangeRate ?? await getBcvRate(), matches: [] };
   }
+  const consultationMode = Boolean(options.strictConsultationMode);
 
   const exchangeRate = options.exchangeRate ?? await getBcvRate();
   const products = options.products ?? await fetchCatalogProducts(2000);
@@ -2367,7 +2368,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const normalizedQuery = normalizeText(query);
   const normalizedQueryTokens = tokenize(normalizedQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   const leadingQueryTokens = normalizedQueryTokens.slice(0, 3);
-  const consultationQuery = strictConsultationMode ? (extractMedicineQuery(query) || query) : query;
+  const consultationQuery = consultationMode ? (extractMedicineQuery(query) || query) : query;
   const consultationTokens = tokenize(consultationQuery).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   const isShortNonDosageQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length <= 2;
   const isSingleTokenQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length === 1;
@@ -2378,7 +2379,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
         const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateText) return false;
 
-        if (strictConsultationMode) {
+        if (consultationMode) {
           const candidateTokens = tokenize(candidateText);
           return consultationTokens.every((token) => candidateTokens.some((candidateToken) => (
             candidateToken === token ||
@@ -2420,7 +2421,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       })
     : topMatches;
 
-  const finalMatches = strictConsultationMode
+  const finalMatches = consultationMode
     ? filteredTopMatches
     : (recipeMode
       ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
