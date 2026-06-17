@@ -2279,12 +2279,20 @@ async function searchMedicinesByName(userQuery, options = {}) {
     scoredProducts.slice(0, 5).forEach((item, i) => {
       console.log(`[CONSULTATION-GATE] BEFORE[${i}] title='${item.productTitleFull}' tokenSet=${JSON.stringify([...item.tokenSet].slice(0, 10))} ingredient='${item.ingredient}'`);
     });
-    scoredProducts = scoredProducts.filter((item) => (
-      item.tokenSet.has(q)
-      || item.productTitleFull === q || item.productTitleFull.startsWith(q + ' ') || item.productTitleFull.endsWith(' ' + q) || item.productTitleFull.includes(' ' + q + ' ')
-      || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
-      || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
-    ));
+    scoredProducts = scoredProducts.filter((item) => {
+      // 1) Match exacto en tokenSet o title/ingredient
+      if (
+        item.tokenSet.has(q)
+        || item.productTitleFull === q || item.productTitleFull.startsWith(q + ' ') || item.productTitleFull.endsWith(' ' + q) || item.productTitleFull.includes(' ' + q + ' ')
+        || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
+        || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
+      ) return true;
+      // 2) Fallback fuzzy: algún token del producto se parece ≥92% al query
+      for (const t of item.tokenSet) {
+        if (tokenSimilarity(q, t) >= 0.92) return true;
+      }
+      return false;
+    });
     console.log(`[CONSULTATION] Filtering for '${q}': ${beforeCount} -> ${scoredProducts.length} products`);
     // Log after filter
     scoredProducts.forEach((item, i) => {
