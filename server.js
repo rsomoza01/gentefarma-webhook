@@ -1296,7 +1296,8 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (consultationIsMedicine) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(consultationQuery, session, { hasOcrText, strictConsultationMode: true });
+    const searchQuery = consultationQuery || text;
+    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true });
   }
 
   if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
@@ -1856,7 +1857,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
     return buildNoMatchListMessage();
   }
 
-  const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text;
+  const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text.trim();
   const result = await searchMedicinesByName(singleQuery, {
     products: await fetchCatalogProducts(2000),
     exchangeRate: await getBcvRate(),
@@ -2620,8 +2621,7 @@ function extractMedicineRequests(text) {
     const cleaned = normalizeText(segment);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
-    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned)) continue;
-
+    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned) && cleaned.length < 6) continue;
     const query = extractMedicineQuery(segment) || cleaned;
     if (!query) continue;
 
@@ -3552,8 +3552,17 @@ function extractMedicineQuery(text) {
   const cleaned = normalizeText(text);
   if (!cleaned) return '';
 
+  const verbList = [
+    'por\\sfavor','me\\spuedes\\sayudar\\scon','me\\sayudas\\scon','necesito','busco','busque','buscame','buscando','quiero',
+    'quisiera','me\\sinteresa','me\\sinteresan','(?<![\\w])tienes\\b','(?<![\\w])tiene\\b','(?<![\\w])tienen\\b','(?<![\\w])hay\\b',
+    'disponibilidad(?:\\sde)?','disponible(?:s)?','informar(?:\\ssobre)?','informe(?:\\ssobre)?','consultar(?:\\ssobre)?',
+    'consulta(?:\\ssobre)?','informame(?:\\ssobre)?','informarme(?:\\ssobre)?','precio(?:\\sde)?','conoces','(?<![\\w])vendes?(?!\\w)',
+    'dónde\\s(?:puedo\\s)?comprar','donde\\s(?:puedo\\s)?comprar','dónde\\scomprar','donde\\scomprar',
+    'dónde\\s(?:puedo\\s)?conseguir','donde\\s(?:puedo\\s)?conseguir','dónde\\sconseguir','donde\\sconseguir',
+    'dónde\\sconsigo','donde\\sconsigo','dónde\\sencuentro','donde\\sencuentro'
+  ];
   const patterns = [
-    /(?:^|\s)(?:por\s+favor\s+)?(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|conoces|vendes|venden)\s+(.+)$/i,
+    new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+)$`, 'i'),
     /^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
   ];
 
@@ -3570,7 +3579,8 @@ function extractMedicineQuery(text) {
     .replace(/^(?:por\s+favor\s+)?(?:hola|buenas(?:\s+tardes|\s+noches)?|buenos(?:\s+días)?|buen\s+(?:dia|día|tarde|tardes|noche|noches)|saludos)\b[\s,.-]*/i, '')
     .replace(/^(?:donde\s+puedo\s+comprar|dónde\s+puedo\s+comprar|donde\s+comprar|dónde\s+comprar|donde\s+consigo|dónde\s+consigo|donde\s+encuentro|dónde\s+encuentro)\s+/i, '')
     .replace(/^(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|saber(?:\s+el)?(?:\s+precio)?(?:\s+de)?|cuanto\s+cuesta|cuánto\s+cuesta|conoces|vendes|venden)\s+/i, '')
-    .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a|la|el|las|los|unos|unas|y)\s+/i, '')
+    .replace(/^(?:comprar|conseguir|buscar|necesitar|querer|pedir|obtener|hallar|hallarme|buscame|buscame|buscarnos?|encuentra[rm]?)\\s+/i, '')
+    .replace(/^(?:de|del|para|con|sobre|acerca\\s+de|respecto\\s+a|la|el|las|los|unos|unas|y)\\s+/i, '')
     .replace(/\b(?:y\s+)?(?:el\s+)?(?:la\s+)?(?:precio|costo|valor)\b.*$/i, '')
     .replace(/\b(muchas\s+gracias|gracias\s+muchas|gracias|thank\s+you|thanks)\b.*$/i, '')
     .trim();
