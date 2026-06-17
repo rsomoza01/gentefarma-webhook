@@ -2381,12 +2381,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
         if (consultationMode) {
           const candidateTokens = tokenize(candidateText);
-          return consultationTokens.every((token) => candidateTokens.some((candidateToken) => (
-            candidateToken === token ||
-            candidateToken.startsWith(token) ||
-            token.startsWith(candidateToken) ||
-            tokenSimilarity(token, candidateToken) >= 0.97
-          )));
+          return consultationTokens.length > 0 && consultationTokens.every((token) => (
+            candidateText.includes(token) ||
+            candidateTokens.includes(token)
+          ));
         }
 
         if (recipeMode) {
@@ -3367,7 +3365,12 @@ function isMedicineConsultationPhrase(value) {
   const consultIntent = /\b(comprar|comprarlo|consigo|consigue|conseguir|encuentro|encuentra|precio|costo|cuanto|cuánto|donde|dónde)\b/.test(text);
   if (!consultIntent) return false;
 
-  const tokens = tokenize(text).filter((token) => !STOPWORDS.has(token) && token.length > 3);
+  const extraction = extractMedicineQuery(text);
+  if (!extraction) return false;
+
+  const tokens = tokenize(extraction).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+  if (!tokens.length) return false;
+
   const weakTokens = new Set(['hola', 'buenas', 'tardes', 'gracias', 'muchas', 'precio', 'costo', 'comprar', 'consigo', 'encuentro', 'donde', 'dónde']);
   return tokens.some((token) => !weakTokens.has(token));
 }
