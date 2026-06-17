@@ -2269,6 +2269,17 @@ async function searchMedicinesByName(userQuery, options = {}) {
       return priceA - priceB;
     });
 
+  if (consultationMode && primaryTokens.length > 0) {
+    const q = primaryTokens[0];
+    scoredProducts = scoredProducts.filter((item) => (
+      item.tokenSet.has(q)
+      || item.productTitleFull === q || item.productTitleFull.startsWith(q + ' ') || item.productTitleFull.endsWith(' ' + q) || item.productTitleFull.includes(' ' + q + ' ')
+      || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
+      || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
+    ));
+    if (!scoredProducts.length) return { query, queryTokens, exchangeRate, matches: [] };
+  }
+
   let candidateMatches = [];
 
   if (isVitaminQuery) {
