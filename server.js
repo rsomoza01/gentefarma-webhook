@@ -2273,6 +2273,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
   if (consultationMode && primaryTokens.length > 0) {
     const q = primaryTokens[0];
     const beforeCount = scoredProducts.length;
+    console.log(`[CONSULTATION-GATE] mode=${consultationMode} primaryTokens=${JSON.stringify(primaryTokens)} q='${q}' beforeCount=${beforeCount}`);
+    // Log first 5 products before filter
+    scoredProducts.slice(0, 5).forEach((item, i) => {
+      console.log(`[CONSULTATION-GATE] BEFORE[${i}] title='${item.productTitleFull}' tokenSet=${JSON.stringify([...item.tokenSet].slice(0, 10))} ingredient='${item.ingredient}'`);
+    });
     scoredProducts = scoredProducts.filter((item) => (
       item.tokenSet.has(q)
       || item.productTitleFull === q || item.productTitleFull.startsWith(q + ' ') || item.productTitleFull.endsWith(' ' + q) || item.productTitleFull.includes(' ' + q + ' ')
@@ -2280,7 +2285,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
       || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
     ));
     console.log(`[CONSULTATION] Filtering for '${q}': ${beforeCount} -> ${scoredProducts.length} products`);
+    // Log after filter
+    scoredProducts.forEach((item, i) => {
+      console.log(`[CONSULTATION-GATE] AFTER[${i}] title='${item.productTitleFull}'`);
+    });
     if (!scoredProducts.length) return { query, queryTokens, exchangeRate, matches: [] };
+  } else {
+    console.log(`[CONSULTATION-GATE] SKIPPED: consultationMode=${consultationMode} primaryTokens.length=${primaryTokens.length}`);
   }
 
   let candidateMatches = [];
