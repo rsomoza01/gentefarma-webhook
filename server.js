@@ -1642,7 +1642,11 @@ async function routeMessage(phone, text, session, context = {}) {
   const medicineQuery = extractMedicineQuery(text);
   if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized) || medicineQuery) {
     const productQuery = medicineQuery || text;
-    const searchResult = await searchMedicinesByName(productQuery);
+    const searchOptions = {
+      hasOcrText,
+      strictConsultationMode: Boolean(medicineQuery || consultationIsMedicine)
+    };
+    const searchResult = await searchMedicinesByName(productQuery, searchOptions);
 
     if (!searchResult || !searchResult.matches.length) {
       session.mode = 'awaiting_product_name';
@@ -2400,14 +2404,15 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
           if (consultationTokens.length === 1) {
             const queryToken = consultationTokens[0];
-            return candidateText.includes(queryToken)
+            const directTokenHit = candidateText.includes(queryToken)
               || candidateTokens.includes(queryToken)
               || candidateTokens.some((candidateToken) => (
                 candidateToken.startsWith(queryToken)
                 || queryToken.startsWith(candidateToken)
-                || tokenSimilarity(queryToken, candidateToken) >= 0.84
-              ))
-              || (item.referenceSimilarity ?? 0) >= 0.84;
+                || tokenSimilarity(queryToken, candidateToken) >= 0.9
+              ));
+            const strongReferenceHit = (item.referenceSimilarity ?? 0) >= 0.9;
+            return directTokenHit || strongReferenceHit;
           }
 
           return consultationTokens.every((token) => (
