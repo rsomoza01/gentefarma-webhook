@@ -1812,7 +1812,13 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
     const missingMedicineSet = new Set();
 
     for (const medicineQuery of candidateMedicines) {
-      const result = await searchMedicinesByName(medicineQuery, { products, exchangeRate, strictListMode: !ocrOnly, recipeMode });
+      const result = await searchMedicinesByName(medicineQuery, {
+        products,
+        exchangeRate,
+        strictListMode: !ocrOnly,
+        recipeMode,
+        strictConsultationMode: consultationMode
+      });
       if (result && result.matches && result.matches.length) {
         groups.push(result);
       } else {
@@ -2390,9 +2396,24 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
         if (consultationMode) {
           const candidateTokens = tokenize(candidateText);
-          return consultationTokens.length > 0 && consultationTokens.every((token) => (
-            candidateText.includes(token) ||
-            candidateTokens.includes(token)
+          if (!consultationTokens.length) return false;
+
+          if (consultationTokens.length === 1) {
+            const queryToken = consultationTokens[0];
+            return candidateText.includes(queryToken)
+              || candidateTokens.includes(queryToken)
+              || candidateTokens.some((candidateToken) => (
+                candidateToken.startsWith(queryToken)
+                || queryToken.startsWith(candidateToken)
+                || tokenSimilarity(queryToken, candidateToken) >= 0.84
+              ))
+              || (item.referenceSimilarity ?? 0) >= 0.84;
+          }
+
+          return consultationTokens.every((token) => (
+            candidateText.includes(token)
+            || candidateTokens.includes(token)
+            || candidateTokens.some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.92)
           ));
         }
 
