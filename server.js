@@ -75,7 +75,7 @@ initFirebase();
 const sessions = new Map();
 const processedInboundMessages = new Map();
 let botEnabled = true;
-const BOT_ADMIN_NUMBER = '584128840350';
+const ADMIN_NUMBERS = ['584128840350', '584128009482'];
 const INBOUND_MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
 const INBOUND_MESSAGE_NO_ID_DEDUP_WINDOW_MS = 2500;
 
@@ -3267,14 +3267,12 @@ function isBotControlMessage(value) {
 
 function isAdminSender(value) {
   const text = normalizeText(value);
-  const normalizedAdmin = normalizeText(BOT_ADMIN_NUMBER);
-  const compactAdmin = normalizedAdmin.replace(/\s+/g, '');
-  const compactText = text.replace(/\s+/g, '');
-  return (
-    text === normalizedAdmin ||
-    compactText === compactAdmin ||
-    text === normalizeText(`${BOT_ADMIN_NUMBER}@s.whatsapp.net`)
-  );
+  // Quitar @s.whatsapp.net y prefijo + para comparar solo dígitos
+  const cleanText = text.replace(/@.+$/, '').replace(/^\+/, '');
+  return ADMIN_NUMBERS.some((admin) => {
+    const cleanAdmin = normalizeText(admin).replace(/@.+$/, '').replace(/^\+/, '');
+    return cleanText === cleanAdmin;
+  });
 }
 
 function isProductSearchRequest(value) {
