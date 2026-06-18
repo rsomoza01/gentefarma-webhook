@@ -3267,11 +3267,11 @@ function isBotControlMessage(value) {
 
 function isAdminSender(value) {
   const text = normalizeText(value);
-  // Quitar @s.whatsapp.net y prefijo + para comparar solo dígitos
-  const cleanText = text.replace(/@.+$/, '').replace(/^\+/, '');
+  // Comparar solo dígitos: quitar todo lo que no sea número
+  const digitsOnly = text.replace(/[^0-9]/g, '');
   return ADMIN_NUMBERS.some((admin) => {
-    const cleanAdmin = normalizeText(admin).replace(/@.+$/, '').replace(/^\+/, '');
-    return cleanText === cleanAdmin;
+    const adminDigits = normalizeText(admin).replace(/[^0-9]/g, '');
+    return digitsOnly === adminDigits;
   });
 }
 
