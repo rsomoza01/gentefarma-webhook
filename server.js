@@ -671,6 +671,7 @@ async function processIncomingMessage(payload) {
 
       // --- Admin: forzar/revertir handoff en un chat específico ---
       if (normalizedBody.startsWith('handoff ')) {
+        console.log('🔧 HANDOFF: from=%s, isAdmin=%s', from, isAdmin);
         const targetPhone = normalizedBody.replace('handoff ', '').trim();
         if (!targetPhone) {
           if (!fromMe) await sendOutboundWhatsAppMessage(from, '⚠️ Uso: handoff <teléfono>');
