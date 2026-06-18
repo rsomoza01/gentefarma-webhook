@@ -671,35 +671,37 @@ async function processIncomingMessage(payload) {
 
       // --- Admin: forzar/revertir handoff en un chat específico ---
       if (normalizedBody.startsWith('handoff ')) {
-        console.log('🔧 HANDOFF: from=%s, isAdmin=%s', from, isAdmin);
         const targetPhone = normalizedBody.replace('handoff ', '').trim();
         if (!targetPhone) {
-          if (!fromMe) await sendOutboundWhatsAppMessage(from, '⚠️ Uso: handoff <teléfono>');
+          await sendOutboundWhatsAppMessage(fromMe ? adminRecipient : from, '⚠️ Uso: handoff <teléfono>');
           return;
         }
-        const targetSession = sessions.get(targetPhone);
+        // Crear sesión si no existe (lazy initialization)
+        let targetSession = sessions.get(targetPhone);
         if (!targetSession) {
-          if (!fromMe) await sendOutboundWhatsAppMessage(from, `⚠️ No hay sesión activa para ${targetPhone}`);
-          return;
+          targetSession = { mode: 'idle', humanHandoff: false, lastSearch: null, pendingSelectionResults: null };
+          sessions.set(targetPhone, targetSession);
         }
         enableHumanHandoff(targetSession);
-        if (!fromMe) await sendOutboundWhatsAppMessage(from, `✅ Handoff forzado para ${targetPhone}. El bot no responderá a ese chat hasta que se reactive.`);
+        const confirmTarget = fromMe ? adminRecipient : from;
+        if (confirmTarget) await sendOutboundWhatsAppMessage(confirmTarget, `✅ Handoff forzado para ${targetPhone}. El bot no responderá a ese chat hasta que se reactive.`);
         return;
       }
 
       if (normalizedBody.startsWith('returnhandoff ')) {
         const targetPhone = normalizedBody.replace('returnhandoff ', '').trim();
         if (!targetPhone) {
-          if (!fromMe) await sendOutboundWhatsAppMessage(from, '⚠️ Uso: returnhandoff <teléfono>');
+          await sendOutboundWhatsAppMessage(fromMe ? adminRecipient : from, '⚠️ Uso: returnhandoff <teléfono>');
           return;
         }
-        const targetSession = sessions.get(targetPhone);
+        let targetSession = sessions.get(targetPhone);
         if (!targetSession) {
-          if (!fromMe) await sendOutboundWhatsAppMessage(from, `⚠️ No hay sesión activa para ${targetPhone}`);
-          return;
+          targetSession = { mode: 'idle', humanHandoff: false, lastSearch: null, pendingSelectionResults: null };
+          sessions.set(targetPhone, targetSession);
         }
         disableHumanHandoff(targetSession);
-        if (!fromMe) await sendOutboundWhatsAppMessage(from, `✅ Handoff revertido para ${targetPhone}. El bot vuelve a responder en ese chat.`);
+        const confirmTarget = fromMe ? adminRecipient : from;
+        if (confirmTarget) await sendOutboundWhatsAppMessage(confirmTarget, `✅ Handoff revertido para ${targetPhone}. El bot vuelve a responder en ese chat.`);
         return;
       }
     }
