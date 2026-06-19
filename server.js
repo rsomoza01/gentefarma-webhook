@@ -5,6 +5,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 const fs = require('fs');
 const admin = require('firebase-admin');
+const { google } = require('googleapis');
 
 const app = express();
 app.use(cors());
@@ -68,6 +69,57 @@ function initFirebase() {
 }
 
 initFirebase();
+
+// ----------------------------------------------------
+// Google Sheets — Consultas log
+// ----------------------------------------------------
+const SHEET_ID = '1TRZOXLyQVVCY4T7--UcCAxkciYdr6TpkS4ObKPaigJk';
+const SHEET_TAB_NAME = 'Sheet1';
+const GOOGLE_TOKEN_PATH = '/opt/data/google_token.json';
+const GOOGLE_CLIENT_SECRET_PATH = '/opt/data/google_client_secret.json';
+
+function getSheetsClient() {
+  try {
+    if (!fs.existsSync(GOOGLE_TOKEN_PATH) || !fs.existsSync(GOOGLE_CLIENT_SECRET_PATH)) {
+      return null;
+    }
+    const token = JSON.parse(fs.readFileSync(GOOGLE_TOKEN_PATH, 'utf8'));
+    const clientSecret = JSON.parse(fs.readFileSync(GOOGLE_CLIENT_SECRET_PATH, 'utf8'));
+    const oauth2 = new google.auth.OAuth2(
+      clientSecret.installed.client_id,
+      clientSecret.installed.client_secret,
+      clientSecret.installed.redirect_uris[0]
+    );
+    oauth2.setCredentials(token);
+    return google.sheets({ version: 'v4', auth: oauth2 });
+  } catch (err) {
+    console.warn('⚠️ No se pudo inicializar Google Sheets client:', err.message);
+    return null;
+  }
+}
+
+async function appendConsultationToSheet({ products, exists, phone, userName }) {
+  const sheets = getSheetsClient();
+  if (!sheets) {
+    console.warn('⚠️ Google Sheets no disponible, saltando log de consulta');
+    return;
+  }
+  const now = new Date();
+  const fecha = now.toLocaleDateString('es-VE');
+  const hora = now.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
+  const rows = products.map(p => [fecha, hora, p, exists ? 1 : 0, phone || '', userName || '']);
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_TAB_NAME}!A:F`,
+      valueInputOption: 'RAW',
+      resource: { values: rows }
+    });
+    console.log(`📊 Loggeado a Sheets: ${rows.length} fila(s) — existe=${exists}`);
+  } catch (err) {
+    console.error('❌ Error escribiendo en Google Sheets:', err.message);
+  }
+}
 
 // ----------------------------------------------------
 // Session memory
@@ -595,6 +647,7 @@ async function processIncomingMessage(payload) {
     const normalizedBody = normalizeText(body);
     const ocrSearchText = sanitizedOcrText || '';
     const rawOcrText = mediaAnalysis?.text || '';
+    const pushName = extractPushName(payload);
 
     if (mediaAnalysis?.text) {
       console.log('🧾 OCR text extracted:', mediaAnalysis.text.slice(0, 500));
@@ -716,7 +769,7 @@ async function processIncomingMessage(payload) {
     const session = getSession(from);
     touchSession(session);
 
-    const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text), ocrSearchText, rawOcrText });
+    const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text), ocrSearchText, rawOcrText, pushName });
     if (response) {
       await sendOutboundWhatsAppMessage(from, response);
     }
@@ -1135,6 +1188,7 @@ async function routeMessage(phone, text, session, context = {}) {
   const ocrSearchText = normalizeText(context?.ocrSearchText || '');
   const rawOcrText = String(context?.rawOcrText || '');
   const recipeSourceText = rawOcrText || ocrSearchText;
+  const pushName = context?.pushName || '';
 
   if (isHumanRequest(normalized)) {
     enableHumanHandoff(session);
@@ -1154,7 +1208,7 @@ async function routeMessage(phone, text, session, context = {}) {
   if (consultationIsMedicine) {
     clearSelectionState(session);
     const searchQuery = consultationQuery || text;
-    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests });
+    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
   }
 
   if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
@@ -1175,6 +1229,10 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildOrderNotificationReply();
   }
 
+  if (isDemoReservation(normalized)) {
+    return buildDemoReservationReply();
+  }
+
   if (isDeliveryQuestion(normalized)) {
     return buildDeliveryPriceMessage();
   }
@@ -1193,7 +1251,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true });
+    return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true }, { phone, pushName });
   }
 
   if (/^(listo|resumen)\b/.test(normalized)) {
@@ -1252,12 +1310,12 @@ async function routeMessage(phone, text, session, context = {}) {
     const productName = extractProductNameFromOCR(recipeSourceText || text);
     const searchQuery = productName || recipeSourceText || text;
     console.log('🧾 OCR product name extraction:', { productName, searchQuery });
-    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true });
+    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
   }
 
   if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText });
+    return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText }, { phone, pushName });
   }
 
   if (selectionCandidate && hasSelectionResults) {
@@ -1421,7 +1479,7 @@ async function routeMessage(phone, text, session, context = {}) {
     if (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || session.mode === 'awaiting_product_name') {
       clearSelectionState(session);
     }
-    return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: Boolean(isMedicineConsultationPhrase(normalized)) });
+    return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: Boolean(isMedicineConsultationPhrase(normalized)) }, { phone, pushName });
   }
 
   // Early exit para declaraciones de interés en medicamentos — siempre muestra bienvenida
@@ -1456,7 +1514,7 @@ async function routeMessage(phone, text, session, context = {}) {
     const medicineRequests = extractMedicineRequests(text);
     if (medicineRequests.length > 0 || isProductSearchRequest(normalized)) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(text, session);
+      return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
     }
 
     const parsed = parseSelectionCommand(normalized);
@@ -1485,7 +1543,7 @@ async function routeMessage(phone, text, session, context = {}) {
     const medicineRequests = extractMedicineRequests(text);
     if (medicineRequests.length > 0 || isProductSearchRequest(normalized)) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(text, session);
+      return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
     }
 
     const parsed = parseSelectionCommand(normalized);
@@ -1511,12 +1569,12 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   if (session.mode === 'awaiting_product_name') {
-    return await searchAndBuildCatalogResponse(text, session);
+    return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
   }
 
   const multiMedicineRequests = extractMedicineRequests(text);
   if (multiMedicineRequests.length > 1) {
-    return await searchAndBuildCatalogResponse(text, session);
+    return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
   }
 
   const medicineQuery = extractMedicineQuery(text);
@@ -1624,6 +1682,15 @@ function isNewOrderNotification(value) {
     && /\bmonto\s+total\s+general\b/.test(text);
 }
 
+function isDemoReservation(value) {
+  const text = normalizeText(value);
+  return /\bse\s+ha\s+realizado\s+una\s+reserva\s+para\s+una\s+demo\b/.test(text);
+}
+
+function buildDemoReservationReply() {
+  return 'Gracias por su interés en la DEMO de Gentefarma, nuestro colaborador, Roberto Somoza, le contactará para enviarle el link de Google Meet de la video llamada.';
+}
+
 function isDeliveryQuestion(value) {
   const text = normalizeText(value);
   return /\b(cuanto sale el delivery|cuánto sale el delivery|precio del delivery|costo del delivery|costo envio|costo de envio|cuanto cobran por envio|cuánto cobran por envío|envio|envío)\b/.test(text);
@@ -1666,7 +1733,7 @@ function shouldSendInstagramReel(value) {
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
-async function searchAndBuildCatalogResponse(text, session, options = {}) {
+async function searchAndBuildCatalogResponse(text, session, options = {}, userInfo = {}) {
   if (!db) {
     return '⚠️ No tengo conexión al catálogo en este momento. Intenta de nuevo más tarde.';
   }
@@ -1724,10 +1791,13 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
       session.mode = flattenedOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
       rememberCatalogSnapshot(session, flattenedOptions, candidateMedicines.join(' • '), buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines));
       touchSession(session);
+      const logProducts1 = candidateMedicines.length > 0 ? candidateMedicines : flattenedOptions.map(o => o.productName || o.name || singleQuery);
+      appendConsultationToSheet({ products: logProducts1, exists: 1, phone: userInfo.phone, userName: userInfo.pushName });
       return buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines);
     }
 
     session.mode = 'awaiting_product_name';
+    appendConsultationToSheet({ products: candidateMedicines, exists: 0, phone: userInfo.phone, userName: userInfo.pushName });
     return buildNoMatchListMessage();
   }
 
@@ -1743,6 +1813,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
+    appendConsultationToSheet({ products: [singleQuery], exists: 0, phone: userInfo.phone, userName: userInfo.pushName });
     return `⚠️ *${singleQuery.trim()}* no está disponible en este momento.\n\nIntenta con el nombre del medicamento o una presentación distinta. Si tienes una receta, enviala en foto y busco los medicamentos por ti.`;
   }
 
@@ -1750,6 +1821,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
   session.mode = 'idle';
   touchSession(session);
   rememberCatalogSnapshot(session, result.matches, result.query || singleQuery, buildSearchDiagnosticMessage(result, singleQuery));
+  appendConsultationToSheet({ products: [singleQuery], exists: 1, phone: userInfo.phone, userName: userInfo.pushName });
 
   return buildSearchDiagnosticMessage(result, singleQuery);
 }
@@ -3064,6 +3136,18 @@ function extractFrom(payload) {
     '';
 
   return extractJidValue(jid);
+}
+
+function extractPushName(payload) {
+  const node = unwrapMessagePayload(payload) || {};
+  return (
+    node?.key?.pushName ||
+    node?.Info?.PushName ||
+    node?.pushName ||
+    node?.Sender?.pushName ||
+    node?.sender?.pushName ||
+    ''
+  );
 }
 
 function extractBody(payload) {
