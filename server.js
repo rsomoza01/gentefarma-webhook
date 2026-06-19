@@ -1136,6 +1136,21 @@ async function routeMessage(phone, text, session, context = {}) {
   const rawOcrText = String(context?.rawOcrText || '');
   const recipeSourceText = rawOcrText || ocrSearchText;
 
+  if (isHumanRequest(normalized)) {
+    enableHumanHandoff(session);
+    return buildHumanAgentMessage();
+  }
+
+  if (session.humanHandoff) {
+    return null;
+  }
+
+  // Early exit para declaraciones de interés en medicamentos — SIEMPRE antes del gate consultationIsMedicine
+  if (isMedicineInterestStatement(normalized)) {
+    clearSelectionState(session);
+    return buildMenuMessage();
+  }
+
   if (consultationIsMedicine) {
     clearSelectionState(session);
     const searchQuery = consultationQuery || text;
@@ -3268,8 +3283,47 @@ function isGreetingOrMenu(value) {
 function isMedicineInterestStatement(value) {
   const text = normalizeText(value);
   if (!text) return false;
-  // Match phrases indicating user wants to find/buy a medicine
-  return /^(?:hola[!,.\s]*)?\s*(?:estoy\s+interesad[oa]\s+(?:en\s+)?|me\s+interesa\s+(?:un\s+)?|quiero\s+(?:un\s+)?|busco\s+(?:un\s+)?|necesito\s+(?:un\s+)?|quisiera\s+(?:un\s+)?)?medicamento/i.test(text);
+  // Patrones de declaración de interés en medicamentos
+  const interestPrefixes = [
+    'estoy interesado',
+    'me interesa',
+    'me gustaria',
+    'quiero un',
+    'quiero',
+    'busco un',
+    'busco',
+    'necesito un',
+    'necesito',
+    'quisiera un',
+    'quisiera',
+  ];
+  // Si el texto empieza con "medicamento", verificar si es preceded by "un"
+  if (text.startsWith('medicamento') || text.startsWith('un medicamento')) {
+    return false; // solo "medicamento" sin contexto de interés
+  }
+  // Buscar prefijo de interés seguido de "medicamento" en cualquier posición
+  for (const prefix of interestPrefixes) {
+    const prefixIndex = text.indexOf(prefix);
+    if (prefixIndex !== -1) {
+      const afterPrefix = text.slice(prefixIndex + prefix.length);
+      // Después del prefijo, "medicamento" debe aparecer (con algo intermedio posible)
+      if (afterPrefix.includes('medicamento')) {
+        return true;
+      }
+      // Caso especial: el prefijo ocupa el final y "medicamento" viene después
+      // Esto ya lo cubrimos con el includes arriba
+    }
+  }
+  // Caso: "medicamento" al inicio seguido de un prefijo de interés (poco común)
+  // o texto que solo contiene "estoy interesado en un medicamento" completo
+  const normalizedLower = text.toLowerCase();
+  if (
+    (normalizedLower.includes('estoy interesado') || normalizedLower.includes('me interesa')) &&
+    normalizedLower.includes('medicamento')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function extractVitaminFocusTokens(query) {
