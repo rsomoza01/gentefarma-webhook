@@ -1185,12 +1185,18 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildSelectedProductsSummary(session);
   }
 
-  if ((isGreetingOrMenu(normalized) || isMedicineInterestStatement(normalized)) && !isMedicineSignal) {
+  // Early exit para declaraciones de interés en medicamentos — siempre muestra bienvenida
+  if (isMedicineInterestStatement(normalized)) {
+    clearSelectionState(session);
+    return buildMenuMessage();
+  }
+
+  if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
     clearSelectionState(session);
     if (session.mode === 'awaiting_product_name') {
       return buildMenuMessage();
     }
-    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized) || isMedicineInterestStatement(normalized)) {
+    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized)) {
       return buildMenuMessage();
     }
   }
@@ -1399,12 +1405,18 @@ async function routeMessage(phone, text, session, context = {}) {
     return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: Boolean(isMedicineConsultationPhrase(normalized)) });
   }
 
-  if ((isGreetingOrMenu(normalized) || isMedicineInterestStatement(normalized)) && !isMedicineSignal) {
+  // Early exit para declaraciones de interés en medicamentos — siempre muestra bienvenida
+  if (isMedicineInterestStatement(normalized)) {
+    clearSelectionState(session);
+    return buildMenuMessage();
+  }
+
+  if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
     clearSelectionState(session);
     if (session.mode === 'awaiting_product_name') {
       return buildMenuMessage();
     }
-    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized) || isMedicineInterestStatement(normalized)) {
+    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized)) {
       return buildMenuMessage();
     }
   }
