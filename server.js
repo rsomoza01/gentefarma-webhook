@@ -1139,7 +1139,7 @@ async function routeMessage(phone, text, session, context = {}) {
   if (consultationIsMedicine) {
     clearSelectionState(session);
     const searchQuery = consultationQuery || text;
-    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true });
+    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests });
   }
 
   if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
@@ -1185,12 +1185,12 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildSelectedProductsSummary(session);
   }
 
-  if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
+  if ((isGreetingOrMenu(normalized) || isMedicineInterestStatement(normalized)) && !isMedicineSignal) {
     clearSelectionState(session);
     if (session.mode === 'awaiting_product_name') {
       return buildMenuMessage();
     }
-    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized)) {
+    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized) || isMedicineInterestStatement(normalized)) {
       return buildMenuMessage();
     }
   }
@@ -1399,12 +1399,12 @@ async function routeMessage(phone, text, session, context = {}) {
     return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: Boolean(isMedicineConsultationPhrase(normalized)) });
   }
 
-  if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
+  if ((isGreetingOrMenu(normalized) || isMedicineInterestStatement(normalized)) && !isMedicineSignal) {
     clearSelectionState(session);
     if (session.mode === 'awaiting_product_name') {
       return buildMenuMessage();
     }
-    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized)) {
+    if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized) || isMedicineInterestStatement(normalized)) {
       return buildMenuMessage();
     }
   }
@@ -1513,11 +1513,11 @@ async function routeMessage(phone, text, session, context = {}) {
 }
 
 function buildMenuMessage() {
-  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*atamel* ·\n*amoxicilina* ·\n*losartan*`;
+  return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*losartán 50mg* ·\n*amoxicilina 500mg* ·\n*ibuprofeno 400mg*`;
 }
 
 function buildNoMatchMessage(query) {
-  return `⚠️ *${query}* no está disponible en este momento.\n\nPrueba con otro nombre del medicamento o una presentación distinta.\nEjemplos:\n• *oxacilina*\n• *oxacilina 500mg*\n• *otro nombre del medicamento*`;
+  return `⚠️ *${query}* no está disponible en este momento.\n\nIntenta con el nombre del medicamento o una presentación distinta. Si tienes una receta, enviala en foto y busco los medicamentos por ti.`;
 }
 
 function buildNoMatchListMessage() {
@@ -1643,7 +1643,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
   const ocrOnly = Boolean(options.ocrOnly);
   const consultationMode = Boolean(options.strictConsultationMode);
   const forceExactConsultationToken = Boolean(options.forceExactConsultationToken);
-  const requestedMedicines = ocrOnly ? [] : extractMedicineRequests(text);
+  const preExtracted = Array.isArray(options.preExtractedMedicines) ? options.preExtractedMedicines : [];
+  const requestedMedicines = preExtracted.length > 0 ? preExtracted : (ocrOnly ? [] : extractMedicineRequests(text));
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
@@ -1711,7 +1712,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}) {
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
-    return `⚠️ *${singleQuery.trim()}* no está disponible en este momento.\n\nIntenta con el nombre del medicamento o una presentación distinta.\nEjemplos:\n• *atamel*\n• *histaler ped*\n• *desloratadina*\n• *ibuprofeno*`;
+    return `⚠️ *${singleQuery.trim()}* no está disponible en este momento.\n\nIntenta con el nombre del medicamento o una presentación distinta. Si tienes una receta, enviala en foto y busco los medicamentos por ti.`;
   }
 
   session.lastSearch = result;
@@ -1733,9 +1734,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
   if (!queryTokens.length) return null;
 
-  if (options.strictConsultationMode && queryTokens.length < 2 && !looksLikeMedicineName(userQuery)) {
-    return { query, queryTokens, exchangeRate: options.exchangeRate ?? await getBcvRate(), matches: [] };
-  }
   const consultationMode = Boolean(options.strictConsultationMode);
 
   const exchangeRate = options.exchangeRate ?? await getBcvRate();
@@ -2416,8 +2414,14 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
     return missingLines.join('\n').trim();
   }
 
+  // Get BCV rate from first result that has it
+  const exchangeRate = results.find((r) => r.exchangeRate)?.exchangeRate || null;
+
   const lines = [];
   lines.push('🔎 *Resultados encontrados*');
+  if (exchangeRate) {
+    lines.push(`💱 Tasa BCV: *Bs ${formatPrice(exchangeRate)}*`);
+  }
   lines.push('');
 
   if (Array.isArray(missingMedicines) && missingMedicines.length) {
@@ -2431,11 +2435,41 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
   }
 
   let optionNumber = 1;
-  results.forEach((result) => {
-    const groupTitle = shortenText(String(result.groupTitle || result.query || 'MEDICAMENTO').toUpperCase(), 52);
+  // Normalize groupTitles to avoid duplicates like "SIMETICONA" and "SIMETICONA DE 125 MG"
+  // Group results by normalized medicine name, merging groups that differ only in dosage
+  const normalizedGroups = new Map();
+  for (const result of results) {
+    const rawTitle = String(result.groupTitle || result.query || 'MEDICAMENTO').toUpperCase();
+    // Strip dosage suffixes to find the base medicine name
+    const normalizedTitle = rawTitle
+      .replace(/^(?:TIENES|TIENE|TENER|HAY|DISPONIBLE|DISPONIBLES|DISPONIBILIDAD|POR\s+FAVOR|QUISIERA|QUIERO|NECESITO|BUSCO|BUSCAR|CONSULTAR)\s+/i, '')
+      .replace(/\s*DE\s+\d+\s*(?:MG|MCG|G|GR|ML|CC|UI|IU|TABLETAS?|CÁPSULAS?|CAPS?|AMPOLLAS?|SUSPENSION|SUSP|JARABE|GOTAS|CREMA|GEL|POLVO|UNGÜENTO|SOBRES?)\b.*$/i, '')
+      .replace(/\s+DE\s+\d+\s*(?:MG|MCG|G|GR|ML|CC|UI|IU)\b/i, '')
+      .replace(/\s+\d+\s*(?:MG|MCG|G|GR|ML|CC|UI|IU)\b.*$/i, '')
+      .replace(/\(\s*SIMETICONA\s*\)\s*\d+\s*MG.*$/i, '')
+      .trim();
+    const key = normalizedTitle;
+    if (normalizedGroups.has(key)) {
+      // Merge matches into existing group, deduplicating by title
+      const existing = normalizedGroups.get(key);
+      const existingTitles = new Set(existing.matches.map((m) => normalizeText(m.title || '')));
+      for (const match of result.matches || []) {
+        const matchTitle = normalizeText(match.title || '');
+        if (!existingTitles.has(matchTitle)) {
+          existing.matches.push(match);
+          existingTitles.add(matchTitle);
+        }
+      }
+    } else {
+      normalizedGroups.set(key, { ...result, groupTitle: rawTitle, matches: [...(result.matches || [])] });
+    }
+  }
+
+  for (const [key, group] of normalizedGroups) {
+    const groupTitle = shortenText(String(group.groupTitle || key || 'MEDICAMENTO').toUpperCase(), 52);
     lines.push(`*${groupTitle}*`);
 
-    (result.matches || []).forEach((item) => {
+    (group.matches || []).forEach((item) => {
       const name = shortenText(item.title || 'Medicamento', 52);
       const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
       const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
@@ -2445,7 +2479,7 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
     });
 
     lines.push('');
-  });
+  }
 
   lines.push('');
   lines.push('👉 Para agregar: quiero X cajas de la opción Z');
@@ -2472,7 +2506,7 @@ function extractMedicineRequests(text) {
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
     if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned) && cleaned.length < 6) continue;
-    const query = extractMedicineQuery(segment) || cleaned;
+    const query = extractMedicineQuery(segment) || segment;
     if (!query) continue;
 
     if (!results.includes(query)) results.push(query);
@@ -2482,8 +2516,10 @@ function extractMedicineRequests(text) {
 }
 
 function splitMedicineSegments(text) {
+  // Only split on explicit list markers: bullets, newlines, or dashes that precede whitespace (list dashes).
+  // Do NOT split on em/en dashes (U+2014/U+2013) embedded in product names like "MG — hidroten"
   return String(text)
-    .split(/\n+|[•·●\-|;]+/g)
+    .split(/\n+|[•·●]+|(?:^|\s)-(?=\s|$)/g)
     .map((part) => part.trim())
     .filter(Boolean);
 }
@@ -2492,13 +2528,18 @@ function splitSingleLineMedicineList(text) {
   const raw = String(text || '').trim();
   if (!raw) return [];
 
+  const commaSplit = raw.replace(/\s*,\s*/g, ',').split(',').map((s) => s.trim()).filter(Boolean);
+  if (commaSplit.length >= 2) {
+    return commaSplit;
+  }
+
   const tokens = [...raw.matchAll(/\S+/g)].map((match) => ({
     token: match[0],
     start: match.index,
     end: match.index + match[0].length
   }));
 
-  const anchors = [...raw.matchAll(/\b\d+(?:[.,]\d+)?(?:\s*(?:mg|mcg|g|gr|ml|mL|ui|iu))?\b/gi)]
+  const anchors = [...raw.matchAll(/\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\b/gi)]
     .map((match) => ({
       start: match.index,
       end: match.index + match[0].length
@@ -3141,6 +3182,10 @@ function extractRecipeMedicineLines(value) {
   const shortBrandLike = /^(?:[a-záéíóúñ][a-záéíóúñ0-9.-]{2,}(?:\s+[a-záéíóúñ0-9().-]{2,}){0,5})$/i;
   const candidates = [];
 
+  const userQueryVerbPatterns = [
+    /\b(tienes?|tiene|tengo|tienen|tener|quiero|quiere|quieren|querer|busco|busca|buscan|buscar|necesito|necesita|necesitan|necesitar|hay|habia|habra|disponible|disponibles|disponibilidad|precio|costo|costar|cuesta|cuestan)\b/i,
+    /\b(por\s+favor|me\s+puedes|me\s+ayuda|consulta|consultar|saber|cuanto|cuánto)\b/i
+  ];
   const pushCandidate = (candidate) => {
     const normalized = normalizeText(candidate);
     if (!normalized) return;
@@ -3150,6 +3195,8 @@ function extractRecipeMedicineLines(value) {
     if (normalized.split(' ').length > 8) return;
     if (!formOrDose.test(candidate) && !shortBrandLike.test(normalized)) return;
     if (/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac|dr\.|dra\.|doctor|doctora|unidad|gastroenterologia|gastroenterología)\b/i.test(normalized)) return;
+    // Skip lines that look like user query fragments (contain user query verbs)
+    if (userQueryVerbPatterns.some((p) => p.test(normalized))) return;
     candidates.push(candidate);
   };
 
@@ -3204,6 +3251,13 @@ function isGreetingOrMenu(value) {
   if (GREETING_PHRASES.has(text)) return true;
 
   return /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/.test(text);
+}
+
+function isMedicineInterestStatement(value) {
+  const text = normalizeText(value);
+  if (!text) return false;
+  // Match phrases indicating user wants to find/buy a medicine
+  return /^(?:hola[!,.\s]*)?\s*(?:estoy\s+interesad[oa]\s+(?:en\s+)?|me\s+interesa\s+(?:un\s+)?|quiero\s+(?:un\s+)?|busco\s+(?:un\s+)?|necesito\s+(?:un\s+)?|quisiera\s+(?:un\s+)?)?medicamento/i.test(text);
 }
 
 function extractVitaminFocusTokens(query) {
@@ -3338,7 +3392,8 @@ function extractPrimaryRecipeMedicineQuery(value) {
   ]);
   const MED_QUERY_WEAK_TOKENS = new Set([
     'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
-    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor'
+    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor',
+    'disponible', 'disponibles', 'disponibilidad'
   ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
@@ -3360,7 +3415,19 @@ function extractPrimaryRecipeMedicineQuery(value) {
     return dose;
   }
 
-  if (strongTokens.length) return strongTokens[0];
+  if (strongTokens.length) {
+    const top = strongTokens[0];
+    // Reject short tokens and known query residuals
+    const hasDosageForm = MED_FORM_TOKENS.has(tokenize(candidate).find((t) => MED_FORM_TOKENS.has(t)));
+    if (top.length < 4 && !hasDosageForm) {
+      // Short token without a dosage form — reject it
+    } else {
+      return top;
+    }
+    // Also reject common conversational residuals that survived cleanup
+    if (/^(noches|mananas|tardes|dias|favor|ahora|también|tampoco|así|asimesmo|小伙子|entonces|mientras|más|bien|mal|quizás|quizá|puede|pueden|puedo)$/i.test(top)) return '';
+    return top;
+  }
   if (cleanedTokens.length) return cleanedTokens[0];
   if (formTokens.length && tokens.length > 1) {
     const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
@@ -3400,23 +3467,31 @@ function extractMedicineQuery(text) {
   const cleaned = normalizeText(text);
   if (!cleaned) return '';
 
+  // Strip dosage FIRST so it doesn't pollute verb-pattern capture
+  const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
+  const cleanedDosage = normalizeText(text).replace(dosageStrip, ' ').replace(/\s+/g, ' ').trim();
+
   const verbList = [
     'por\\sfavor','me\\spuedes\\sayudar\\scon','me\\sayudas\\scon','necesito','busco','busque','buscame','buscando','quiero',
-    'quisiera','me\\sinteresa','me\\sinteresan','(?<![\\w])tienes\\b','(?<![\\w])tiene\\b','(?<![\\w])tienen\\b','(?<![\\w])hay\\b',
-    'disponibilidad(?:\\sde)?','disponible(?:s)?','informar(?:\\ssobre)?','informe(?:\\ssobre)?','consultar(?:\\ssobre)?',
-    'consulta(?:\\ssobre)?','informame(?:\\ssobre)?','informarme(?:\\ssobre)?','precio(?:\\sde)?','conoces','(?<![\\w])vendes?(?!\\w)',
+    'quisiera','me\\sinteresa','me\\sinteresan','(?<!\\w)tienes\\b','(?<!\\w)tiene\\b','(?<!\\w)tienen\\b','(?<!\\w)hay\\b',
+    'disponibilidad(?:\\sde)?','informar(?:\\ssobre)?','informe(?:\\ssobre)?','consultar(?:\\ssobre)?',
+    'consulta(?:\\ssobre)?','informame(?:\\ssobre)?','informarme(?:\\ssobre)?','precio(?:\\sde)?','conoces','(?<!\\w)vendes?(?!\\w)',
     'dónde\\s(?:puedo\\s)?comprar','donde\\s(?:puedo\\s)?comprar','dónde\\scomprar','donde\\scomprar',
     'dónde\\s(?:puedo\\s)?conseguir','donde\\s(?:puedo\\s)?conseguir','dónde\\sconseguir','donde\\sconseguir',
     'dónde\\sconsigo','donde\\sconsigo','dónde\\sencuentro','donde\\sencuentro'
   ];
+
+  // Remove 'por favor' from the middle BEFORE verb matching so it doesn't confuse the greedy .+
+  const cleanedNoFavor = cleanedDosage.replace(/\bpor\s+favor\b/gi, ' ').replace(/\s+/g, ' ').trim();
+
   const patterns = [
     new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+)$`, 'i'),
-    /^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a)\s+(.+)$/i
+    /^(?:de|del|para|con|sobre|acerca\\s+de|respecto\\s+a)\\s+(?!\\d+\\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\\b)(.+)$/i
   ];
 
-  let candidate = cleaned;
+  let candidate = cleanedNoFavor;
   for (const pattern of patterns) {
-    const match = cleaned.match(pattern);
+    const match = cleanedNoFavor.match(pattern);
     if (match?.[1]) {
       candidate = normalizeText(match[1]);
       break;
@@ -3424,14 +3499,20 @@ function extractMedicineQuery(text) {
   }
 
   candidate = candidate
-    .replace(/^(?:por\s+favor\s+)?(?:hola|buenas(?:\s+tardes|\s+noches)?|buenos(?:\s+días)?|buen\s+(?:dia|día|tarde|tardes|noche|noches)|saludos)\b[\s,.-]*/i, '')
+    .replace(/^por\s+favor\s*/i, '')
+    // Strip hola first (before the general greeting strip so it doesn't hide buenas noches)
+    .replace(/^hola\b[\s,.-]*/i, '')
+    .replace(/^(?:por\s+favor\s+)?(?:hola|buenas\s+noches|buenas\s+tardes|buenos\s+días|buen\s+(?:dia|día|tarde|noche)|saludos)\b[\s,.-]*/i, '')
     .replace(/^(?:donde\s+puedo\s+comprar|dónde\s+puedo\s+comprar|donde\s+comprar|dónde\s+comprar|donde\s+consigo|dónde\s+consigo|donde\s+encuentro|dónde\s+encuentro)\s+/i, '')
-    .replace(/^(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|disponibilidad(?:\s+de)?|disponible(?:s)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|precio(?:\s+de)?|saber(?:\s+el)?(?:\s+precio)?(?:\s+de)?|cuanto\s+cuesta|cuánto\s+cuesta|conoces|vendes|venden)\s+/i, '')
-    .replace(/^(?:comprar|conseguir|buscar|necesitar|querer|pedir|obtener|hallar|hallarme|buscame|buscame|buscarnos?|encuentra[rm]?)\\s+/i, '')
-    .replace(/^(?:de|del|para|con|sobre|acerca\\s+de|respecto\\s+a|la|el|las|los|unos|unas|y)\\s+/i, '')
-    .replace(/\b(?:y\s+)?(?:el\s+)?(?:la\s+)?(?:precio|costo|valor)\b.*$/i, '')
+    .replace(/^(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|hay\s+disponible|disponibilidad(?:\s+de)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|saber(?:\s+el)?(?:\s+precio)?(?:\s+de)?|cuanto\s+cuesta|cuánto\s+cuesta|conoces|vendes|venden)\s+/i, '')
+    .replace(/^(?:comprar|conseguir|buscar|necesitar|querer|pedir|obtener|hallar|hallarme|buscame|buscame|buscarnos?|encuentra[rm]?)\s+/i, '')
+    .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a|la|el|las|los|unos|unas|y)\s+/i, '')
+    // Remove 'disponible' and 'precio' from anywhere by replacing with space (not deleting), preserving medicine names between them
+    .replace(/\b(?:precio|costo|valor)\b/gi, ' ')
+    .replace(/\b(?:disponible|hay\s+disponible|disponibles)\b/gi, ' ')
     .replace(/\b(muchas\s+gracias|gracias\s+muchas|gracias|thank\s+you|thanks)\b.*$/i, '')
     .trim();
+  candidate = candidate.replace(/\s+y$/i, '').trim();
 
   candidate = candidate
     .replace(/^(?:saber|precio|costo|valor|consulta|consultar)\s+/i, '')
@@ -3460,7 +3541,8 @@ function extractMedicineQuery(text) {
   ]);
   const MED_QUERY_WEAK_TOKENS = new Set([
     'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
-    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor'
+    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor',
+    'disponible', 'disponibles', 'disponibilidad'
   ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
@@ -3488,13 +3570,14 @@ function extractMedicineQuery(text) {
   }
 
   if (strongTokens.length) return strongTokens[0];
-  if (cleanedTokens.length) return cleanedTokens[0];
+  const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  if (weakFiltered.length) return weakFiltered[0];
   if (formTokens.length && tokens.length > 1) {
     const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
     const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
     if (afterStrong) return afterStrong;
   }
-  return tokens[0] || '';
+  return weakFiltered[0] || '';
 }
 
 function extractStrictConsultationMedicineQuery(text) {
