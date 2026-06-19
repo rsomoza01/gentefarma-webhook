@@ -1248,7 +1248,11 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (hasOcrText && !hasSelectionResults) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText: true, ocrOnly: true, recipeMode: true });
+    // Extraer solo el nombre principal del producto de la imagen OCR
+    const productName = extractProductNameFromOCR(recipeSourceText || text);
+    const searchQuery = productName || recipeSourceText || text;
+    console.log('🧾 OCR product name extraction:', { productName, searchQuery });
+    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true });
   }
 
   if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
@@ -3187,6 +3191,134 @@ function sanitizeRecipeText(value) {
   const cleaned = lines.filter((line) => !removalPatterns.some((pattern) => pattern.test(line)));
   return cleaned.join('\n').replace(/[\t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
+function extractProductNameFromOCR(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const lines = raw
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  // Patterns for lines we know are NOT product names
+  const skipPatterns = [
+    /^(aviso|aviso\s+importante|atencion|atención)\b/i,
+    /^(contenido|contenido\s+neto|peso\s+neto|presentacion|presentación)\b/i,
+    /^(ingredientes?|composición|componentes|composicion)\b/i,
+    /^(informacion|información|informações|informacoes)\s+(nutricional|nutricionale|geral|general)\b/i,
+    /^(informacion|información|nutricional|informações)\b/i,
+    /^(modo?\s+de?\s+uso|instrucciones?|indicaciones?|contraindicaciones?|precauciones?|warnings?)\b/i,
+    /^(direccion|dirección|address|conservacion|conservación|almacenamiento|storage)\b/i,
+    /^(telefono|teléfono|fono|phone|tel|call|contacto|contact)\b/i,
+    /^(fabricado|fabricante|importado|distribuido|distribuidor|registered)\b/i,
+    /^(fecha|vencimiento|caducidad|expiracion|expiry|lote|batch)\b/i,
+    /^(www\.|http|https|\.com|\.org|\.net|\.gov)/i,
+    /^\(?\d{3,}[)\s.-]?\d{3,}[)\s.-]?\d{3,}/,
+    /^\d+\s*(g|gr|mg|ml|cc|kg|kcal)\b/i,
+    /^.{1,2}\/\d{3,}/,
+    /^(nº|no\.|numero|número|lote|serie|reg\.?|reg\.?\s*san|registro)\b/i,
+    /^(sucursal|oficina|punto|venta|comprar|pedido|orden|order)\b/i,
+    /^(uso:|indicaciones:|presentacion:|contenido:|ingredientes:)/i,
+  ];
+
+  // Dosage patterns
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|mL|cc|ui|iu|tabletas?|capsulas?|cápsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|over|the|counter)|\d+\s*(%|mod|tab|cap|amp))/i;
+
+  // Lines too long to be a simple product name
+  const isTooLong = (line) => line.replace(/\s+/g, ' ').length > 55;
+
+  // Lines too short
+  const isTooShort = (line) => line.split(/\s+/).filter(Boolean).length < 2;
+
+  // Score each line - simple approach
+  let bestCandidate = '';
+  let bestScore = -1;
+
+  for (let i = 0; i < Math.min(lines.length, 12); i++) {
+    const line = lines[i];
+    const normalized = normalizeText(line);
+    const words = line.split(/\s+/).filter(Boolean);
+    const wordCount = words.length;
+
+    // Skip if matches skip patterns
+    if (skipPatterns.some((p) => p.test(line) || p.test(normalized))) continue;
+
+    // Skip if too long
+    if (isTooLong(line)) continue;
+
+    // Skip if too short (single word product names like "NAN" alone need special handling)
+    if (isTooShort(line)) {
+      // But if it's the first line and very short, still consider it
+      if (i > 2) continue;
+    }
+
+    // Skip if contains dosage - it's a recipe/medicine line
+    if (dosagePattern.test(normalized)) continue;
+
+    // Score: prefer lines near the top
+    let score = 0;
+    if (i === 0) score = 100;
+    else if (i === 1) score = 90;
+    else if (i === 2) score = 80;
+    else if (i <= 4) score = 70;
+    else if (i <= 6) score = 50;
+    else score = 30;
+
+    // Penalize if it contains claim/metadata words
+    const metaWords = /\b(probiótico|lc-pufas|dha|ara|hmo|optipro|científico|ciencia|clínico|clínica|beneficio|beneficios|extracto|concentrado|composite|nutricional|infantil|baby|infant)\b/i;
+    if (metaWords.test(normalized)) score -= 40;
+
+    // Penalize lines that are all uppercase (usually legal/claims)
+    if (line === line.toUpperCase() && line.length > 15) score -= 30;
+
+    // Prefer lines with mixed case (product names)
+    if (/[a-z]/.test(line) && /[A-Z]/.test(line)) score += 10;
+
+    // Bonus for word count 2-4
+    if (wordCount >= 2 && wordCount <= 4) score += 20;
+
+    // Bonus if line has uppercase-starting words (brand-like)
+    const brandWords = words.filter((w) => /^[A-ZÁÉÍÓÚÑ]/.test(w) && w.length > 2);
+    if (brandWords.length >= 1) score += 15;
+    if (brandWords.length >= 2) score += 10;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = line.replace(/\s+/g, ' ').trim();
+    }
+  }
+
+  // Special case: try to combine first few lines that look like a product name
+  // (handles cases where OCR splits "NAN Expertpro HA" across lines)
+  if (lines.length >= 2) {
+    let combined = '';
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      const line = lines[i];
+      const normalized = normalizeText(line);
+      const words = line.split(/\s+/).filter(Boolean);
+
+      if (skipPatterns.some((p) => p.test(line) || p.test(normalized))) break;
+      if (isTooLong(line)) break;
+      if (dosagePattern.test(normalized)) break;
+      if (words.length === 1 && i > 3) break;
+
+      const metaWords = /\b(probiótico|lc-pufas|dha|ara|hmo|optipro|científico|ciencia|clínico|clínica|beneficio|beneficios|extracto|concentrado|composite|nutricional|infantil|baby|infant)\b/i;
+      if (metaWords.test(normalized)) break;
+
+      if (combined === '') {
+        combined = line;
+      } else {
+        combined = combined + ' ' + line;
+      }
+    }
+    if (combined.split(/\s+/).filter(Boolean).length >= 2 && combined.replace(/\s+/g, ' ').length <= 45) {
+      return combined.replace(/\s+/g, ' ').trim();
+    }
+  }
+
+  return bestCandidate;
+}
+
 function extractRecipeMedicineLines(value) {
   const raw = String(value || '');
   if (!raw) return [];
