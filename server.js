@@ -1282,6 +1282,14 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildLocationMessage();
   }
 
+  if (isHorarioQuestion(normalized)) {
+    return buildHorarioMessage();
+  }
+
+  if (isPagoQuestion(normalized)) {
+    return buildPagoMessage();
+  }
+
   if (isMoreInfoRequest(normalized)) {
     return buildMoreInfoMessage();
   }
@@ -1598,7 +1606,7 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildCatalogResponse(searchResult);
   }
 
-  return buildDefaultFallbackMessage();
+  return buildDefaultFallbackMessage(session);
 }
 
 function buildMenuMessage() {
@@ -1644,7 +1652,7 @@ function buildHumanAgentMessage() {
 }
 
 function buildLocationMessage() {
-  return `¡Hola!. Somos una plataforma online, no tenemos local físico. A través de nuestra web o número de WhatsApp te ayudamos a buscar tus medicinas y comparar precios, para que encuentres la opción que más te convenga. Sin salir de casa 😉. Visita http://www.gentefarma.com o escríbenos por WhatsApp y te ayudamos a gestionar tu pedido. 🙌`;
+  return 'Somos una plataforma que opera por Internet y WhatsApp junto con farmacias aliadas. No disponcemos de local físico.';
 }
 
 function buildMoreInfoMessage() {
@@ -1655,12 +1663,31 @@ function buildOrderNotificationReply() {
   return 'En breve, uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo para tramitarlo. 😊';
 }
 
-function buildDefaultFallbackMessage() {
-  return 'En breve uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo. 😊';
+function buildDefaultFallbackMessage(session) {
+  enableHumanHandoff(session);
+  return '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.\n\nMientras esperas, también puedo ayudarte a buscar un medicamento.';
 }
 
 function buildDeliveryPriceMessage() {
-  return 'Depende de su ubicacion. El rango de precio esta entre 1.5$ a 4$.';
+  return 'Realizamos deliveries en Ciudad Bolívar. Consulta el costo según tu zona.';
+}
+
+function isHorarioQuestion(value) {
+  const text = normalizeText(value);
+  return /\b(horario|atienden|abren|cierran|abre|cierra|a qué hora|hora de|a qué hora abren|a qué hora cierran|están abiertos|están cerrados|jornada|atención|horas de)\b/.test(text);
+}
+
+function buildHorarioMessage() {
+  return 'Atendemos de 7:00 AM a 8:00 PM.';
+}
+
+function isPagoQuestion(value) {
+  const text = normalizeText(value);
+  return /\b(pago|pagan|pagó|pagamos|aceptan|aceptamos|formas de pago|medios de pago|cuáles son las formas|cuáles pagan|cócmo pago|cómo pagan|payment|transferencia|zelle|efectivo|bs|bolívares|pago móvil|pago movíl)\b/.test(text);
+}
+
+function buildPagoMessage() {
+  return 'Aceptamos Pago Móvil.';
 }
 
 function buildHowToOrderMessage() {
