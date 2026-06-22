@@ -1585,6 +1585,28 @@ async function routeMessage(phone, text, session, context = {}) {
     return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
   }
 
+  // ── NO-CONSULTA gate global en routeMessage ──────────────────────────
+  // Antes de intentar cualquier búsqueda de productos, rechazar mensajes
+  // que claramente no son consultas de medicamentos (afirmaciones, scheduler, etc.)
+  const routeText = normalizeText(text);
+  const ROUTE_DENYLIST = [
+    /^(?:ok|okay)\s+(?:está\s+)?(?:bien|perfecto|correcto)?$/i,
+    /^(?:está\s+)?bien[,\s].*$/i,
+    /^(?:perfecto|de\s+acuerdo|entendido|confirmo|confirmado|hecho)\s*$/i,
+    /^(?:si|sí|yes|no|nop|jaja|jajaja|jajajaja)\s*$/i,
+    /^(?:muchas?\s+)?gracias?(?:\s+much[oa]s?)?$/i,
+    /^(?:hasta|luego|nos\s+vemos|chau|chao)\s*$/i,
+    /^a\s+las\s+\d+/i,
+    /^para\s+mañana\s+a\s+las/i,
+    /^(?:hoy|mañana|pasado\s+mañana)\s+a\s+las/i,
+    /^por\s+fa?vor\s*$/i,
+    /^(?:cuando|todo\s+bien|que\s+haces?|en\s+que\s+po?demo)\s*/i,
+    /^(?:ok|okay)\s*/i,
+  ];
+  if (ROUTE_DENYLIST.some((re) => re.test(routeText))) {
+    return buildDefaultFallbackMessage(session);
+  }
+
   const medicineQuery = extractMedicineQuery(text);
   if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized) || medicineQuery) {
     const productQuery = medicineQuery || text;
