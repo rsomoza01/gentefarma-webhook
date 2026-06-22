@@ -2249,7 +2249,23 @@ async function searchMedicinesByName(userQuery, options = {}) {
     scoredProducts.slice(0, 5).forEach((item, i) => {
       console.log(`[CONSULTATION-GATE] BEFORE[${i}] title='${item.productTitleFull}' tokenSet=${JSON.stringify([...item.tokenSet].slice(0, 10))} ingredient='${item.ingredient}'`);
     });
+    // Denylist: palabras que son saludos/greeting, no consultas de medicina.
+    // Si el query es un saludo conocido, rechazar antes de buscar en Firebase.
+    const GREETING_DENYLIST = new Set([
+      'saludos', 'saludo', 'hola', 'buenas', 'buenos', 'buen', 'dias', 'dias',
+      'tardes', 'noches', 'noche', 'gracias', 'buen', 'comoestas', 'como estás',
+      'quetral', 'encantado', 'encantada', 'muchogusto', 'mucho gusto',
+      'disculpa', 'permiso', 'conpermiso', 'buen dia', 'buen día',
+      'buenas tardes', 'buenas noches', 'buenos dias', 'buenos días',
+    ]);
+    const qIsGreeting = GREETING_DENYLIST.has(q.toLowerCase());
+
     scoredProducts = scoredProducts.filter((item) => {
+      // 0) Rechazar saludos conocidos antes de cualquier match
+      if (qIsGreeting) {
+        console.log(`[CONSULTATION-GATE] REJECTED(greeting): q='${q}'`);
+        return false;
+      }
       // 1) Match exacto en tokenSet o title/ingredient
       if (
         item.tokenSet.has(q)
