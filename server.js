@@ -3767,6 +3767,28 @@ function looksLikeMedicineName(value) {
   if (!text) return false;
   if (isGreetingOrMenu(text) || isThanksMessage(text) || /^(listo|resumen|bot on|bot off|bot status)$/i.test(text)) return false;
 
+  // ── NO-CONSULTA denylist ──────────────────────────────────────────────
+  // Mensajes que claramente no son consultas de medicamentos
+  const NON_CONSULTA_PATTERNS = [
+    /^(?:ok|okay)\s+(?:está\s+)?(?:bien|perfecto|correcto)?$/i,
+    /^(?:está\s+)?bien(?:\,?\s+.*)?$/i,
+    /^(?:perfecto|de\s+acuerdo|entendido|confirmo|confirmado|hecho)\s*$/i,
+    /^(?:si|sí|yes|no|nop|jaja|jajaja|jajajaja|kajska)\s*$/i,
+    /^(?:muchas?\s+)?gracias?(?:\s+much[oa]s?)?$/i,
+    /^(?:hasta|luego|nos\s+vemos|chau|chao)\s*$/i,
+    /^(?:buena?s?\s+(?:noche|tarde|día|dia|mañana))\s*$/i,
+    /^(?:que\s+(?:tal|onda|haces?|hap|Haz))\s*$/i,
+    /^(?:como\s+estas?|c[oó]mo\s+va[nr]?)\s*$/i,
+    /^(?:hola|holita|qué\s+hay)\s*$/i,
+    /^(?:cu[áa]nto\s+(?:tiempo|cuesta|cuestan))\s+/i,
+    /^a\s+las\s+\d+/i,                          // "a las 4"
+    /^para\s+mañana(?:\s+a\s+las|$)/i,          // "para mañana a las 4"
+    /^(?:hoy|mañana|pasado\s+mañana)\s+a\s+las/i, // scheduling
+    /^por\s+fa?vor\s*$/i,
+    /^(?:cuando|todo\s+bien|que\s+haces?|en\s+que\s+po?demo)\s*/i,
+  ];
+  if (NON_CONSULTA_PATTERNS.some((re) => re.test(text))) return false;
+
   const extracted = extractMedicineQuery(text);
   if (extracted && extracted.length >= 4) {
     const extractedTokens = tokenize(extracted);
@@ -3777,7 +3799,14 @@ function looksLikeMedicineName(value) {
   if (!tokens.length) return false;
 
   const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|cc|ui|iu)|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|vit)\b/.test(text);
-  const hasUsefulMultiTokenPhrase = tokens.length >= 2;
+  // tokens de conversación genérica → no parecen nombres de productos
+  const GENERIC_TOKENS = new Set(['para', 'esta', 'está', 'bien', 'okay', 'ok', 'las', 'los',
+    'una', 'unos', 'del', 'que', 'con', 'sin', 'por', 'muy', 'más', 'mas', 'todo', 'así',
+    'ahora', 'antes', 'después', 'cuando', 'donde', 'dónde', 'como', 'cómo', 'pero', 'porque',
+    'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas', 'aquel', 'aquella',
+    'tengo', 'tienes', 'tiene', 'tenemos', 'tienen', 'hacer', 'hace', 'haces', 'hacen',
+    'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer']);
+  const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()));
   const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 5 && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0]);
 
   return hasDosageOrForm || hasUsefulMultiTokenPhrase || hasStrongSingleToken;
