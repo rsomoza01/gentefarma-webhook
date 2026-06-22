@@ -2241,6 +2241,21 @@ async function searchMedicinesByName(userQuery, options = {}) {
       return priceA - priceB;
     });
 
+  // ── Greeting denylist (siempre, antes de cualquier búsqueda) ─────────────────
+  const GREETING_DENYLIST = new Set([
+    'saludos','saludo','hola','buenas','buenos','buen','dias',
+    'tardes','noches','noche','gracias','comoestas','como estás',
+    'quetral','encantado','encantada','muchogusto','mucho gusto',
+    'disculpa','permiso','conpermiso',
+    'buen dia','buen día','buenas tardes','buenas noches','buenos dias','buenos días',
+  ]);
+  const primaryQ = primaryTokens[0] || '';
+  const qIsGreeting = primaryQ ? GREETING_DENYLIST.has(primaryQ.toLowerCase()) : false;
+  if (qIsGreeting) {
+    console.log(`[SEARCH-GATE] REJECTED(greeting): q='${primaryQ}'`);
+    return { query, queryTokens, exchangeRate, matches: [] };
+  }
+
   if (consultationMode && primaryTokens.length > 0) {
     const q = primaryTokens[0];
     const beforeCount = scoredProducts.length;
@@ -2249,23 +2264,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     scoredProducts.slice(0, 5).forEach((item, i) => {
       console.log(`[CONSULTATION-GATE] BEFORE[${i}] title='${item.productTitleFull}' tokenSet=${JSON.stringify([...item.tokenSet].slice(0, 10))} ingredient='${item.ingredient}'`);
     });
-    // Denylist: palabras que son saludos/greeting, no consultas de medicina.
-    // Si el query es un saludo conocido, rechazar antes de buscar en Firebase.
-    const GREETING_DENYLIST = new Set([
-      'saludos', 'saludo', 'hola', 'buenas', 'buenos', 'buen', 'dias', 'dias',
-      'tardes', 'noches', 'noche', 'gracias', 'buen', 'comoestas', 'como estás',
-      'quetral', 'encantado', 'encantada', 'muchogusto', 'mucho gusto',
-      'disculpa', 'permiso', 'conpermiso', 'buen dia', 'buen día',
-      'buenas tardes', 'buenas noches', 'buenos dias', 'buenos días',
-    ]);
-    const qIsGreeting = GREETING_DENYLIST.has(q.toLowerCase());
-
     scoredProducts = scoredProducts.filter((item) => {
-      // 0) Rechazar saludos conocidos antes de cualquier match
-      if (qIsGreeting) {
-        console.log(`[CONSULTATION-GATE] REJECTED(greeting): q='${q}'`);
-        return false;
-      }
       // 1) Match exacto en tokenSet o title/ingredient
       if (
         item.tokenSet.has(q)
@@ -3522,6 +3521,7 @@ const GREETING_PHRASES = new Set([
   'buenas',
   'buenas tardes',
   'buenas noches',
+  'saludos',
   'ey',
   'alo',
   'aló',
