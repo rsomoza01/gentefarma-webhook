@@ -1205,6 +1205,27 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildMenuMessage();
   }
 
+  // ── NO-CONSULTA gate ultra-precoz ────────────────────────────────────
+  // Rechazar ANTES de consultationIsMedicine para que "ok está bien",
+  // scheduling y affirmaciones nunca lleguen a searchAndBuildCatalogResponse
+  const URGENT_DENYLIST = [
+    /^(?:ok|okay)\s*(?:está\s+(?:bien|perfecto|correcto)|es\s+(?:bien|perfecto)|,$|$)/i,
+    /^(?:ok|okay)\s*/i,
+    /^(?:está\s+)?bien[,\s].*$/i,
+    /^(?:perfecto|de\s+acuerdo|entendido|confirmo|confirmado|hecho)\s*$/i,
+    /^(?:si|sí|yes|no|nop|jaja|jajaja|jajajaja)\s*$/i,
+    /^(?:muchas?\s+)?gracias?(?:\s+much[oa]s?)?$/i,
+    /^(?:hasta|luego|nos\s+vemos|chau|chao)\s*$/i,
+    /^a\s+las\s+\d+/i,
+    /^para\s+mañana\s+a\s+las/i,
+    /^(?:hoy|mañana|pasado\s+mañana)\s+a\s+las/i,
+    /^por\s+fa?vor\s*$/i,
+    /^(?:cuando|todo\s+bien|que\s+haces?|en\s+que\s+po?demo)\s*/i,
+  ];
+  if (URGENT_DENYLIST.some((re) => re.test(normalized))) {
+    return buildDefaultFallbackMessage(session);
+  }
+
   if (consultationIsMedicine) {
     clearSelectionState(session);
     const searchQuery = consultationQuery || text;
@@ -2672,7 +2693,7 @@ function extractMedicineRequests(text) {
     const cleaned = normalizeText(segment);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
-    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned) && cleaned.length < 6) continue;
+    if (!/(\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)|(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina))/.test(cleaned) && cleaned.length < 6) continue;
     const query = extractMedicineQuery(segment) || segment;
     if (!query) continue;
 
