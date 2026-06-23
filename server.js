@@ -2666,6 +2666,28 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
       .replace(/\(\s*SIMETICONA\s*\)\s*\d+\s*MG.*$/i, '')
       .trim();
     const key = normalizedTitle;
+    // If this group's normalized name is a substring of the query (meaning the query
+    // is more specific), don't create a separate group — it would be a subset duplicate.
+    // E.g. query="DORIXINA FLEX", normalized="DORIXINA" → skip; query="DORIXINA", same → keep.
+    const rawQueryUpper = String(result.query || '').toUpperCase();
+    const isSubsetOfQuery = rawQueryUpper.length > normalizedTitle.length &&
+      rawQueryUpper.includes(normalizedTitle);
+    if (isSubsetOfQuery) {
+      // Merge matches directly into the superstring group if it exists
+      const superstringKey = normalizedGroups.has(key) ? key : null;
+      if (superstringKey) {
+        const existing = normalizedGroups.get(superstringKey);
+        const existingTitles = new Set(existing.matches.map((m) => normalizeText(m.title || '')));
+        for (const match of result.matches || []) {
+          const matchTitle = normalizeText(match.title || '');
+          if (!existingTitles.has(matchTitle)) {
+            existing.matches.push(match);
+            existingTitles.add(matchTitle);
+          }
+        }
+      }
+      continue;
+    }
     if (normalizedGroups.has(key)) {
       // Merge matches into existing group, deduplicating by title
       const existing = normalizedGroups.get(key);
