@@ -417,12 +417,28 @@ function parseSelectionCommand(text) {
   let quantity = 1;
   let optionSource = normalized;
 
+  // First: look for quantity pattern at the START of the string ("2 cajas de la opcion 3")
   for (const pattern of quantityPatterns) {
     const match = normalized.match(pattern);
     if (match) {
       quantity = Number(match[1]) || 1;
       optionSource = normalized.slice(match[0].length).trim();
       break;
+    }
+  }
+
+  // If no quantity found at start, look for "quiero N cajas" / "dame N" pattern anywhere
+  // This handles inputs like "quiero 2 cajas de la opcion 3"
+  if (quantity === 1) {
+    const inlineQtyMatch = normalized.match(/\b(?:quiero|quisiera|dame|necesito|busco|agregar|agrega)\s+(\d+)\s*(?:cajas?|box|unidades?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)?\b/i);
+    if (inlineQtyMatch) {
+      quantity = Number(inlineQtyMatch[1]) || 1;
+      // Also strip the "quiero N cajas" portion from the option source
+      const qtyPhrase = inlineQtyMatch[0];
+      const qtyIndex = normalized.indexOf(qtyPhrase);
+      if (qtyIndex >= 0) {
+        optionSource = normalized.slice(qtyIndex + qtyPhrase.length).trim();
+      }
     }
   }
 
