@@ -1335,10 +1335,12 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (hasOcrText && !hasSelectionResults) {
     clearSelectionState(session);
-    // Extraer solo el nombre principal del producto de la imagen OCR
-    const productName = extractProductNameFromOCR(recipeSourceText || text);
-    const searchQuery = productName || recipeSourceText || text;
-    console.log('🧾 OCR product name extraction:', { productName, searchQuery });
+    // For recipe/OCR mode: extract ALL medicine names from the recipe, not just one.
+    // extractProductNameFromOCR is designed for single-product images and skips lines
+    // with dosage (which ALL recipe medicines have), causing it to return "Dr. Cesar Santodomingo".
+    const allRecipeMedicines = sanitizeRecipeText(recipeSourceText || text);
+    const searchQuery = allRecipeMedicines || recipeSourceText || text;
+    console.log('🧾 OCR recipe medicines extraction:', { allRecipeMedicines, searchQuery });
     return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
   }
 
