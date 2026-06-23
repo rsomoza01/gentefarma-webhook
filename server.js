@@ -2120,9 +2120,38 @@ async function searchMedicinesByName(userQuery, options = {}) {
     else if (referenceSimilarity >= strictReferenceThreshold - 0.03) score += strictListMode ? 80 : 120;
     else if (strictListMode) score -= 500;
 
-    if (signal.productTitleFull.includes(matchQuery) || matchQuery.includes(signal.productTitleFull)) score += 320;
-    if (signal.titleArrayTextFull.includes(matchQuery) || matchQuery.includes(signal.titleArrayTextFull)) score += 280;
-    if (signal.ingredient.includes(matchQuery) || matchQuery.includes(signal.ingredient)) score += 200;
+    // Only give +320 if the match is a whole-token hit (bounded by word boundaries)
+    // This prevents "DORIXINA" from scoring +320 when query="DORIXINA FLEX"
+    const queryTokensForBoundCheck = tokenize(matchQuery);
+    const productTitleBounded = queryTokensForBoundCheck.some(t =>
+      t === normalizeText(signal.productTitleFull) || // exact token match
+      matchQuery.includes(signal.productTitleFull) && ( // title is substring of query
+        matchQuery.startsWith(signal.productTitleFull + ' ') ||
+        matchQuery.endsWith(' ' + signal.productTitleFull) ||
+        matchQuery.includes(' ' + signal.productTitleFull + ' ')
+      )
+    );
+    if (signal.productTitleFull.includes(matchQuery) || productTitleBounded) score += 320;
+
+    const arrayTitleBounded = queryTokensForBoundCheck.some(t =>
+      t === normalizeText(signal.titleArrayTextFull) ||
+      matchQuery.includes(signal.titleArrayTextFull) && (
+        matchQuery.startsWith(signal.titleArrayTextFull + ' ') ||
+        matchQuery.endsWith(' ' + signal.titleArrayTextFull) ||
+        matchQuery.includes(' ' + signal.titleArrayTextFull + ' ')
+      )
+    );
+    if (signal.titleArrayTextFull.includes(matchQuery) || arrayTitleBounded) score += 280;
+
+    const ingredientBounded = queryTokensForBoundCheck.some(t =>
+      t === normalizeText(signal.ingredient) ||
+      matchQuery.includes(signal.ingredient) && (
+        matchQuery.startsWith(signal.ingredient + ' ') ||
+        matchQuery.endsWith(' ' + signal.ingredient) ||
+        matchQuery.includes(' ' + signal.ingredient + ' ')
+      )
+    );
+    if (signal.ingredient.includes(matchQuery) || ingredientBounded) score += 200;
 
     if (hasQueryDosage && !dosageExactMatch) score -= strictListMode ? 700 : 500;
     if (hasQueryDosage && dosageExactMatch) score += 260;
