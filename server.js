@@ -2820,73 +2820,97 @@ function splitSingleLineMedicineList(text) {
   }
   if (tokens.length < 2) return [raw];
 
-  // ── Pass 1: identify dosage-end positions ──
-  // A dosage ends at position i when:
-  //   a) tokens[i] is a number  AND  tokens[i+1] is a unit  (e.g. "10 mg")
-  //   b) tokens[i] is a number  AND  i is last token  (e.g. "... de 30" at end)
-  //   c) tokens[i] is a number  AND  tokens[i+1] is a NUMBER  (e.g. "de 75 Losartan"
-  //      — "75" is the dosage, next medicine starts after it)
-  // We do NOT cut on bare number + lowercase word (e.g. "de 30 nifedipina")
-  // because "nifedipina" is the medicine, not a dosage marker.
-  const dosageEndIndices = new Set();
-  for (let i = 0; i < tokens.length; i++) {
+  // ── Pass 1: identify medicine-start positions (segment boundaries) ──
+  // A new medicine starts at position i when the PREVIOUS token ends a dosage:
+  //   a) tokens[i-1] is a number  AND  tokens[i] is a unit  (e.g. "10 mg" → next starts at "mg")
+  //   b) tokens[i-1] is a number  AND  tokens[i] is UPPERCASE  (e.g. "de 75 Losartan")
+  //   c) tokens[i-1] is a number  AND  tokens[i] is lowercase BUT preceded by "de NUMBER"
+  //      within the same segment (e.g. "de 30 nifedipina" → nifedipina starts new segment)
+  // We store these as medStart indices (where each medicine segment begins).
+  // ── Pass 2: within each segment, find " de NUMBER" (last occurrence)
+  // and extract medicine = last capitalized word(s) before it.
+  const medStartIndices = new Set([0]); // segment 0 always starts at 0
+
+  for (let i = 1; i < tokens.length; i++) {
     const cur = tokens[i].tok;
-    const numMatch = /^(\d+(?:[.,]\d+)?)$/.exec(cur);
-    if (!numMatch) continue;
-    const next = tokens[i + 1] ? tokens[i + 1].tok : null;
-    const isLast = i === tokens.length - 1;
-    const nextIsUnit = next && UNIT_RE.test(next);
-    const nextIsNumber = next && /^\d+(?:[.,]\d+)?$/.test(next);
-    // Only cut on number+uppercase when the next word IS the number (a dosage),
-    // NOT when it's the next medicine name after "de X" — "de clopidrogel" has
-    // "clopidrogel" uppercase but it's the medicine, not a dosage.
-    if (isLast || nextIsUnit || nextIsNumber) {
-      dosageEndIndices.add(i);
+    const prev = tokens[i - 1] ? tokens[i - 1].tok : null;
+    const prevNum = prev && /^\d+(?:[.,]\d+)?$/.test(prev);
+    const curIsUpper = /^[A-ZÁÉÍÓÚÑ]/.test(cur);
+    const prevIsDe = /^(?:de|del)$/i.test(tokens[i - 2] ? tokens[i - 2].tok : null);
+    // Case (c): lowercase after number but the "de" before the number belongs to this medicine
+    // e.g. "atorvastatina de 30 nifedipina" → nifedipina starts after " de 30"
+    const prevPrev = i >= 2 ? tokens[i - 2].tok : null;
+    const prevPrevIsDe = /^(?:de|del)$/i.test(prevPrev);
+    const prevPrevNum = prevPrev && /^\d+(?:[.,]\d+)?$/.test(prevPrev);
+
+    if ((prevNum && curIsUpper) ||                      // case (b): "de 75 Losartan"
+        (prevNum && !curIsUpper && prevPrevIsDe)) {     // case (c): "de 30 nifedipina"
+      medStartIndices.add(i);
+    }
+    // Case (a): "de 10 mg" — boundary AFTER the unit (i+1 = start of next medicine)
+    // Only add if i+1 is within bounds; if at end of input, no boundary needed.
+    if (i > 0 && prevNum && UNIT_RE.test(cur) && i + 1 < tokens.length) {
+      medStartIndices.add(i + 1);
     }
   }
 
-  if (dosageEndIndices.size === 0) return [raw];
+  if (medStartIndices.size < 2) return [raw];
 
-  // ── Pass 2: build medicine+dosage pairs from token ranges ──
-  // Between two consecutive dosage-end indices: accumulate tokens as "current medicine"
-  // When we hit a dosage-end, extract medicine name and append dosage tokens
+  // ── Pass 2: build segments and extract medicine+drugs ──
+  const sortedStarts = [...medStartIndices].sort((a, b) => a - b);
   const result = [];
-  let medStart = 0; // inclusive token index for current medicine
 
-  for (let i = 0; i <= tokens.length; i++) {
-    const atDosageEnd = (i < tokens.length) ? dosageEndIndices.has(i) : (medStart < tokens.length);
-    const isLastToken = i === tokens.length;
+  for (let s = 0; s < sortedStarts.length; s++) {
+    const start = sortedStarts[s];
+    const end = s + 1 < sortedStarts.length ? sortedStarts[s + 1] : tokens.length;
+    if (start >= end) continue;
+    const segTokens = tokens.slice(start, end);
+    const segText = segTokens.map(t => t.tok).join(' ');
 
-    if (!atDosageEnd && !isLastToken) continue;
-
-    // We are at a boundary — extract medicine+drugs from tokens[medStart..i-1]
-    if (medStart < i) {
-      const medTokens = tokens.slice(medStart, i);
-      // Build string up to (but not including) the dosage number token
-      const dosageNumIdx = medTokens.findIndex(t => dosageEndIndices.has(tokens.indexOf(t)));
-      const sliceEnd = dosageNumIdx >= 0 ? medStart + dosageNumIdx : i;
-      const medStr = tokens.slice(medStart, sliceEnd).map(t => t.tok).join(' ');
-      // Append the dosage token(s): from the dosage number position to the current boundary
-      // dosageNumIdx is the GLOBAL position of the first dosage number in the segment.
-      // We capture only from that position up to (not including) i — nothing more.
-      // This prevents bleeding into the next medicine's tokens when i is a later boundary.
-      const dosageTokens = [];
-      if (dosageNumIdx >= 0) {
-        for (let j = dosageNumIdx; j < i; j++) {
-          dosageTokens.push(tokens[j].tok);
-        }
-      }
-      const combined = (medStr + (dosageTokens.length ? ' ' + dosageTokens.join(' ') : '')).trim();
-      if (combined) {
-        const cleaned = extractMedicineQuery(combined);
-        if (cleaned && cleaned.trim().length >= 2) {
-          result.push(cleaned.trim());
-        }
+    // Find the LAST " de NUMBER" in the segment (the actual dosage for this medicine)
+    // Look for pattern: " de " followed by a digit
+    let dosageDeIdx = -1; // local index in segTokens
+    for (let j = segTokens.length - 1; j >= 0; j--) {
+      const t = segTokens[j].tok;
+      const prevT = j > 0 ? segTokens[j - 1].tok : null;
+      if (/^(?:de|del)$/i.test(prevT) && /^\d/.test(t)) {
+        dosageDeIdx = j - 1; // " de " starts at j-1
+        break;
       }
     }
 
-    // Move medicine start past this dosage
-    medStart = i;
+    let medicineStr = '';
+    if (dosageDeIdx >= 0) {
+      medicineStr = segTokens.slice(0, dosageDeIdx).map(t => t.tok).join(' ').trim();
+      const lastTok = segTokens[segTokens.length - 1].tok;
+      const lastTokIsNum = /^\d+(?:[.,]\d+)?$/.test(lastTok);
+      // If segment ends with a number and next token in original array is a unit, include it
+      let trailingUnit = '';
+      if (lastTokIsNum && (start + segTokens.length) < tokens.length) {
+        const nextTok = tokens[start + segTokens.length] ? tokens[start + segTokens.length].tok : null;
+        if (nextTok && UNIT_RE.test(nextTok)) trailingUnit = ' ' + nextTok;
+      }
+      const dosageWithUnit = (UNIT_RE.test(lastTok)
+        ? segTokens.slice(dosageDeIdx, end - start).map(t => t.tok).join(' ').trim()
+        : segTokens.slice(dosageDeIdx, end - start).map(t => t.tok).join(' ').trim()) + trailingUnit;
+      const combined = (medicineStr + ' ' + dosageWithUnit).trim();
+      // Reject segments that are preamble/greeting fragments:
+      // - medicineStr has >5 words (likely a greeting prepended to medicine)
+      //   UNLESS combined >= 15 chars (might be a short valid dosage)
+      const medicineWords = medicineStr.split(/\s+/).filter(Boolean);
+      const isGreetingLike = medicineWords.length > 5 && combined.length < 15;
+      if (!isGreetingLike) {
+        result.push(combined);
+      }
+    } else {
+      // No dosage found — whole segment is the query.
+      // Skip if it's just a unit (e.g. "mg" leftover from previous dosage).
+      const segText2 = segText.trim();
+      if (segText2.length >= 3 && !UNIT_RE.test(segText2)) {
+        result.push(segText2);
+      }
+    }
+
   }
 
   if (result.length >= 2) return result;
