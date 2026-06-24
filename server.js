@@ -2642,7 +2642,7 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
           '⚠️ Algunos medicamentos no están disponibles en este momento:',
           ...missingMedicines.map((item) => `• *${item}*`),
           '',
-          'Te muestro los que sí encontré abajo.'
+          '¿Otro medicamento? Escríbeme el nombre y realizo la consulta.'
         ]
       : ['⚠️ Necesito un poco más de detalle para ayudarte.'];
 
@@ -2665,7 +2665,7 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
       lines.push(`• *${item}*`);
     });
     lines.push('');
-    lines.push('Te muestro los que sí encontré abajo.');
+    lines.push('¿Otro medicamento? Escríbeme el nombre y realizo la consulta.');
     lines.push('');
   }
 
