@@ -2824,8 +2824,8 @@ function splitSingleLineMedicineList(text) {
   // A dosage ends at position i when:
   //   a) tokens[i] is a number  AND  tokens[i+1] is a unit  (e.g. "10 mg")
   //   b) tokens[i] is a number  AND  i is last token  (e.g. "... de 30" at end)
-  //   c) tokens[i] is a number  AND  tokens[i+1] is a word starting with UPPERCASE
-  //      (e.g. "de 75 Losartan" — "Losartan" uppercase = next medicine)
+  //   c) tokens[i] is a number  AND  tokens[i+1] is a NUMBER  (e.g. "de 75 Losartan"
+  //      — "75" is the dosage, next medicine starts after it)
   // We do NOT cut on bare number + lowercase word (e.g. "de 30 nifedipina")
   // because "nifedipina" is the medicine, not a dosage marker.
   const dosageEndIndices = new Set();
@@ -2836,8 +2836,11 @@ function splitSingleLineMedicineList(text) {
     const next = tokens[i + 1] ? tokens[i + 1].tok : null;
     const isLast = i === tokens.length - 1;
     const nextIsUnit = next && UNIT_RE.test(next);
-    const nextIsUpper = next && /^[A-ZÁÉÍÓÚÑ]/.test(next);
-    if (isLast || nextIsUnit || nextIsUpper) {
+    const nextIsNumber = next && /^\d+(?:[.,]\d+)?$/.test(next);
+    // Only cut on number+uppercase when the next word IS the number (a dosage),
+    // NOT when it's the next medicine name after "de X" — "de clopidrogel" has
+    // "clopidrogel" uppercase but it's the medicine, not a dosage.
+    if (isLast || nextIsUnit || nextIsNumber) {
       dosageEndIndices.add(i);
     }
   }
