@@ -1427,7 +1427,16 @@ async function routeMessage(phone, text, session, context = {}) {
     return `⚠️ No encontré ninguna de las opciones solicitadas: *${optionList.join(', ')}*.`;
   }
 
+  // Allow new medicine queries to bypass selection warning when in awaiting_choice_global
+  // (user sent a new multi-medicine query like "nifedipina de 10 mg" while results were pending)
+  const hasNewMedicineQuery = Boolean(directMedicineQuery || extractedMedicineRequests.length > 0);
+
   if (selectionCandidate && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global')) {
+    if (hasNewMedicineQuery) {
+      // New medicine query detected — clear stale selection state and route to search
+      clearSelectionState(session);
+      return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
+    }
     return '⚠️ Primero debes ver los resultados del catálogo. Busca el medicamento y luego escribe el número de opción y la cantidad.';
   }
 
