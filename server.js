@@ -2848,10 +2848,15 @@ function splitSingleLineMedicineList(text) {
       const dosageNumIdx = medTokens.findIndex(t => dosageEndIndices.has(tokens.indexOf(t)));
       const sliceEnd = dosageNumIdx >= 0 ? medStart + dosageNumIdx : i;
       const medStr = tokens.slice(medStart, sliceEnd).map(t => t.tok).join(' ');
-      // Append the dosage token(s): number [, optionally] next unit
+      // Append the dosage token(s): from the dosage number position to the current boundary
+      // dosageNumIdx is the GLOBAL position of the first dosage number in the segment.
+      // We capture only from that position up to (not including) i — nothing more.
+      // This prevents bleeding into the next medicine's tokens when i is a later boundary.
       const dosageTokens = [];
-      for (let j = medStart + (dosageNumIdx >= 0 ? dosageNumIdx : 0); j < i; j++) {
-        dosageTokens.push(tokens[j].tok);
+      if (dosageNumIdx >= 0) {
+        for (let j = dosageNumIdx; j < i; j++) {
+          dosageTokens.push(tokens[j].tok);
+        }
       }
       const combined = (medStr + (dosageTokens.length ? ' ' + dosageTokens.join(' ') : '')).trim();
       if (combined) {
@@ -3972,7 +3977,8 @@ function extractMedicineQuery(text) {
   // Pattern 2b: "de X" where X is a bare number followed by another word → DON'T strip
   // The bare number belongs to the current medicine. This pattern is intentionally
   // stricter so it does NOT consume the next medicine name.
-  const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)\s+([a-záéíóúñ]{3,})(?:\s+|$)/i;
+  // FIXED: only capture the bare number; the cleanup replace handles " de NUMERO" suffix.
+  const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)(?:\s+|$)/i;
 
   const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+)$`, 'i');
 
@@ -3998,6 +4004,10 @@ function extractMedicineQuery(text) {
     .replace(/\b(?:precio|costo|valor)\b/gi, ' ')
     .replace(/\b(?:disponible|hay\s+disponible|disponibles)\b/gi, ' ')
     .replace(/\b(muchas\s+gracias|gracias\s+muchas|gracias|thank\s+you|thanks)\b.*$/i, '')
+    // Strip " de NUMERO" / " del NUMERO" from end — P2B now captures only the bare
+    // number, so this cleanup removes " de 30" that remains after P2B match in cases
+    // like "atorvastatina de 30 nifedipina" → "atorvastatina"
+    .replace(/\s+(?:de|del)\s+\d+(?:[.,]\d+)?\s*$/gi, ' ')
     .trim();
   candidate = candidate.replace(/\s+y$/i, '').trim();
 
@@ -4058,15 +4068,14 @@ function extractMedicineQuery(text) {
 
   // If after stripping, the candidate ends with a bare number (e.g. "de 30"
   // where 30 has no unit) — treat that number as a dosage and keep it.
-  // We scan the ORIGINAL combined string for the last occurrence of the
-  // dosage-like number so we can combine it with the medicine name.
   const bareNumAtEnd = candidate.match(/(\d+(?:[.,]\d+)?)\s*$/);
   if (bareNumAtEnd) {
-    // Find where the bare number appears in the original combined string
     const numStr = bareNumAtEnd[1];
-    const lastIdx = combined.lastIndexOf(numStr);
+    // Scan the candidate for the last occurrence of this number so we can
+    // re-combine it with the medicine name before it.
+    const lastIdx = candidate.lastIndexOf(numStr);
     if (lastIdx > 0) {
-      const beforeNum = combined.slice(0, lastIdx).trim();
+      const beforeNum = candidate.slice(0, lastIdx).trim();
       if (beforeNum && !/^(?:de|del|para|con|sobre|la|el|las|los|una|unos|que|y|por|sin|no|si|un|une)$/i.test(beforeNum)) {
         const combined2 = `${beforeNum} ${numStr}`.trim();
         if (combined2.length >= 2) return combined2;
