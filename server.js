@@ -3504,76 +3504,103 @@ function sanitizeRecipeText(value) {
 
 /**
  * Sanitize OCR text from medicine box images.
- * Removes: brand names, chemical suffixes, dosage forms, routes,
- * marketing text, and packaging noise — keeping only the medicine name.
+ * Strategy: find the FIRST substantial line that looks like a drug name with dosage.
+ * Strip only the clearly packaging noise (brand, form, route, classification).
+ * Return ONE clean medicine name, not multiple fragments.
+ *
+ * Example input:
+ *   "Fexofenadina Clorhidrato\nCALOX\nMedicamento Genérico\nAntialérgico\nAntihistamínico\nVía Oral\n10 Tabletas Recubiertas\n120 mg"
+ *
+ * Expected output: "Fexofenadina 120"
  */
 function sanitizeMedicineBoxText(value) {
   const raw = String(value || '');
   if (!raw) return '';
 
-  // Lines to completely remove (packaging noise, not medicine names)
-  const REMOVE_LINES = [
-    /^\s*(?:calox|genven|drotafarma|spefar|calox|brook|in谐|farmapatria|locatel|sa|sa\s+de\s+cv|pv|pva|cip|incof|pharmalat|blaskov|medifasa|lattan|arte\s+medico|buka|reems|multifarma|genfar| MK |mk\s|mediart|pharmakerm|premium|pharma|baljan|biosido|made\s+in|mfd\s+by|importado\s+por|distribuido\s+por|fabricado\s+por|fabricante|registro\s+sanitario|reg\.\s*san|reg\.\s*:|nº\s*registro)\b/i,
-    /^\s*(?:medicamento\s+genérico|genérico|espiral|caja\s+de|caja\s+con|contenido|contenido\s+neto|peso\s+neto|neto)\b/i,
-    /^\s*(?:antialérgico|antialergico|antihistamínico|antihistaminico|antiinflamatorio|analgésico|antipirético|antipiretico|antibiótico|antibiotico|antimicótico|antimicotico|antifúngico|antifungico|broncodilatador|antitusivo|expectorante|mucolítico|descongestionante|vasoconstrictor|hipnótico|sedante|ansiolítico|ansiolitico|antidepresivo|antipsicótico|antipsicótico|neuroléptico|neuroléptico|esteroide|corticosteroide|protector\s+gástrico|antiácido|antiacido|laxante|antiepiléptico|antiepileptico|anticoagulante|antihipertensivo|diurético|diuretico|broncodilatador|immunosupresor|inmunosupresor|quimioterápico|quimioterapico|biológico|biologico)\b/i,
-    /^\s*(?:via\s+oral|oral|tópica|tópico|sublingual|rectal|vaginal|intravenosa|intramuscular|subcutánea|subcutáneo|inhalatoria|inhalatorio|nasal|oftálmica|oftálmico|ótica|ótico|transdérmica|transdérmico|dermatológica|dermatológico)\b/i,
-    /^\s*(?:receta\s+medica|receta\s+médica|venta\s+con\s+receta|venta\s+libre|sin\s+receta|no\s+requiere\s+receta|requiere\s+receta)\b/i,
-    /^\s*(?:mantener\s+fuera\s+del\s+alcance|mantener\s+en\s+lugar\s+seco|conservar\s+a|temperatura\s+máxima|temperatura\s+mínima|proteger\s+de\s+la\s+luz|caducidad|vencimiento|fecha\s+de|expira?|lote|batch|reg\.?\s*san|registro)\b/i,
-    /^\s*(?:precio\s+de\s+lista|precio\s+sugerido|precio\s+mayor|precio\s+menudeo|oferta|descuento|promocion|promoción|2x1|3x1)\b/i,
-    /^\s*(?:indivdual|individual|empaque|embalaje|empaquetado|caja|cajas|blíster|blister|tarraja|capuchón|capuchon|jeringa|vaso|gotero|cuchara|cucharadita)\b/i,
-  ];
+  // Classification/therapeutic category words to remove everywhere
+  const TRASH_WORDS = new Set([
+    // Brand/lab names
+    'calox','genven','drotafarma','spefar','brook','buka','lattan','arte','medico','reems',
+    'multifarma','genfar','baljan','biosido','mk','mediart','pharmakerm','premium','pharma',
+    'blaskov','medifasa','locatel','farmapatria','cip','incof','pharmalat',
+    // Chemical suffixes
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato',
+    // Dosage forms
+    'tableta','tabletas','capsula','capsulas','capsule','capsules','solucion','inyectable',
+    'inyeccion','ampolla','ampollas','vial','viales','frasco','jarabe','suspension',
+    'gotas','crema','gel','unguento','pomada','polvo','sobres','granulado',
+    'supositorio','ovulo','parche','aerosol','inhalador','spray','drop','barra',
+    // Routes
+    'oral','topico','topica','sublingual','rectal','vaginal','intramuscular',
+    'intravenosa','subcutanea','subcutaneo','inhalatoria','nasal','oftalmica',
+    'oftalmico','otico','transdermica','dermatologica',
+    // Classification / marketing
+    'antialergico','antialergica','antihistaminico','antihistaminica','antiinflamatorio',
+    'analgesico','antipiretico','antibiotico','antimicotico','antifungico',
+    'broncodilatador','antitusivo','expectorante','mucolitico','descongestionante',
+    'vasoconstrictor','hipnotico','sedante','ansiolitico','antidepresivo',
+    'antipsicotico','neuroléptico','corticosteroide','antiacido','laxante',
+    'antiepileptico','anticoagulante','antihipertensivo','diuretico','inmunosupresor',
+    'quimioterapico','biologico',
+    // Packaging
+    'caja','cajas','blister','blíster','envase','empaque','jeringa','gotero',
+    'medicamento','generico','via','unidad','receta',
+    // Generic noise
+    'genérico','esp','pf','pv','pvr','precio','oferta',
+  ]);
 
-  // Word-level removals (replace with space, not delete — preserves medicine name boundaries)
-  const REMOVE_WORDS = [
-    // Brand names found on medicine boxes
-    /\b(?:calox|genven|drotafarma|spefar|brook|buka|lattan|arte\s*medico|reems|multifarma|genfar|baljan|biosido|mk|mediart|pharmakerm|premium|pharma|blaskov|medifasa|locatel|farmapatria)\b/gi,
-    // Chemical suffixes on ingredient names (these modify the molecule, not the drug)
-    /\b(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)\b/gi,
-    // Dosage forms and pharmaceutical forms
-    /\b(?:tableta|tabletas|tableta\s*recubierta|tabletas\s*recubiertas|cápsula|cápsulas|capsula|capsulas|capsule|capsules|cap\s|solucion|solución|inyectable|inyección|ampolla|ampollas|vial|viales|frasco|jarabe|suspensión|suspension|gotas|crema|gel|ungüento|unguento|pomada|polvo|polvos|sobres?|granulado|granulados|supositorio|supositorios|ovulo|ovulos|parche|aerosol|inhalador| Spray |spray|drop|drop\s*s|barra|barras|stick|film|films|membrana|membranas|bagel|softgel|soft\s*gel)\b/gi,
-    // Quantities and packaging
-    /\b\d+\s*(?:tabletas?|capsulas?|cápsulas?|capsules?|ampollas?|ml|mL|g|gr|mg|mcg|cm3|cc|unidades?|u\.?|uds\.?|dosis|jeringas?|viales?|frascos?|sobres?|blisters?|blister|paquetes?|cajas?|pcks?)\b/gi,
-    // Administrative routes and usage instructions
-    /\b(?:vía\s+oral|oral|tópico|tópica|sublingual|rectal|vaginal|intravenoso?|intramuscular|subcutáneo|subcutánea|inhalatorio|inhalatoria|nasal|oftálmico|oftálmica|ótico|ótica|transdérmico|transdérmica|nasal|tópica|tópica|parenteral)\b/gi,
-    // Marketing/generic/classification text
-    /\b(?:medicamento\s*genérico|genérico|medicamento|de\b\s*venta\s*libre|producto\s*farmacéutico|producto\s*farmacéutico|farmacéutico|farmacéutica|far|fc|inn|inn\s+denomination|denominacion\s+inn|dci|dci\s+denominacion)\b/gi,
-    // "X mg" dosage alone patterns — these should be kept near the medicine name, not searched alone
-    /\b\d+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\b/gi,
-    // Standalone dosage numbers (already handled above, but catch any leftover)
-    /\b\d{1,4}\b/gi,
-  ];
+  // Tokens that are purely numeric / dosage-alone: reject these as queries
+  const PURE_DOSAGE_TOKEN = /^\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|mL|ui|iu|tabletas?|capsulas?|ampollas?)?$/i;
 
-  // Split into lines for line-level filtering
   const lines = raw.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
 
-  // Remove packaging noise lines
-  const filteredLines = lines.filter(line => {
-    const trimmed = line.trim();
-    if (!trimmed) return false;
-    if (trimmed.length < 3) return false;
-    // Skip lines that are mostly numbers, symbols, or single words
-    if (/^[\d\s.,+-]+$/.test(trimmed)) return false;
-    if (REMOVE_LINES.some(r => r.test(trimmed))) return false;
+  // Find the first line that looks like a drug name (has letters, not mostly numbers)
+  // and has at least one dosage-like token (number followed by unit or number alone in dosage context)
+  let bestLine = '';
+  for (const line of lines) {
+    const cleanLine = line.replace(/\s+/g, ' ').trim();
+    // Skip lines that are purely numeric or too short
+    if (cleanLine.replace(/\d/g, '').replace(/\s/g, '').length < 4) continue;
+    // Skip lines that are mostly numbers/symbols
+    if (/^[\d\s.,+-]+$/.test(cleanLine)) continue;
+    // Skip lines that match classification/marketing/brand only
+    const lineLower = cleanLine.toLowerCase();
+    const words = lineLower.split(/\s+/);
+    const hasContent = words.some(w => !TRASH_WORDS.has(w) && !PURE_DOSAGE_TOKEN.test(w) && /[a-záéíóúñ]/i.test(w));
+    if (!hasContent) continue;
+    bestLine = cleanLine;
+    break;
+  }
+
+  if (!bestLine) return '';
+
+  // Tokenize and filter out trash words and pure dosage tokens
+  const tokens = bestLine.split(/\s+/).filter(t => {
+    const tLower = t.toLowerCase().replace(/[.,]/g, '');
+    if (!tLower.length) return false;
+    if (TRASH_WORDS.has(tLower)) return false;
+    if (PURE_DOSAGE_TOKEN.test(tLower)) return false;
+    // Skip pure numbers that are 3 or fewer digits
+    if (/^\d{1,3}$/.test(tLower)) return false;
     return true;
   });
 
-  // Join and apply word-level removals
-  let result = filteredLines.join(' ');
-  for (const pattern of REMOVE_WORDS) {
-    result = result.replace(pattern, ' ');
-  }
+  // Rejoin remaining tokens — these should be the drug name (possibly with dosage number)
+  let result = tokens.join(' ');
 
-  // Clean up extra spaces
-  result = result.replace(/\s+/g, ' ').trim();
+  // Remove dosage suffixes like "120 mg" from the end, keeping just the drug name
+  // But if there's a dosage number in the middle (e.g. "METFORMINA 500mg") keep it
+  result = result
+    .replace(/\s*\d+\s*(mg|mcg|g|gr|ml|mL|ui|iu)\b\.?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  // Remove standalone dosage numbers and units that remain isolated
-  result = result.replace(/\b\s*\d+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\b\s*/gi, ' ');
-
-  // If result is mostly numbers or too short, return empty (couldn't extract medicine)
+  // Final safety: if result is mostly numbers or too short, return empty
   const alphaCount = (result.match(/[a-záéíóúñ]/gi) || []).length;
-  if (alphaCount < 3 || result.length < 2) return '';
+  if (alphaCount < 3) return '';
 
-  return result.trim();
+  return result;
 }
 
 function extractProductNameFromOCR(value) {
