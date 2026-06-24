@@ -1286,7 +1286,16 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildAppMessage();
   }
 
-  if ((isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) || directMedicineQuery) {
+  // Require directMedicineQuery to be meaningful: at least 5 chars AND more than 1 token.
+  // This blocks single generic words like "esta", "hay", "son" etc. from triggering
+  // a medicine search when the user is actually asking a location/info question.
+  let isViableDirectQuery = Boolean(directMedicineQuery && directMedicineQuery.trim().length >= 5);
+  if (isViableDirectQuery) {
+    const dqTokens = tokenize(directMedicineQuery).filter(t => t.length > 1);
+    if (dqTokens.length < 2) isViableDirectQuery = false;
+  }
+
+  if ((isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) || isViableDirectQuery) {
     clearSelectionState(session);
     return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true }, { phone, pushName });
   }
