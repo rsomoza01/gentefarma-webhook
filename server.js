@@ -1363,13 +1363,24 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (hasOcrText && !hasSelectionResults) {
     clearSelectionState(session);
-    // For OCR from medicine boxes: strip brand names (CALOX), dosage forms
-    // (TABLETAS, RECUBIERTAS), routes (VIA ORAL), chemical suffixes
-    // (CLORHIDRATO), and other packaging noise — keep only the medicine name.
-    const boxClean = sanitizeMedicineBoxText(recipeSourceText || text);
-    const allRecipeMedicines = boxClean || sanitizeRecipeText(recipeSourceText || text);
-    const searchQuery = allRecipeMedicines || recipeSourceText || text;
-    console.log('🧾 OCR medicines extraction:', { raw: (recipeSourceText || text).slice(0, 200), boxClean, allRecipeMedicines, searchQuery });
+    // Try prescription format first (has RP: section with multiple drugs).
+    // Then medicine box format (single drug, packaging noise).
+    // Then generic recipe cleanup as last resort.
+    const rawOcr = recipeSourceText || text;
+    const prescriptionClean = sanitizePrescriptionText(rawOcr);
+    const boxClean = sanitizeMedicineBoxText(rawOcr);
+    const recipeClean = sanitizeRecipeText(rawOcr);
+
+    // Prefer prescription if it extracted multiple lines, else box if single drug, else recipe
+    const allRecipeMedicines = prescriptionClean || boxClean || recipeClean;
+    const searchQuery = allRecipeMedicines || rawOcr;
+    console.log('🧾 OCR medicines extraction:', {
+      raw: rawOcr.slice(0, 200),
+      prescriptionClean,
+      boxClean,
+      allRecipeMedicines,
+      searchQuery
+    });
     return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
   }
 
@@ -3500,6 +3511,94 @@ function sanitizeRecipeText(value) {
 
   const cleaned = lines.filter((line) => !removalPatterns.some((pattern) => pattern.test(line)));
   return cleaned.join('\n').replace(/[\t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Sanitize OCR text from medical prescriptions (recipes).
+ * Extracts ALL drug names from the RP: section, filtering out patient info,
+ * doctor info, dates, and other administrative data.
+ *
+ * Example input:
+ *   "Dr. Cesar Santodomingo\nUNIDAD DE GASTROENTEROLOGIA\nRP:\nPACIENTE: BELEN ARCIA\nESOZ 40 MG\nLEPRIT 25 MG\nBUMETIN RETADAR 300 MG"
+ *
+ * Expected output: "ESOZ 40 MG\nLEPRIT 25 MG\nBUMETIN RETADAR 300 MG"
+ */
+function sanitizePrescriptionText(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+
+  // Lines that are administrative/header — never drug content
+  const ADMIN_LINE_PATTERNS = [
+    /^\s*dr\.?\s+/im,
+    /^\s*(?:unidad|de\s+gastroenterologia|clinica|clínica|consultorio|sala|hospital|centro)\b/im,
+    /^\s*(?:paciente|nombre|apellidos?|año\s+nac|ano\s+nac|edad|sexo|peso|talla)\s*[:.\-]*/im,
+    /^\s*(?:ci|c\.?i\.?|cédula|cedula|rif|nit)\s*[:.\-]*/im,
+    /^\s*(?:fecha|vencimiento|caducidad|expiración|receta)\s*[:.\-]*/im,
+    /^\s*(?:dirección|direccion|teléfono|telefono|contacto)\s*[:.\-]*/im,
+    /^\s*(?:cobertura|aseguradora|póliza|seguro|plan)\b/im,
+    /^\s*#+/,
+    /^\s*[=\-_]{3,}\s*$/,
+    /^\s*[\d.]{5,}\s*$/,           // long numbers (CI, phone)
+  ];
+
+  // Dosage patterns that confirm a line IS a drug
+  // Requires: number immediately before unit (e.g. "40 MG", "500 MG", "30 ML")
+  const HAS_NUMERIC_DOSAGE = /\d\s*(mg|mcg|g\s|gr\s|ml|mL|ui|iu)/i;
+  // Drug form suffixes that confirm a line IS a drug (no number needed, e.g. "CAP", "SUSP", "POLVO")
+  // Must be at end of string OR followed by space/number
+  const HAS_DRUG_FORM = /(?:^|[\s(])\s*(?:cap(?:\s|$)|caps?(?:\s|$)|tab(?:\s|$)|tabs?(?:\s|$)|amp(?:\s|$)|susp(?:\s|$)|sol(?:\s|$)|crema(?:\s|$)|gel(?:\s|$)|polvo(?:\s|$)|ung(?:\s|$)|over(?:\s|$))\b/i;
+
+  // Extract section after RP: - find the colon (or end of rp/rx) and slice after it
+  let prescriptionSection = raw;
+  const rpMatch = raw.match(/(?:^|\n)\s*(?:rp|rp:|rx|rx:)\s*/im);
+  if (rpMatch) {
+    // Slice AFTER the full match including colon (rpMatch[0] includes rp: or rp etc.)
+    prescriptionSection = raw.slice(rpMatch.index + rpMatch[0].length).replace(/^:\s*/, '');
+  }
+
+  const lines = prescriptionSection.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
+  const drugLines = [];
+
+  for (let rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.length < 2) continue;
+
+    // Skip admin lines
+    if (ADMIN_LINE_PATTERNS.some(p => p.test(trimmed))) continue;
+
+    // Skip lines that are purely numbers/symbols
+    if (/^[\d\s.,:;\-()]+$/.test(trimmed)) continue;
+
+    // Skip short labels (FECHA:, CI:, etc.)
+    if (/^(?:fecha|ci|paciente|ano|nac|edad|sexo|peso|talla|cobertura|observaciones?|indicaciones?)\s*[:.\-]?\s*$/i.test(trimmed)) continue;
+
+    // Check if this looks like a drug line
+    const hasNumericDosage = HAS_NUMERIC_DOSAGE.test(trimmed);
+    const hasDrugForm = HAS_DRUG_FORM.test(trimmed);
+    const isAllCapsLongEnough = /^[A-ZÁÉÍÓÚÑ]{4,}/.test(trimmed) && trimmed.length > 4;
+
+    // Skip personal info lines UNLESS they also have drug indicators
+    // ("MODERAN SUSP", "MILAX POLVO", "BARGONIL CREMA" look like names but ARE drugs)
+    const isPersonal = /^[A-ZÁÉÍÓÚÑ]{4,}\s+[A-ZÁÉÍÓÚÑ]{4,}\s*$/i.test(trimmed);
+    if (isPersonal && !hasNumericDosage && !hasDrugForm) continue;
+
+    const isDrug = hasNumericDosage || hasDrugForm || isAllCapsLongEnough;
+
+    if (isDrug) {
+      // Normalize: collapse multiple spaces, remove commas before units
+      const cleaned = trimmed
+        .replace(/,\s*(mg|mcg|g|gr|ml|mL|ui|iu)\b/gi, ' $1')  // "500, MG" -> "500 MG"
+        .replace(/\s+/g, ' ')
+        .replace(/\s*[,;:]\s*/g, ' ')
+        .trim();
+
+      if (cleaned.length > 1) {
+        drugLines.push(cleaned);
+      }
+    }
+  }
+
+  return drugLines.join('\n');
 }
 
 /**
