@@ -2790,83 +2790,86 @@ function splitSingleLineMedicineList(text) {
     return commaSplit;
   }
 
-  const tokens = [...raw.matchAll(/\S+/g)].map((match) => ({
-    token: match[0],
-    start: match.index,
-    end: match.index + match[0].length
-  }));
+  // ── Unit patterns ──
+  const UNIT_RE = /^(?:mg|mcg|g|gr|ml|mL|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
 
-  // Dos tipos de anchors:
-  // 1. Dosis con unidad: 75mg, 10 mg, 50mcg
-  // 2. "de X" seguido de nombre de medicamento en mayúscula: "de 75 Losartan", "de 50 atorvastatina"
-  const dosageAnchors = [...raw.matchAll(/\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\b/gi)]
-    .map((match) => ({
-      start: match.index,
-      end: match.index + match[0].length
-    }));
+  // ── Strong stopwords to strip when extracting medicine name ──
+  const STRONG_STOP_RE = /^(?:de|del|la|el|las|los|una|unos|que|y|con|para|por|sin|no|si|un|une)$/i;
 
-  // Anchors de tipo "de 75" antes de nombre en mayúscula (inicio de sig. medicamento)
-  const deAnchors = [...raw.matchAll(/de\s+(\d+(?:[.,]\d+)?)\s+(?=[A-ZÁÉÍÓÚÑ])/gi)]
-    .map((match) => ({
-      start: match.index,
-      end: match.index + match[0].length
-    }));
+  // ── Tokenize preserving position ──
+  const tokenRe = /\S+/g;
+  const tokens = [];
+  let m;
+  while ((m = tokenRe.exec(raw)) !== null) {
+    tokens.push({ tok: m[0], start: m.index, end: m.index + m[0].length });
+  }
+  if (tokens.length < 2) return [raw];
 
-  const anchors = [...dosageAnchors, ...deAnchors];
-
-  if (anchors.length < 2 || tokens.length < 2) return [raw];
-
-  const starts = anchors.map((anchor) => {
-    let tokenIndex = -1;
-
-    for (let i = 0; i < tokens.length; i++) {
-      if (tokens[i].start <= anchor.start && tokens[i].end >= anchor.start) {
-        tokenIndex = i;
-        break;
-      }
-      if (tokens[i].start > anchor.start) break;
+  // ── Pass 1: identify dosage-end positions ──
+  // A dosage ends at position i when:
+  //   a) tokens[i] is a number  AND  tokens[i+1] is a unit  (e.g. "10 mg")
+  //   b) tokens[i] is a number  AND  i is last token  (e.g. "... de 30" at end)
+  //   c) tokens[i] is a number  AND  tokens[i+1] is a word starting with UPPERCASE
+  //      (e.g. "de 75 Losartan" — "Losartan" uppercase = next medicine)
+  // We do NOT cut on bare number + lowercase word (e.g. "de 30 nifedipina")
+  // because "nifedipina" is the medicine, not a dosage marker.
+  const dosageEndIndices = new Set();
+  for (let i = 0; i < tokens.length; i++) {
+    const cur = tokens[i].tok;
+    const numMatch = /^(\d+(?:[.,]\d+)?)$/.exec(cur);
+    if (!numMatch) continue;
+    const next = tokens[i + 1] ? tokens[i + 1].tok : null;
+    const isLast = i === tokens.length - 1;
+    const nextIsUnit = next && UNIT_RE.test(next);
+    const nextIsUpper = next && /^[A-ZÁÉÍÓÚÑ]/.test(next);
+    if (isLast || nextIsUnit || nextIsUpper) {
+      dosageEndIndices.add(i);
     }
+  }
 
-    if (tokenIndex < 0) {
-      for (let i = tokens.length - 1; i >= 0; i--) {
-        if (tokens[i].end <= anchor.start) {
-          tokenIndex = i;
-          break;
+  if (dosageEndIndices.size === 0) return [raw];
+
+  // ── Pass 2: build medicine+dosage pairs from token ranges ──
+  // Between two consecutive dosage-end indices: accumulate tokens as "current medicine"
+  // When we hit a dosage-end, extract medicine name and append dosage tokens
+  const result = [];
+  let medStart = 0; // inclusive token index for current medicine
+
+  for (let i = 0; i <= tokens.length; i++) {
+    const atDosageEnd = (i < tokens.length) ? dosageEndIndices.has(i) : (medStart < tokens.length);
+    const isLastToken = i === tokens.length;
+
+    if (!atDosageEnd && !isLastToken) continue;
+
+    // We are at a boundary — extract medicine+drugs from tokens[medStart..i-1]
+    if (medStart < i) {
+      const medTokens = tokens.slice(medStart, i);
+      // Build string up to (but not including) the dosage number token
+      const dosageNumIdx = medTokens.findIndex(t => dosageEndIndices.has(tokens.indexOf(t)));
+      const sliceEnd = dosageNumIdx >= 0 ? medStart + dosageNumIdx : i;
+      const medStr = tokens.slice(medStart, sliceEnd).map(t => t.tok).join(' ');
+      // Append the dosage token(s): number [, optionally] next unit
+      const dosageTokens = [];
+      for (let j = medStart + (dosageNumIdx >= 0 ? dosageNumIdx : 0); j < i; j++) {
+        dosageTokens.push(tokens[j].tok);
+      }
+      const combined = (medStr + (dosageTokens.length ? ' ' + dosageTokens.join(' ') : '')).trim();
+      if (combined) {
+        const cleaned = extractMedicineQuery(combined);
+        if (cleaned && cleaned.trim().length >= 2) {
+          result.push(cleaned.trim());
         }
       }
     }
 
-    if (tokenIndex < 1) return null;
-
-    let startIndex = tokenIndex - 1;
-    const prevToken = tokens[startIndex];
-    const prevPrevToken = tokens[startIndex - 1];
-
-    if (
-      startIndex > 0 &&
-      /^[A-ZÁÉÍÓÚÑ]$/.test(prevToken.token) &&
-      prevPrevToken &&
-      /^[A-ZÁÉÍÓÚÑ]/.test(prevPrevToken.token)
-    ) {
-      startIndex -= 1;
-    }
-
-    return tokens[startIndex].start;
-  }).filter((value) => Number.isInteger(value) && value >= 0);
-
-  const uniqueStarts = [...new Set(starts)].sort((a, b) => a - b);
-  if (uniqueStarts.length < 2) return [raw];
-
-  const chunks = [];
-  for (let i = 0; i < uniqueStarts.length; i++) {
-    const start = uniqueStarts[i];
-    const end = i + 1 < uniqueStarts.length ? uniqueStarts[i + 1] : raw.length;
-    const chunk = raw.slice(start, end).trim().replace(/^[,;\-–—]+\s*/, '').trim();
-    if (chunk) chunks.push(chunk);
+    // Move medicine start past this dosage
+    medStart = i;
   }
 
-  if (!chunks.length) return [raw];
-  return chunks;
+  if (result.length >= 2) return result;
+  // Fallback: whole text
+  const whole = extractMedicineQuery(raw);
+  return whole && whole.trim().length >= 2 ? [whole.trim()] : [raw];
 }
 
 function extractMedicineRequestsFromSegments(text) {
@@ -3962,13 +3965,19 @@ function extractMedicineQuery(text) {
   // Remove 'por favor' from the middle BEFORE verb matching so it doesn't confuse the greedy .+
   const cleanedNoFavor = cleanedDosage.replace(/\bpor\s+favor\b/gi, ' ').replace(/\s+/g, ' ').trim();
 
-  const patterns = [
-    new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+)$`, 'i'),
-    /^(?:de|del|para|con|sobre|acerca\\s+de|respecto\\s+a)\\s+(?!\\d+\\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\\b)(.+)$/i
-  ];
+  // Pattern 2a: "de X [unit]" where unit follows the number → strip X unit
+  // e.g. "de 75 mg de Paracetamol" → strip "75 mg", keep "Paracetamol"
+  const unitList = 'mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?';
+  const P2A = new RegExp(`^(?:de|del|para|con)\\s+(\\d+(?:[.,]\\d+)?)\\s+(${unitList})\\b(?:\\s+|$)(.+)$`, 'i');
+  // Pattern 2b: "de X" where X is a bare number followed by another word → DON'T strip
+  // The bare number belongs to the current medicine. This pattern is intentionally
+  // stricter so it does NOT consume the next medicine name.
+  const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)\s+([a-záéíóúñ]{3,})(?:\s+|$)/i;
+
+  const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+)$`, 'i');
 
   let candidate = cleanedNoFavor;
-  for (const pattern of patterns) {
+  for (const pattern of [verbRe, P2A, P2B]) {
     const match = cleanedNoFavor.match(pattern);
     if (match?.[1]) {
       candidate = normalizeText(match[1]);
@@ -4045,6 +4054,25 @@ function extractMedicineQuery(text) {
       return [...new Set([...prioritizedBefore, dose])].join(' ').trim();
     }
     return dose;
+  }
+
+  // If after stripping, the candidate ends with a bare number (e.g. "de 30"
+  // where 30 has no unit) — treat that number as a dosage and keep it.
+  // We scan the ORIGINAL combined string for the last occurrence of the
+  // dosage-like number so we can combine it with the medicine name.
+  const bareNumAtEnd = candidate.match(/(\d+(?:[.,]\d+)?)\s*$/);
+  if (bareNumAtEnd) {
+    // Find where the bare number appears in the original combined string
+    const numStr = bareNumAtEnd[1];
+    const lastIdx = combined.lastIndexOf(numStr);
+    if (lastIdx > 0) {
+      const beforeNum = combined.slice(0, lastIdx).trim();
+      if (beforeNum && !/^(?:de|del|para|con|sobre|la|el|las|los|una|unos|que|y|por|sin|no|si|un|une)$/i.test(beforeNum)) {
+        const combined2 = `${beforeNum} ${numStr}`.trim();
+        if (combined2.length >= 2) return combined2;
+      }
+    }
+    if (!beforeNum || !beforeNum.trim()) return numStr;
   }
 
   if (strongTokens.length) return strongTokens[0];
