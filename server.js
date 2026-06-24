@@ -666,13 +666,17 @@ async function processIncomingMessage(payload) {
     const pushName = extractPushName(payload);
 
     if (mediaAnalysis?.text) {
-      console.log('🧾 OCR text extracted:', mediaAnalysis.text.slice(0, 500));
+      console.log('🧾 OCR text extracted:', JSON.stringify(mediaAnalysis.text.slice(0, 500)));
       if (sanitizedOcrText && sanitizedOcrText !== mediaAnalysis.text) {
-        console.log('🧽 OCR text sanitized:', sanitizedOcrText.slice(0, 500));
+        console.log('🧽 OCR text sanitized:', JSON.stringify(sanitizedOcrText.slice(0, 500)));
+      } else if (!sanitizedOcrText) {
+        console.log('🧽 sanitizeRecipeText returned EMPTY — prescription path will retry with rawOcrText');
       }
       console.log('🔎 OCR routed to catalog search:', {
         textLength: mediaAnalysis.text.length,
         sanitizedTextLength: sanitizedOcrText.length,
+        rawBody: rawBody.slice(0, 100),
+        body: body.slice(0, 100),
         signature: mediaAnalysis.signature || ''
       });
     }
@@ -1367,17 +1371,23 @@ async function routeMessage(phone, text, session, context = {}) {
     // Then medicine box format (single drug, packaging noise).
     // Then generic recipe cleanup as last resort.
     const rawOcr = recipeSourceText || text;
+    console.log('🧾 OCR DEBUG rawOcr:', JSON.stringify(rawOcr?.slice(0, 300)));
     const prescriptionClean = sanitizePrescriptionText(rawOcr);
+    console.log('🧾 OCR DEBUG prescriptionClean:', JSON.stringify(prescriptionClean?.slice(0, 300)));
     const boxClean = sanitizeMedicineBoxText(rawOcr);
+    console.log('🧾 OCR DEBUG boxClean:', JSON.stringify(boxClean?.slice(0, 300)));
     const recipeClean = sanitizeRecipeText(rawOcr);
+    console.log('🧾 OCR DEBUG recipeClean:', JSON.stringify(recipeClean?.slice(0, 300)));
 
     // Prefer prescription if it extracted multiple lines, else box if single drug, else recipe
     const allRecipeMedicines = prescriptionClean || boxClean || recipeClean;
     const searchQuery = allRecipeMedicines || rawOcr;
     console.log('🧾 OCR medicines extraction:', {
-      raw: rawOcr.slice(0, 200),
+      hasOcrText,
+      raw: rawOcr?.slice(0, 200),
       prescriptionClean,
       boxClean,
+      recipeClean,
       allRecipeMedicines,
       searchQuery
     });
