@@ -1286,7 +1286,7 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildAppMessage();
   }
 
-  if (isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) {
+  if ((isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) || directMedicineQuery) {
     clearSelectionState(session);
     return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true }, { phone, pushName });
   }
