@@ -1377,7 +1377,9 @@ async function routeMessage(phone, text, session, context = {}) {
     return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText }, { phone, pushName });
   }
 
-  if (selectionCandidate && hasSelectionResults) {
+  // Skip selection block if real medicine names were detected in the text (dose numbers
+  // like 75/50/30/10 can trigger parseSelectionCommand incorrectly on multi-medicine queries).
+  if (selectionCandidate && hasSelectionResults && medicineRequests.length === 0) {
     const results = resolveSelectionResults(session);
     const optionList = Array.isArray(selectionCandidate.options) && selectionCandidate.options.length
       ? selectionCandidate.options
@@ -1429,7 +1431,8 @@ async function routeMessage(phone, text, session, context = {}) {
     return '⚠️ Primero debes ver los resultados del catálogo. Busca el medicamento y luego escribe el número de opción y la cantidad.';
   }
 
-  if (selectionCandidate && isSelectionPhrase(normalized)) {
+  // Also skip when real medicines detected — route to search instead of selection.
+  if (selectionCandidate && isSelectionPhrase(normalized) && medicineRequests.length === 0) {
     const results = resolveSelectionResults(session);
     if (!results.length) {
       return '⚠️ Para agregar un producto, primero necesito la lista de opciones del medicamento. Busca el medicamento y luego escribe el número de opción y la cantidad.';
