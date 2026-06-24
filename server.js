@@ -2796,11 +2796,23 @@ function splitSingleLineMedicineList(text) {
     end: match.index + match[0].length
   }));
 
-  const anchors = [...raw.matchAll(/\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\b/gi)]
+  // Dos tipos de anchors:
+  // 1. Dosis con unidad: 75mg, 10 mg, 50mcg
+  // 2. "de X" seguido de nombre de medicamento en mayúscula: "de 75 Losartan", "de 50 atorvastatina"
+  const dosageAnchors = [...raw.matchAll(/\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\b/gi)]
     .map((match) => ({
       start: match.index,
       end: match.index + match[0].length
     }));
+
+  // Anchors de tipo "de 75" antes de nombre en mayúscula (inicio de sig. medicamento)
+  const deAnchors = [...raw.matchAll(/de\s+(\d+(?:[.,]\d+)?)\s+(?=[A-ZÁÉÍÓÚÑ])/gi)]
+    .map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length
+    }));
+
+  const anchors = [...dosageAnchors, ...deAnchors];
 
   if (anchors.length < 2 || tokens.length < 2) return [raw];
 
