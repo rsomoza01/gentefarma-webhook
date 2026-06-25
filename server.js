@@ -2000,6 +2000,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
   const ocrOnly = Boolean(options.ocrOnly);
+  console.log(`[SEARCH-IN] recipeMode=${recipeMode} ocrOnly=${ocrOnly} strictListMode=${strictListMode}`);
   // In OCR recipe mode, use the lower threshold (0.70) instead of 0.96.
   // OCR text has inherent recognition noise (e.g. "retadar" vs "retard",
   // "clopidrogel" vs "clopidogrel", "daflon 500 mg" vs "diosmina 500mg").
