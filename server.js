@@ -2213,6 +2213,9 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
 
     const candidateDosageSignatures = extractDosageSignatures([signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' '));
+    if (ocrOnly && queryDosageSignatures.length > 0 && candidateDosageSignatures.length > 0) {
+      console.log(`[DOSAGE-SIG] query='${query}' querySigs=${JSON.stringify(queryDosageSignatures)} candidate='${signal.productTitleFull}' candSigs=${JSON.stringify(candidateDosageSignatures)} dosageExactMatch=${!hasQueryDosage || queryDosageSignatures.some((sig) => candidateDosageSignatures.includes(sig))}`);
+    }
     const dosageExactMatch = !hasQueryDosage || queryDosageSignatures.some((sig) => candidateDosageSignatures.includes(sig));
 
     if (signal.productTitleFull === matchQuery) score += 600;
