@@ -2000,12 +2000,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
   const ocrOnly = Boolean(options.ocrOnly);
-  // In OCR recipe mode, use the lower threshold (0.80) instead of 0.96.
+  // In OCR recipe mode, use the lower threshold (0.70) instead of 0.96.
   // OCR text has inherent recognition noise (e.g. "retadar" vs "retard",
-  // "clopidrogel" vs "clopidogrel"). A 0.96 threshold is too strict for
-  // OCR. Even 0.88 can be too high for short drug names with 1-2 char
-  // OCR errors. Use 0.80 to ensure real products are found despite OCR noise.
-  const strictReferenceThreshold = (recipeMode && !ocrOnly) ? 0.96 : (strictListMode ? 0.93 : 0.80);
+  // "clopidrogel" vs "clopidogrel", "daflon 500 mg" vs "diosmina 500mg").
+  // A 0.80+ threshold is too strict for OCR. Use 0.70 to ensure real
+  // products are found despite OCR noise and dosage suffix mismatches.
+  const strictReferenceThreshold = (recipeMode && !ocrOnly) ? 0.96 : (strictListMode ? 0.93 : 0.70);
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
@@ -2517,8 +2517,14 @@ async function searchMedicinesByName(userQuery, options = {}) {
         const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
         const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
         const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
-        const pass = candidateHasAmount && candidateHasUnit && item.dosageExactMatch;
-        if (!pass) console.log(`[RECIPE-DOSAGE] REJECTED candidate='${item.productTitleFull}' dosageExactMatch=${item.dosageExactMatch} hasAmount=${candidateHasAmount} hasUnit=${candidateHasUnit}`);
+        // Pass if: dosage exact match OR (hasAmount+hasUnit AND strong reference)
+        // The "strong reference" fallback accepts products that have any dosage
+        // even if it doesn't match the query dosage, when the product itself
+        // has high reference similarity (useful for OCR queries like "esoz 40 mg"
+        // against a product "esoz 20mg" where the dosage differs but the
+        // reference product is clearly the same item).
+        const pass = item.dosageExactMatch || (candidateHasAmount && candidateHasUnit && (item.referenceSimilarity ?? 0) >= 0.70);
+        if (!pass) console.log(`[RECIPE-DOSAGE] REJECTED candidate='${item.productTitleFull}' dosageExactMatch=${item.dosageExactMatch} hasAmount=${candidateHasAmount} hasUnit=${candidateHasUnit} refSim=${item.referenceSimilarity}`);
         return pass;
       });
       console.log(`[RECIPE-FILTER] after dosage filter: ${before} -> ${candidateMatches.length}`);
