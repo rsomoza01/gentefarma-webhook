@@ -2970,6 +2970,8 @@ function splitSingleLineMedicineList(text) {
   }
 
   if (results.length >= 2) return results;
+  // Fallback: not enough results → treat as single medicine query
+  const whole = extractMedicineQuery(raw);
   return whole && whole.trim().length >= 2 ? [whole.trim()] : [raw];
 }
 
