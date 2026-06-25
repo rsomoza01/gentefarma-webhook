@@ -1885,8 +1885,12 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const consultationMode = Boolean(options.strictConsultationMode);
   const forceExactConsultationToken = Boolean(options.forceExactConsultationToken);
   const preExtracted = Array.isArray(options.preExtractedMedicines) ? options.preExtractedMedicines : [];
+  // In OCR prescription mode, use preExtracted from sanitizePrescriptionText (already clean).
+  // Do NOT call extractMedicineRequests/textSplit which strips dosage and creates noise.
   const requestedMedicines = preExtracted.length > 0 ? preExtracted : (ocrOnly ? [] : extractMedicineRequests(text));
-  const fallbackMedicines = extractMedicineRequestsFromSegments(text);
+  // Skip extractMedicineRequestsFromSegments in recipe/OCR mode — it strips dosage and
+  // generates bare drug names without strength, polluting candidateMedicines.
+  const fallbackMedicines = ocrOnly ? [] : extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
   const candidateMedicines = dedupeStrings([
@@ -1898,7 +1902,15 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (/\b(belen|belén|arcia|paciente|nombre|apellido|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
     return Boolean(normalizedItem);
-  }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
+  }).map((item) => {
+    if (recipeMode) {
+      // In recipe mode, keep the original medicine line intact (e.g. "ESOZ 40 MG").
+      // extractPrimaryRecipeMedicineQuery strips dosage and returns just "esoz" which
+      // is too generic for search. The dosage is essential for accurate matching.
+      return item;
+    }
+    return extractPrimaryRecipeMedicineQuery(item);
+  }).filter(Boolean);
 
   console.log('🔍 searchAndBuildCatalogResponse INTERNAL:', {
     ocrOnly,
