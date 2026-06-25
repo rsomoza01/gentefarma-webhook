@@ -791,6 +791,7 @@ async function processIncomingMessage(payload) {
 
     const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text), ocrSearchText, rawOcrText, pushName });
     if (response) {
+      console.log('📤 Sending WhatsApp response:', response.slice(0, 500));
       await sendOutboundWhatsAppMessage(from, response);
     }
   } catch (error) {
