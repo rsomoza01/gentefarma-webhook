@@ -2000,11 +2000,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
   const ocrOnly = Boolean(options.ocrOnly);
-  // In OCR recipe mode, use the lower threshold (0.88) instead of 0.96.
-  // OCR text has inherent recognition noise (e.g. "retadar" vs "retardar"),
-  // so a 0.96 threshold produces false negatives. The recipeMode flag alone
-  // doesn't justify 0.96 when the input quality is uncertain OCR.
-  const strictReferenceThreshold = (recipeMode && !ocrOnly) ? 0.96 : (strictListMode ? 0.93 : 0.88);
+  // In OCR recipe mode, use the lower threshold (0.80) instead of 0.96.
+  // OCR text has inherent recognition noise (e.g. "retadar" vs "retard",
+  // "clopidrogel" vs "clopidogrel"). A 0.96 threshold is too strict for
+  // OCR. Even 0.88 can be too high for short drug names with 1-2 char
+  // OCR errors. Use 0.80 to ensure real products are found despite OCR noise.
+  const strictReferenceThreshold = (recipeMode && !ocrOnly) ? 0.96 : (strictListMode ? 0.93 : 0.80);
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
