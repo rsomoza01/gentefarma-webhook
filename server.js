@@ -3550,6 +3550,7 @@ function sanitizePrescriptionText(value) {
     /^\s*#+/,
     /^\s*[=\-_]{3,}\s*$/,
     /^\s*[\d.]{5,}\s*$/,           // long numbers (CI, phone)
+    /^```/,                        // triple backticks (code block markers)
   ];
 
   // Dosage patterns that confirm a line IS a drug
@@ -3559,13 +3560,19 @@ function sanitizePrescriptionText(value) {
   // Must be at end of string OR followed by space/number
   const HAS_DRUG_FORM = /(?:^|[\s(])\s*(?:cap(?:\s|$)|caps?(?:\s|$)|tab(?:\s|$)|tabs?(?:\s|$)|amp(?:\s|$)|susp(?:\s|$)|sol(?:\s|$)|crema(?:\s|$)|gel(?:\s|$)|polvo(?:\s|$)|ung(?:\s|$)|over(?:\s|$))\b/i;
 
+  // Strip code-block markers (triple backticks) that wrap OCR output
+  let cleanRaw = raw.replace(/^```+\s*/m, '').replace(/\s*```+$/m, '').trim();
+  console.log('🩺 sanitizePrescriptionText after-backtick-strip:', JSON.stringify(cleanRaw.slice(0, 300)));
+
   // Extract section after RP: - find the colon (or end of rp/rx) and slice after it
-  let prescriptionSection = raw;
-  const rpMatch = raw.match(/(?:^|\n)\s*(?:rp|rp:|rx|rx:)\s*/im);
+  let prescriptionSection = cleanRaw;
+  const rpMatch = cleanRaw.match(/(?:^|\n)\s*(?:rp|rp:|rx|rx:)\s*/im);
+  console.log('🩺 sanitizePrescriptionText rpMatch:', rpMatch ? rpMatch[0] : null, 'index:', rpMatch ? rpMatch.index : null);
   if (rpMatch) {
     // Slice AFTER the full match including colon (rpMatch[0] includes rp: or rp etc.)
-    prescriptionSection = raw.slice(rpMatch.index + rpMatch[0].length).replace(/^:\s*/, '');
+    prescriptionSection = cleanRaw.slice(rpMatch.index + rpMatch[0].length).replace(/^:\s*/, '');
   }
+  console.log('🩺 sanitizePrescriptionText prescriptionSection:', JSON.stringify(prescriptionSection.slice(0, 300)));
 
   const lines = prescriptionSection.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
   const drugLines = [];
