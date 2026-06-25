@@ -1373,13 +1373,20 @@ async function routeMessage(phone, text, session, context = {}) {
     // Then medicine box format (single drug, packaging noise).
     // Then generic recipe cleanup as last resort.
     const rawOcr = recipeSourceText || text;
-    console.log('🧾 OCR DEBUG rawOcr:', JSON.stringify(rawOcr?.slice(0, 300)));
+    console.log('🧾 OCR medicines extraction rawOcr SOURCE:', {
+      recipeSourceTextTruthy: Boolean(recipeSourceText),
+      recipeSourceText: recipeSourceText?.slice(0, 100),
+      text: text?.slice(0, 100)
+    });
+    console.log('🧾 prescriptionClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
     const prescriptionClean = sanitizePrescriptionText(rawOcr);
-    console.log('🧾 OCR DEBUG prescriptionClean:', JSON.stringify(prescriptionClean?.slice(0, 300)));
+    console.log('🧾 prescriptionClean RESULT:', JSON.stringify(prescriptionClean?.slice(0, 300)));
+    console.log('🧾 boxClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
     const boxClean = sanitizeMedicineBoxText(rawOcr);
-    console.log('🧾 OCR DEBUG boxClean:', JSON.stringify(boxClean?.slice(0, 300)));
+    console.log('🧾 boxClean RESULT:', JSON.stringify(boxClean?.slice(0, 300)));
+    console.log('🧾 recipeClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
     const recipeClean = sanitizeRecipeText(rawOcr);
-    console.log('🧾 OCR DEBUG recipeClean:', JSON.stringify(recipeClean?.slice(0, 300)));
+    console.log('🧾 recipeClean RESULT:', JSON.stringify(recipeClean?.slice(0, 300)));
 
     // Prefer prescription if it extracted multiple lines, else box if single drug, else recipe
     const allRecipeMedicines = prescriptionClean || boxClean || recipeClean;
@@ -3536,7 +3543,8 @@ function sanitizeRecipeText(value) {
  * Expected output: "ESOZ 40 MG\nLEPRIT 25 MG\nBUMETIN RETADAR 300 MG"
  */
 function sanitizePrescriptionText(value) {
-  const raw = String(value || '');
+  let raw;
+  try { raw = String(value == null ? '' : value); } catch (e) { raw = ''; }
   console.log('🩺 sanitizePrescriptionText INPUT:', JSON.stringify(raw.slice(0, 400)));
   if (!raw) return '';
 
