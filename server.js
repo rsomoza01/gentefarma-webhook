@@ -1900,6 +1900,16 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     return Boolean(normalizedItem);
   }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
 
+  console.log('🔍 searchAndBuildCatalogResponse INTERNAL:', {
+    ocrOnly,
+    recipeMode,
+    requestedMedicines,
+    fallbackMedicines,
+    recipeLineMedicines,
+    candidateMedicines,
+    text: typeof text === 'string' ? text.slice(0, 200) : text
+  });
+
   if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCatalogProducts(2000);
