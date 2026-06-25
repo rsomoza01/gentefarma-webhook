@@ -3535,6 +3535,7 @@ function sanitizeRecipeText(value) {
  */
 function sanitizePrescriptionText(value) {
   const raw = String(value || '');
+  console.log('🩺 sanitizePrescriptionText INPUT:', JSON.stringify(raw.slice(0, 400)));
   if (!raw) return '';
 
   // Lines that are administrative/header — never drug content
