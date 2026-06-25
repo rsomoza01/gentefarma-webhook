@@ -1935,6 +1935,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
         products,
         exchangeRate,
         strictListMode: !ocrOnly,
+        ocrOnly,
         recipeMode,
         strictConsultationMode: consultationMode,
         forceExactConsultationToken: consultationMode && !recipeMode
@@ -1972,6 +1973,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     products: await fetchCatalogProducts(2000),
     exchangeRate: await getBcvRate(),
     strictListMode: !ocrOnly,
+    ocrOnly,
     recipeMode,
     strictConsultationMode: consultationMode,
     forceExactConsultationToken: consultationMode && !recipeMode
@@ -1997,7 +1999,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
-  const strictReferenceThreshold = recipeMode ? 0.96 : (strictListMode ? 0.93 : 0.88);
+  const ocrOnly = Boolean(options.ocrOnly);
+  // In OCR recipe mode, use the lower threshold (0.88) instead of 0.96.
+  // OCR text has inherent recognition noise (e.g. "retadar" vs "retardar"),
+  // so a 0.96 threshold produces false negatives. The recipeMode flag alone
+  // doesn't justify 0.96 when the input quality is uncertain OCR.
+  const strictReferenceThreshold = (recipeMode && !ocrOnly) ? 0.96 : (strictListMode ? 0.93 : 0.88);
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
