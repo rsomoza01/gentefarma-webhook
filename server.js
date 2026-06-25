@@ -1365,7 +1365,9 @@ async function routeMessage(phone, text, session, context = {}) {
   const isSelectionMessage = Boolean(selectionCandidate) || isSelectionPhrase(normalized);
   const hasMedicineSearchSignal = Boolean(isMedicineSignal && !isSelectionMessage);
 
-  if (hasOcrText && !hasSelectionResults) {
+  // When a new OCR image arrives, ALWAYS process it as OCR — even if the previous
+  // message left pendingSelectionResults. The user is asking about a NEW image.
+  if (hasOcrText) {
     clearSelectionState(session);
     // Try prescription format first (has RP: section with multiple drugs).
     // Then medicine box format (single drug, packaging noise).
