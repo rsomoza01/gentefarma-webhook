@@ -2475,12 +2475,14 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     candidateMatches = focusedVitaminMatches;
   } else if (recipeMode) {
-  const recipeToken = primaryTokens[0] || matchTokens[0] || '';
-  if (!recipeToken) {
-    return { query, queryTokens, exchangeRate, matches: [] };
-  }
+    const recipeToken = primaryTokens[0] || matchTokens[0] || '';
+    if (!recipeToken) {
+      return { query, queryTokens, exchangeRate, matches: [] };
+    }
 
-  const recipeMatches = scoredProducts.filter((item) => {
+    console.log(`[RECIPE-FILTER] query='${query}' recipeToken='${recipeToken}' matchQuery='${matchQuery}' hasQueryDosage=${hasQueryDosage} dosageExactMatch=${scoredProducts[0]?.dosageExactMatch} strictReferenceThreshold=${strictReferenceThreshold}`);
+
+    const recipeMatches = scoredProducts.filter((item) => {
       const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
       if (!candidateText) return false;
 
@@ -2492,22 +2494,31 @@ async function searchMedicinesByName(userQuery, options = {}) {
         tokenSimilarity(recipeToken, candidateToken) >= 0.96
       ));
 
-      return exactTokenMatch && (
+      const pass = exactTokenMatch && (
         item.fullFocusMatch ||
         item.exactHit ||
         item.phraseHit ||
         (item.referenceSimilarity ?? 0) >= strictReferenceThreshold
       );
+      if (!pass && item.referenceSimilarity >= 0.80) {
+        console.log(`[RECIPE-FILTER] REJECTED candidate='${item.productTitleFull}' exactTokenMatch=${exactTokenMatch} refSim=${item.referenceSimilarity?.toFixed(3)} score=${item.score}`);
+      }
+      return pass;
     });
 
+    console.log(`[RECIPE-FILTER] recipeMatches count=${recipeMatches.length} hasQueryDosage=${hasQueryDosage}`);
     candidateMatches = recipeMatches;
     if (hasQueryDosage) {
+      const before = candidateMatches.length;
       candidateMatches = candidateMatches.filter((item) => {
         const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
         const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
         const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
-        return candidateHasAmount && candidateHasUnit && item.dosageExactMatch;
+        const pass = candidateHasAmount && candidateHasUnit && item.dosageExactMatch;
+        if (!pass) console.log(`[RECIPE-DOSAGE] REJECTED candidate='${item.productTitleFull}' dosageExactMatch=${item.dosageExactMatch} hasAmount=${candidateHasAmount} hasUnit=${candidateHasUnit}`);
+        return pass;
       });
+      console.log(`[RECIPE-FILTER] after dosage filter: ${before} -> ${candidateMatches.length}`);
     }
 
     if (!candidateMatches.length) {
