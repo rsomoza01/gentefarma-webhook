@@ -2556,15 +2556,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (!candidateMatches.length) {
       return { query, queryTokens, exchangeRate, matches: [] };
     }
-    } else {
-    // TEMP DEBUG: log similarity filter results
-    console.log(`[SIM-RES] query=${query} consultationMode=${consultationMode} scoredProducts=${scoredProducts.length} top3=${scoredProducts.slice(0,3).map(i=>`score=${i.score} refSim=${(i.referenceSimilarity??0).toFixed(3)} title=${i.productTitleFull?.slice(0,40)}`).join(' | ')}`);
-
-    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.80);
-    console.log(`[SIM-FILTER] similarityMatches=${similarityMatches.length} after filter`);
+  } else {
+    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.76);
     candidateMatches = similarityMatches.filter((item) => {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.referenceSimilarity ?? 0) >= 0.80 || (item.score ?? 0) >= 180;
+      return (item.referenceSimilarity ?? 0) >= 0.76 || (item.score ?? 0) >= 180;
     });
 
     // In consultation mode, skip dosage filters - rely on the degraded filter
