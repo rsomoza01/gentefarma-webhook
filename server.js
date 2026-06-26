@@ -3658,6 +3658,7 @@ function sanitizePrescriptionText(value) {
 function sanitizeMedicineBoxText(value) {
   const raw = String(value || '');
   if (!raw) return '';
+  let bestLine; // ← declare locally (was missing: implicit global in PASS 1)
 
   // Classification/therapeutic category words to remove everywhere
   const TRASH_WORDS = new Set([
