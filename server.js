@@ -1405,7 +1405,10 @@ async function routeMessage(phone, text, session, context = {}) {
       allRecipeMedicines,
       searchQuery
     });
-    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
+    // Use the OCR text as the message when available (not the original empty text),
+    // so that extractRecipeMedicineLines and other extractors work on the OCR content.
+    const messageText = rawOcr || text;
+    return await searchAndBuildCatalogResponse(messageText, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
   }
 
   if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
