@@ -2468,12 +2468,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
         || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
         || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
       ) return true;
-      // 2) Fallback fuzzy: algún token del producto se parece ≥80% al query
-      // Threshold 0.85 era demasiado estricto cuando el producto guarda
-      // tokens con guiones p. ej. "amlodipina-besilato" vs "alodipina" ≈ 0.842.
-      // Con 0.80 el match pasa y la scoring posterior filtra con 0.85.
+      // 2) Fallback fuzzy: usar jaroWinklerSimilarity (sin lengthGap check)
+      // tokenSimilarity tiene lengthGap > 4 → 0 que bloquea compuestos con guion
+      // (alodipina vs amlodipina-besilato gap=10 > 4 → 0). Jaro-Winkler directo
+      // da 84.2% y con threshold 0.82 deja pasar mientras scoring filtra con 0.85.
       for (const t of item.tokenSet) {
-        if (tokenSimilarity(q, t) >= 0.80) return true;
+        if (jaroWinklerSimilarity(q, t) >= 0.82) return true;
       }
       return false;
     });
