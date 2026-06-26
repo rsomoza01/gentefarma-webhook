@@ -2038,7 +2038,9 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const primaryRoot = primaryTokens.join(' ');
   const dosagePattern = /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|gr|ml|cc|ui|iu)\b/gi;
   const extractDosageSignatures = (value) => {
-    const normalizedValue = normalizeText(value);
+    const normalizedValue = normalizeText(value)
+      .replace(/\bmgr\.?\b/gi, 'mg')  // normalize "mgr" → "mg" (common OCR variant)
+      .replace(/\bgram\.?\b/gi, 'g');  // normalize "gram" → "g"
     if (!normalizedValue) return [];
     const signatures = [];
     let match;
@@ -2587,7 +2589,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
           ? candidateCore.includes(queryCore)
           : alternativeTokens.some((token) => {
               if (candidateCore.includes(token)) return true;
-              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.9);
+              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.82);
             });
 
         const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
