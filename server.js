@@ -2468,12 +2468,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
         || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
         || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
       ) return true;
-      // 2) Fallback fuzzy: algún token del producto se parece ≥85% al query
-      // Threshold 0.92 era demasiado estricto para nombres con errores ortográficos
-      // comunes (p. ej. "cardesartan" vs "candesartan" ≈ 0.91,
-      // "alodipina" vs "amlodipina" ≈ 0.87).
+      // 2) Fallback fuzzy: algún token del producto se parece ≥80% al query
+      // Threshold 0.85 era demasiado estricto cuando el producto guarda
+      // tokens con guiones p. ej. "amlodipina-besilato" vs "alodipina" ≈ 0.842.
+      // Con 0.80 el match pasa y la scoring posterior filtra con 0.85.
       for (const t of item.tokenSet) {
-        if (tokenSimilarity(q, t) >= 0.85) return true;
+        if (tokenSimilarity(q, t) >= 0.80) return true;
       }
       return false;
     });
