@@ -2187,6 +2187,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
     return (hasVitaminFamily && hasFocusToken) || titlePhraseHit || compactPhraseHit;
   }
 
+  // effectiveThreshold is defined at searchMedicinesByName level so it's accessible
+  // both inside scoreSignal and in the similarityMatches filter below.
+  const effectiveThreshold = consultationMode ? 0.85 : strictReferenceThreshold;
+
   function scoreSignal(signal) {
     let score = 0;
 
@@ -2228,12 +2232,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (signal.titleArrayTextFull === matchQuery) score += 560;
     if (signal.ingredient === matchQuery) score += 420;
 
-  // In consultation mode, use the same 0.85 threshold as the CONSULTATION-GATE fuzzy gate.
-  // Previously this was 0.93 (strictListMode), which caused misspelled drug names like
-  // "cardesartan" (→ candesartan, similarity ≈ 0.894) to get a -500 penalty and vanish
-  // even though they passed the 0.85 fuzzy gate. With 0.85, the same product now gets
-  // +260 (above threshold) + 80 (near threshold) + 320 (substring bonus) = +660.
-  const effectiveThreshold = consultationMode ? 0.85 : strictReferenceThreshold;
   if (referenceSimilarity >= effectiveThreshold + 0.03) score += 420;
   else if (referenceSimilarity >= effectiveThreshold) score += 260;
   else if (referenceSimilarity >= effectiveThreshold - 0.03) score += strictListMode ? 80 : 120;
