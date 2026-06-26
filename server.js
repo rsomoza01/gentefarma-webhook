@@ -3704,8 +3704,12 @@ function sanitizeMedicineBoxText(value) {
     // Dosage forms
     'tableta','tabletas','capsula','capsulas','capsule','capsules','solucion','inyectable',
     'inyeccion','ampolla','ampollas','vial','viales','frasco','jarabe','suspension',
-    'gotas','crema','gel','unguento','pomada','polvo','sobres','granulado',
+    'polvo','polvos','sobres','granulado',
     'supositorio','ovulo','parche','aerosol','inhalador','spray','drop','barra',
+    // Route descriptors that slip through as false medicine names
+    'via','vía','inh','inhal','oral','tópico','topico','rectal','vaginal',
+    'sublingual','intramuscular','intravenosa','subcutanea','subcutaneo',
+    'oftálmica','oftalmica','óptica','optica','tópica','topica','transdérmica','transdermica',
     // Routes
     'oral','topico','topica','sublingual','rectal','vaginal','intramuscular',
     'intravenosa','subcutanea','subcutaneo','inhalatoria','nasal','oftalmica',
@@ -3940,6 +3944,9 @@ function extractRecipeMedicineLines(value) {
     /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i,
     /^(paciente|rp|rx|receta|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección)\b/i,
     /^(no\s+disponibles?|resultados?\s+encontrados|te\s+muestro|tasa\s+bcv|cuando\s+termines|otro\s+medicamento|para\s+agregar|ejemplo|receta\s+detectada)\b/i,
+    // Route/instruction descriptions — catch partial phrases too (no ^ anchor)
+    /via\s+inhalatoria|vía\s+inhalatoria|via\s+oral|vía\s+oral|via\s+rectal|vía\s+rectal|via\s+sublingual|via\s+topica|vía\s+tópica/i,
+    /polvo\s+(para|de|inhalaci|inhalar)|capsulas?\s+para|inhalaci(?:ón|on)\s+(?:oral|trasn)/i,
     /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/,
     /^(?:edad|peso|talla|ci|c\.i\.|cedula|cédula)[:\s]+[\w\d.,-]+$/i
   ];
