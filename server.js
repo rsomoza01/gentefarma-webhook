@@ -583,21 +583,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// MINIMAL DEBUG ENDPOINT
-app.get('/d', async (req, res) => {
-  const q = req.query.q || '';
-  const result = await searchMedicinesByName(q, { strictConsultationMode: true, forceExactConsultationToken: false });
-  res.json({
-    q,
-    matchesCount: result?.matches?.length ?? 0,
-    top3: (result?.matches ?? []).slice(0,3).map(m => ({
-      title: m.productTitleFull,
-      score: m.score,
-      refSim: m.referenceSimilarity
-    }))
-  });
-});
-
 // ---------------------------------------------
 
 
@@ -2730,7 +2715,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     : topMatches;
 
   const finalMatches = consultationMode
-    ? filteredTopMatches
+    ? topMatches
     : (recipeMode
       ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
       : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches)));
