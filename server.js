@@ -3678,22 +3678,42 @@ function sanitizeMedicineBoxText(value) {
 
   const lines = raw.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
 
-  // Find the first line that looks like a drug name (has letters, not mostly numbers)
-  // and has at least one dosage-like token (number followed by unit or number alone in dosage context)
-  let bestLine = '';
+  // ── PASS 1: Find lines that contain a registered ® or trademark ™ symbol.
+  //    These are almost always the commercial brand name on a medicine box.
   for (const line of lines) {
-    const cleanLine = line.replace(/\s+/g, ' ').trim();
-    // Skip lines that are purely numeric or too short
-    if (cleanLine.replace(/\d/g, '').replace(/\s/g, '').length < 4) continue;
-    // Skip lines that are mostly numbers/symbols
-    if (/^[\d\s.,+-]+$/.test(cleanLine)) continue;
-    // Skip lines that match classification/marketing/brand only
-    const lineLower = cleanLine.toLowerCase();
-    const words = lineLower.split(/\s+/);
-    const hasContent = words.some(w => !TRASH_WORDS.has(w) && !PURE_DOSAGE_TOKEN.test(w) && /[a-záéíóúñ]/i.test(w));
-    if (!hasContent) continue;
-    bestLine = cleanLine;
-    break;
+    if (/®|™/.test(line)) {
+      const clean = line.replace(/\s+/g, ' ').trim();
+      // This line has a brand marker — use it even if it has other content
+      const alphaAfterFilter = clean.replace(/\d/g, '').replace(/[\s®™-]/g, '').length;
+      if (alphaAfterFilter >= 3) {
+        bestLine = clean;
+        break;
+      }
+    }
+  }
+
+  // ── PASS 2: Find the first line that looks like a drug name
+  //    (has letters, not mostly numbers) and has at least one
+  //    dosage-like token OR recognizable medicine content word.
+  if (!bestLine) {
+    for (const line of lines) {
+      const cleanLine = line.replace(/\s+/g, ' ').trim();
+      // Skip lines that are purely numeric or too short
+      if (cleanLine.replace(/\d/g, '').replace(/\s/g, '').length < 4) continue;
+      // Skip lines that are mostly numbers/symbols
+      if (/^[\d\s.,+-]+$/.test(cleanLine)) continue;
+      // Skip lines that match classification/marketing/brand only
+      const lineLower = cleanLine.toLowerCase();
+      const words = lineLower.split(/\s+/);
+      const hasContent = words.some(w =>
+        !TRASH_WORDS.has(w) &&
+        !PURE_DOSAGE_TOKEN.test(w) &&
+        /[a-záéíóúñ]/i.test(w)
+      );
+      if (!hasContent) continue;
+      bestLine = cleanLine;
+      break;
+    }
   }
 
   if (!bestLine) return '';
@@ -3712,10 +3732,10 @@ function sanitizeMedicineBoxText(value) {
   // Rejoin remaining tokens — these should be the drug name (possibly with dosage number)
   let result = tokens.join(' ');
 
-  // Remove dosage suffixes like "120 mg" from the end, keeping just the drug name
-  // But if there's a dosage number in the middle (e.g. "METFORMINA 500mg") keep it
+  // Remove dosage suffixes and trademark/registered symbols
   result = result
     .replace(/\s*\d+\s*(mg|mcg|g|gr|ml|mL|ui|iu)\b\.?/gi, '')
+    .replace(/[®™]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 
