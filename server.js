@@ -586,10 +586,12 @@ app.get('/health', (req, res) => {
 app.get('/debug/search', async (req, res) => {
   const { q } = req.query;
   if (!q) return res.json({ error: 'q param required' });
+  console.log(`[DEBUG-SEARCH] incoming query=${q} strictConsultationMode=true effectiveThreshold should be 0.85 consultationMode=true`);
   const result = await searchMedicinesByName(String(q), {
     strictConsultationMode: true,
     forceExactConsultationToken: false
   });
+  console.log(`[DEBUG-SEARCH] result.matchesCount=${result?.matches?.length ?? 'null/undefined'}`);
   res.json({
     query: q,
     queryTokens: result?.queryTokens,
@@ -2610,10 +2612,20 @@ async function searchMedicinesByName(userQuery, options = {}) {
       }
     }
 
-    if (!candidateMatches.length) {
-      const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
-      const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
-      const degradedMatches = scoredProducts.filter((item) => {
+      if (!candidateMatches.length) {
+        // Debug: log first few products before degraded filter
+        const top5 = scoredProducts.slice(0, 5).map(item => ({
+          title: item.productTitleFull,
+          score: item.score,
+          refSim: item.referenceSimilarity,
+          dosageOverlap: [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ').includes('cardesartan'),
+          softScore: (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.78
+        }));
+        console.log(`[DOSAGE-FILTER-FALLTHROUGH] query=${query} hasQueryDosage=${hasQueryDosage} matchQuery=${matchQuery} dosageLessQuery=${dosageLessQuery} top5=${JSON.stringify(top5)}`);
+
+        const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
+        const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+        const degradedMatches = scoredProducts.filter((item) => {
         const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateCore) return false;
 
@@ -2621,7 +2633,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
           ? candidateCore.includes(queryCore)
           : alternativeTokens.some((token) => {
               if (candidateCore.includes(token)) return true;
-              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.82);
+              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.75);
             });
 
         const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
@@ -2631,6 +2643,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       });
 
       if (degradedMatches.length) {
+        console.log(`[DEGRADED] query=${query} degradedMatches=${degradedMatches.length} using degraded path`);
         candidateMatches = degradedMatches;
       }
     }
