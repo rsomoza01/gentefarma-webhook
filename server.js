@@ -592,17 +592,22 @@ app.get('/debug/search', async (req, res) => {
   });
   res.json({
     query: q,
+    queryTokens: result?.queryTokens,
     matchesCount: result?.matches?.length ?? 0,
-    top5: (result?.matches ?? []).slice(0, 5).map(m => ({
+    top10: (result?.matches ?? []).slice(0, 10).map(m => ({
       title: m.productTitleFull,
       score: m.score,
       refSim: m.referenceSimilarity,
       exactHit: m.exactHit,
       phraseHit: m.phraseHit,
-      fullFocusMatch: m.fullFocusMatch
+      fullFocusMatch: m.fullFocusMatch,
+      dosageExactMatch: m.dosageExactMatch
     }))
   });
 });
+
+// ALSO: log searchMedicinesByName internals for debugging
+// Patch the function to log gate details
 
 // ----------------------------------------------------
 // Webhook
@@ -2576,11 +2581,24 @@ async function searchMedicinesByName(userQuery, options = {}) {
       return { query, queryTokens, exchangeRate, matches: [] };
     }
   } else {
+    // DEBUG: log top 5 scored products before similarity filter
+    const topScored = scoredProducts.slice(0, 5).map(item => ({
+      title: item.productTitleFull,
+      score: item.score,
+      refSim: item.referenceSimilarity,
+      exactHit: item.exactHit,
+      fullFocusMatch: item.fullFocusMatch,
+      phraseHit: item.phraseHit,
+      effectiveThreshold
+    }));
+    console.log(`[SIMILARITY-DEBUG] topScored=${JSON.stringify(topScored)} isVitaminQuery=${isVitaminQuery} recipeMode=${recipeMode} consultationMode=${consultationMode} hasQueryDosage=${hasQueryDosage} strictListMode=${strictListMode}`);
+
     const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= effectiveThreshold);
     candidateMatches = similarityMatches.filter((item) => {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
       return (item.referenceSimilarity ?? 0) >= effectiveThreshold || (item.score ?? 0) >= 180;
     });
+    console.log(`[SIMILARITY-RESULT] scoredProducts=${scoredProducts.length} similarityMatches=${similarityMatches.length} candidateMatches=${candidateMatches.length}`);
 
     if (hasQueryDosage) {
       candidateMatches = candidateMatches.filter((item) => {
