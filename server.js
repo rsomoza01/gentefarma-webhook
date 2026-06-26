@@ -2908,71 +2908,51 @@ function splitSingleLineMedicineList(text) {
   // ── Strong stopwords to strip when extracting medicine name ──
   const STRONG_STOP_RE = /^(?:de|del|la|el|las|los|una|unos|que|y|con|para|por|sin|no|si|un|une)$/i;
 
-  // ── Regex-based splitting for space-separated multi-medicine queries ──
-  // Pattern: find "de NUMBER [UNIT]" and extract the medicine name before each.
-  // Key insight: a "de X" belongs to the CURRENT medicine if the character
-  // before "de" is lowercase (no-capital-start), and starts the NEXT medicine
-  // if the character before "de" is UPPERCASE (capital-start of next medicine).
-  // Example: "clopidrogel de 75 Losartan" → "de" before 'l' (uppercase) = next med starts
-  //          "atorvastatina de 30 nifedipina" → "de" before 'a' (lowercase) = this med
-  const dosageRe = /\bde\s+(\d+)\s*([a-zA-ZáéíóúñÁÉÍÓÚÑ]*)\b/g;
-  const results = [];
-  let match;
-  const searchFrom = 0;
-  let lastMatchEnd = -1;
+  // ── Split by dosage anchors ──
+  // For each "de NUM" anchor, find the medicine name that precedes it
+  // by looking in the text segment between the PREVIOUS anchor's end
+  // and this anchor's start, and stripping any embedded "de NUM" tokens.
+  const anchorRe = /\bde\s+(\d+)\b/gi;
+  const anchors = [];
+  let aMatch;
+  anchorRe.lastIndex = 0;
+  while ((aMatch = anchorRe.exec(raw)) !== null) {
+    anchors.push({ start: aMatch.index, end: aMatch.index + aMatch[0].length, num: aMatch[1] });
+  }
 
-  while ((match = dosageRe.exec(raw)) !== null) {
-    const matchStart = match.index;
-    const prevChar = matchStart > 0 ? raw[matchStart - 1] : ' ';
-    // Skip: "de X" is preceded by UPPERCASE → it's the START of the NEXT medicine
-    // (no space between prev medicine and "de X", e.g. "atorvastatinade 50")
-    if (prevChar !== ' ' && prevChar === prevChar.toLocaleUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(prevChar)) {
+  if (anchors.length === 0) return [raw];
+
+  const results = [];
+  for (let i = 0; i < anchors.length; i++) {
+    const { start: aStart, num } = anchors[i];
+    const prevChar = aStart > 0 ? raw[aStart - 1] : ' ';
+    // Skip "de NUM" preceded by uppercase letter (e.g. "atorvastatinade 50")
+    if (prevChar !== ' ' && prevChar === prevChar.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(prevChar)) {
       continue;
     }
 
-    // Extract medicine name: walk BACKWARDS from matchStart collecting
-    // consecutive capitalized words (first char uppercase).
-    const before = raw.substring(0, matchStart);
-    let medicineWords = [];
-    let j = before.length - 1;
-    while (j >= 0) {
-      const ch = before[j];
-      if (/\s/.test(ch)) {
-        // Skip spaces
-        j--;
+    const segStart = i > 0 ? anchors[i - 1].end : 0;
+    const between = raw.substring(segStart, aStart).trim();
+    const tokens = between.split(/\s+/);
+
+    // Walk backwards skipping trailing "de NUM" pairs and stopwords
+    const medTokens = [];
+    for (let j = tokens.length - 1; j >= 0; j--) {
+      const tok = tokens[j];
+      if (j >= 1 && tokens[j - 1].toLowerCase() === 'de' && /^\d+$/.test(tok)) {
+        j--; // skip "de NUM" pair
         continue;
       }
-      // ch is non-space. Find the word it belongs to by walking to its start.
-      let wordStart = j;
-      while (wordStart > 0 && !/\s/.test(before[wordStart - 1])) {
-        wordStart--;
-      }
-      const word = before.substring(wordStart, j + 1);
-      const first = word[0];
-      // A "capitalized word" starts with an uppercase letter (A-Z or accented)
-      const isCapitalized = first !== first.toLocaleLowerCase();
-      if (isCapitalized) {
-        medicineWords.unshift(word);
-        j = wordStart - 1;
-      } else {
-        // Lowercase or digit → end of medicine name
-        break;
-      }
+      if (STOP_RE.test(tok)) { j--; continue; }
+      medTokens.unshift(tok);
     }
 
-    const unit = match[2]; // may be empty string
-    const dosageStr = match[0]; // e.g. "de 75" or "de 10 mg"
-    const combined = (medicineWords.join(' ') + ' ' + dosageStr).trim();
-    if (combined.length > 2) {
-      results.push(combined);
-    }
-    lastMatchEnd = match.index + match[0].length;
+    const segment = (medTokens.join(' ') + ' de ' + num).trim();
+    if (segment.length > 2) results.push(segment);
   }
 
   if (results.length >= 2) return results;
-  // Fallback: not enough results → treat as single medicine query
-  const whole = extractMedicineQuery(raw);
-  return whole && whole.trim().length >= 2 ? [whole.trim()] : [raw];
+  return [raw];
 }
 
 function extractMedicineRequestsFromSegments(text) {
