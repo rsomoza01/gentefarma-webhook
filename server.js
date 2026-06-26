@@ -582,34 +582,8 @@ app.get('/health', (req, res) => {
   });
 });
 
-// TEMP DEBUG ENDPOINT - remove after debugging
-app.get('/debug/search', async (req, res) => {
-  const { q } = req.query;
-  if (!q) return res.json({ error: 'q param required' });
-  console.log(`[DEBUG-SEARCH] incoming query=${q} strictConsultationMode=true effectiveThreshold should be 0.85 consultationMode=true`);
-  const result = await searchMedicinesByName(String(q), {
-    strictConsultationMode: true,
-    forceExactConsultationToken: false
-  });
-  console.log(`[DEBUG-SEARCH] result.matchesCount=${result?.matches?.length ?? 'null/undefined'}`);
-  res.json({
-    query: q,
-    queryTokens: result?.queryTokens,
-    matchesCount: result?.matches?.length ?? 0,
-    top10: (result?.matches ?? []).slice(0, 10).map(m => ({
-      title: m.productTitleFull,
-      score: m.score,
-      refSim: m.referenceSimilarity,
-      exactHit: m.exactHit,
-      phraseHit: m.phraseHit,
-      fullFocusMatch: m.fullFocusMatch,
-      dosageExactMatch: m.dosageExactMatch
-    }))
-  });
-});
+// ---------------------------------------------
 
-// ALSO: log searchMedicinesByName internals for debugging
-// Patch the function to log gate details
 
 // ----------------------------------------------------
 // Webhook
@@ -2306,7 +2280,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     );
     if (signal.ingredient.includes(matchQuery) || ingredientBounded) score += 200;
 
-    if (hasQueryDosage && !dosageExactMatch) score -= strictListMode ? 700 : 500;
+    if (hasQueryDosage && !dosageExactMatch) score -= strictListMode ? 700 : (consultationMode ? 0 : 500);
     if (hasQueryDosage && dosageExactMatch) score += 260;
 
     if (primaryTokens.length > 1) {
@@ -2589,7 +2563,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
       return (item.referenceSimilarity ?? 0) >= 0.80 || (item.score ?? 0) >= 180;
     });
 
-    if (hasQueryDosage) {
+    // In consultation mode, skip dosage filters - rely on the degraded filter
+    // which handles fuzzy matches better. Dosage mismatch (32mgr vs 8mg) would
+    // otherwise reject all candidates before they reach the degraded fallback.
+    const inConsultationDosageMode = hasQueryDosage && !consultationMode;
+
+    if (inConsultationDosageMode) {
       candidateMatches = candidateMatches.filter((item) => {
         const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
         const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
@@ -2612,20 +2591,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
       }
     }
 
-      if (!candidateMatches.length) {
-        // Debug: log first few products before degraded filter
-        const top5 = scoredProducts.slice(0, 5).map(item => ({
-          title: item.productTitleFull,
-          score: item.score,
-          refSim: item.referenceSimilarity,
-          dosageOverlap: [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ').includes('cardesartan'),
-          softScore: (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.78
-        }));
-        console.log(`[DOSAGE-FILTER-FALLTHROUGH] query=${query} hasQueryDosage=${hasQueryDosage} matchQuery=${matchQuery} dosageLessQuery=${dosageLessQuery} top5=${JSON.stringify(top5)}`);
-
-        const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
-        const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
-        const degradedMatches = scoredProducts.filter((item) => {
+    if (!candidateMatches.length) {
+      // Degraded filter: run when dosage filters (exact/relaxed) didn't produce results.
+      // Uses tokenSimilarity for fuzzy matching between query tokens and product text.
+      const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
+      const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+      const degradedMatches = scoredProducts.filter((item) => {
         const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateCore) return false;
 
@@ -2643,7 +2614,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
       });
 
       if (degradedMatches.length) {
-        console.log(`[DEGRADED] query=${query} degradedMatches=${degradedMatches.length} using degraded path`);
         candidateMatches = degradedMatches;
       }
     }
