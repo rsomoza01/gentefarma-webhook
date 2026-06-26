@@ -1974,7 +1974,11 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     return buildNoMatchListMessage();
   }
 
-  const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text.trim();
+  // If the only candidate is a pure dosage (e.g. "160 mcg"), use the full OCR text instead
+  const PURE_DOSAGE_RE = /^\s*[\d.,]+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i;
+  const singleQuery = candidateMedicines[0] && !PURE_DOSAGE_RE.test(candidateMedicines[0])
+    ? candidateMedicines[0]
+    : (extractMedicineQuery(text) || text.trim());
   const result = await searchMedicinesByName(singleQuery, {
     products: await fetchCatalogProducts(2000),
     exchangeRate: await getBcvRate(),
@@ -3945,9 +3949,12 @@ function extractRecipeMedicineLines(value) {
     /\b(tienes?|tiene|tengo|tienen|tener|quiero|quiere|quieren|querer|busco|busca|buscan|buscar|necesito|necesita|necesitan|necesitar|hay|habia|habra|disponible|disponibles|disponibilidad|precio|costo|costar|cuesta|cuestan)\b/i,
     /\b(por\s+favor|me\s+puedes|me\s+ayuda|consulta|consultar|saber|cuanto|cuánto)\b/i
   ];
+  const PURE_DOSAGE_RE = /^\s*[\d.,]+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i;
   const pushCandidate = (candidate) => {
     const normalized = normalizeText(candidate);
     if (!normalized) return;
+    // Reject pure dosage-only strings (no ingredient name, just "160 mcg")
+    if (PURE_DOSAGE_RE.test(normalized)) return;
     if (metaPatterns.some((pattern) => pattern.test(candidate) || pattern.test(normalized))) return;
     if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return;
     if (!/[a-záéíóúñ]/i.test(candidate)) return;
