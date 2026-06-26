@@ -3979,7 +3979,19 @@ function extractRecipeMedicineLines(value) {
     'antialergico','antihistaminico','alergico','alérgico',
     '10','veces','tableta','recubiertas','recubierto',
     'mg','ml','mcg','g','gr','ui','iu','mL',
+    // Multi-word OCR fragments used as false section headers
+    'en','para','con','sin','cada','por','del','los','las','una','unos','unas',
   ]);
+  // Patterns to catch full OCR fragments that are not medicines
+  const NON_MEDICINE_PATTERNS = [
+    /^(?:en|para)\s+(?:capsulas?|capsules?|caps|tabletas?|comp|comprimidos?|polvo|sobres?|inhalar|inhalador|aerosol|suspension)/i,
+    /^\d+\s*(?:capsulas?|capsules?|tabletas?|comprimidos?|comp|ampollas?|viales?|frascos?|sobres?)\s*(?:\+\s*\d+\s*(?:capsulas?|caps|tabletas?|inhalador|aerosol))?/i,
+    /^(?:capsulas?|capsules?|tabletas?)\s*(?:\d+\s*)?(?:para|de|inhalar|inhalacion|aerosol|inhalador)?/i,
+    /^(?:polvo|granulado|sobres?|suspension)\s+(?:para|de|inhalaci)/i,
+    /^(?:60|cuantos?|cada)\s*(?:capsulas?|mg|ml|mcg)/i,
+    /^(?:bio|multi|omega|ultra|super)\s/gi,
+    /^(?:lavaplatos|champu|gel|leche|azufre|microgotero)/i,
+  ];
   const PURE_DOSAGE_RE = /^\s*[\d.,]+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i;
   const pushCandidate = (candidate) => {
     const normalized = normalizeText(candidate);
@@ -3990,6 +4002,7 @@ function extractRecipeMedicineLines(value) {
     // Reject if the first token is a known non-medicine word
     if (KNOWN_NON_MEDICINE.has(firstToken)) return;
     if (!hasLikelyMedicineName) return;
+    if (NON_MEDICINE_PATTERNS.some((p) => p.test(normalized))) return;
     if (/\b(belen|belén|arcia|patient|paciente nombre|apellido|ano nac|año nac|dr\.|dra\.|doctor|doctora|unidad|gastroenterologia|gastroenterología)\b/i.test(normalized)) return;
     // Skip lines that look like user query fragments (contain user query verbs)
     if (userQueryVerbPatterns.some((p) => p.test(normalized))) return;
