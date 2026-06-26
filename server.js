@@ -3959,32 +3959,32 @@ function extractRecipeMedicineLines(value) {
     /\b(tienes?|tiene|tengo|tienen|tener|quiero|quiere|quieren|querer|busco|busca|buscan|buscar|necesito|necesita|necesitan|necesitar|hay|habia|habra|disponible|disponibles|disponibilidad|precio|costo|costar|cuesta|cuestan)\b/i,
     /\b(por\s+favor|me\s+puedes|me\s+ayuda|consulta|consultar|saber|cuanto|cuánto)\b/i
   ];
-  const PURE_DOSAGE_RE = /^\s*[\d.,]+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i;
+  // Tokens that appear in pharmaceutical OCR but are NOT medicine names:
+  // brand names (CALOX, GENVEN...), descriptors (GENERICO, RECUBIERTAS),
+  // salt forms used alone (CLORHIDRATO alone), and form tokens used alone (CAPSULAS...).
+  const KNOWN_NON_MEDICINE = new Set([
+    'calox','genven','spefar','drotafarma','limate','la','sante','oflox','ofloxacina',
+    'biotech','tecfar','farmacidio','grunenthal','janseen','kern','pharma','laboratorio',
+    'medicamento','generico','genérico','genérica','recubiertas','recubierto','inyectable',
+    'clorhidrato','bromuro','cloruro','sulfato','nitrato','fosfato','acetato',
+    'via','vía','oral','rectal','sublingual','tópico','tópica','topico','topica',
+    'nasal','oftálmica','oftalmica','inhalatoria','intravenosa','intramuscular',
+    'transdérmica','transdermica','vaginal','cutánea','cutaneo',
+    'comp','comprimido','comprimidos','tab','tableta','tabletas','capsulas','capsulas','caps','cap',
+    'ampolla','ampollas','vial','frasco','suspension','susp','jarabe','gotas','crema','gel',
+    'polvo','polvos','sobres','granulado','unguento','supositorio','ovulo','parche','aerosol',
+    'inh','inhal','spray','drop','barra','capsules',
+  ]);
   const pushCandidate = (candidate) => {
     const normalized = normalizeText(candidate);
     if (!normalized) return;
-    // Reject pure dosage-only strings (no ingredient name, just "160 mcg")
     if (PURE_DOSAGE_RE.test(normalized)) return;
-    if (metaPatterns.some((pattern) => pattern.test(candidate) || pattern.test(normalized))) return;
-    if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return;
-    if (!/[a-záéíóúñ]/i.test(candidate)) return;
-    if (normalized.split(' ').length > 8) return;
-    // Require BOTH a dosage form token AND a number — not just one or the other.
-    // This prevents "antialergico", "clorhidrato", "calox", "polvo para inhalacion" from passing.
-    // BUT: "FEXOFENADINA" has no number — it needs a medicine name, not just dosage form.
-    // Split: reject pure quantity strings (number + form, no medicine name).
-    const hasDosageNumber = /\d/.test(candidate);
-    const hasFormToken = formOrDose.test(candidate);
-    const hasLikelyMedicineName = /[a-záéíóúñ]{4,}/i.test(candidate) && !/^(?:mg|mcg|g|gr|ml|mcg|mL|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad|retard|vía|via|oral|rectal|sublingual)$/i.test(candidate.split(/\s+/)[0]);
-    if (!hasDosageNumber || !hasFormToken) {
-      // No number or no form token — require a medicine name to pass
-      if (!hasLikelyMedicineName) return;
-    } else {
-      // Has number AND form token — likely a medicine line, but also check for
-      // pure quantity descriptors like "10 TABLETAS" (no medicine name, just qty + form)
-      if (!hasLikelyMedicineName) return;
-    }
-    if (/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac|dr\.|dra\.|doctor|doctora|unidad|gastroenterologia|gastroenterología)\b/i.test(normalized)) return;
+    const firstToken = normalized.split(/\s+/)[0];
+    const hasLikelyMedicineName = /[a-záéíóúñ]{4,}/i.test(candidate) && !KNOWN_NON_MEDICINE.has(firstToken);
+    // Reject if the first token is a known non-medicine word
+    if (KNOWN_NON_MEDICINE.has(firstToken)) return;
+    if (!hasLikelyMedicineName) return;
+    if (/\b(belen|belén|arcia|patient|paciente nombre|apellido|ano nac|año nac|dr\.|dra\.|doctor|doctora|unidad|gastroenterologia|gastroenterología)\b/i.test(normalized)) return;
     // Skip lines that look like user query fragments (contain user query verbs)
     if (userQueryVerbPatterns.some((p) => p.test(normalized))) return;
     candidates.push(candidate);
