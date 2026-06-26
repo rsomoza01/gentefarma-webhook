@@ -2534,7 +2534,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
         item.phraseHit ||
         (item.referenceSimilarity ?? 0) >= strictReferenceThreshold
       );
-      if (!pass && item.referenceSimilarity >= 0.80) {
+      if (!pass && item.referenceSimilarity >= (ocrOnly ? 0.70 : 0.80)) {
         console.log(`[RECIPE-FILTER] REJECTED candidate='${item.productTitleFull}' exactTokenMatch=${exactTokenMatch} refSim=${item.referenceSimilarity?.toFixed(3)} score=${item.score}`);
       }
       return pass;
@@ -2565,10 +2565,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
       return { query, queryTokens, exchangeRate, matches: [] };
     }
   } else {
-    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.76);
+    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= (ocrOnly ? 0.70 : 0.76));
     candidateMatches = similarityMatches.filter((item) => {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.referenceSimilarity ?? 0) >= 0.76 || (item.score ?? 0) >= 180;
+      return (item.referenceSimilarity ?? 0) >= (ocrOnly ? 0.70 : 0.76) || (item.score ?? 0) >= 180;
     });
 
     // In consultation mode, skip dosage filters - rely on the degraded filter
