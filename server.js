@@ -578,7 +578,23 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'gentefarma-webhook',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    commit: '9197e76'
+  });
+});
+
+// MINIMAL DEBUG ENDPOINT
+app.get('/d', async (req, res) => {
+  const q = req.query.q || '';
+  const result = await searchMedicinesByName(q, { strictConsultationMode: true, forceExactConsultationToken: false });
+  res.json({
+    q,
+    matchesCount: result?.matches?.length ?? 0,
+    top3: (result?.matches ?? []).slice(0,3).map(m => ({
+      title: m.productTitleFull,
+      score: m.score,
+      refSim: m.referenceSimilarity
+    }))
   });
 });
 
