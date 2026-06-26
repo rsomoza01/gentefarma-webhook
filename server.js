@@ -582,6 +582,28 @@ app.get('/health', (req, res) => {
   });
 });
 
+// TEMP DEBUG ENDPOINT - remove after debugging
+app.get('/debug/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.json({ error: 'q param required' });
+  const result = await searchMedicinesByName(String(q), {
+    strictConsultationMode: true,
+    forceExactConsultationToken: false
+  });
+  res.json({
+    query: q,
+    matchesCount: result?.matches?.length ?? 0,
+    top5: (result?.matches ?? []).slice(0, 5).map(m => ({
+      title: m.productTitleFull,
+      score: m.score,
+      refSim: m.referenceSimilarity,
+      exactHit: m.exactHit,
+      phraseHit: m.phraseHit,
+      fullFocusMatch: m.fullFocusMatch
+    }))
+  });
+});
+
 // ----------------------------------------------------
 // Webhook
 // ----------------------------------------------------
