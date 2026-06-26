@@ -3964,7 +3964,7 @@ function extractRecipeMedicineLines(value) {
   // salt forms used alone (CLORHIDRATO alone), and form tokens used alone (CAPSULAS...).
   const KNOWN_NON_MEDICINE = new Set([
     'calox','genven','spefar','drotafarma','limate','la','sante','oflox','ofloxacina',
-    'biotech','tecfar','farmacidio','grunenthal','janseen','kern','pharma','laboratorio',
+    'biotech','tecfar','farmacidio','grunenthal','janseen','kern','pharma','laboratorio','pharmetique',
     'medicamento','generico','genérico','genérica','recubiertas','recubierto','inyectable',
     'clorhidrato','bromuro','cloruro','sulfato','nitrato','fosfato','acetato',
     'via','vía','inh','inhal','oral','rectal','sublingual','tópico','tópica','topico','topica',
@@ -3976,7 +3976,7 @@ function extractRecipeMedicineLines(value) {
     'spray','drop','barra','capsules',
     // OCR noise from pharmaceutical boxes
     'antialergico','antialérgico','antialergico','antihistaminico','antihistamínico',
-    'antialergico','antihistaminico','alergico','alérgico',
+    'antialergico','antihistaminico','alergico','alérgico','moderan',
     '10','veces','tableta','recubiertas','recubierto',
     'mg','ml','mcg','g','gr','ui','iu','mL',
     // Multi-word OCR fragments used as false section headers
