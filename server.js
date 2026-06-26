@@ -2549,10 +2549,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
       return { query, queryTokens, exchangeRate, matches: [] };
     }
   } else {
-    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.93);
+    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= effectiveThreshold);
     candidateMatches = similarityMatches.filter((item) => {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.referenceSimilarity ?? 0) >= 0.93 || (item.score ?? 0) >= 180;
+      return (item.referenceSimilarity ?? 0) >= effectiveThreshold || (item.score ?? 0) >= 180;
     });
 
     if (hasQueryDosage) {
