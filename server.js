@@ -2228,10 +2228,16 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (signal.titleArrayTextFull === matchQuery) score += 560;
     if (signal.ingredient === matchQuery) score += 420;
 
-    if (referenceSimilarity >= strictReferenceThreshold + 0.03) score += 420;
-    else if (referenceSimilarity >= strictReferenceThreshold) score += 260;
-    else if (referenceSimilarity >= strictReferenceThreshold - 0.03) score += strictListMode ? 80 : 120;
-    else if (strictListMode) score -= 500;
+  // In consultation mode, use the same 0.85 threshold as the CONSULTATION-GATE fuzzy gate.
+  // Previously this was 0.93 (strictListMode), which caused misspelled drug names like
+  // "cardesartan" (→ candesartan, similarity ≈ 0.894) to get a -500 penalty and vanish
+  // even though they passed the 0.85 fuzzy gate. With 0.85, the same product now gets
+  // +260 (above threshold) + 80 (near threshold) + 320 (substring bonus) = +660.
+  const effectiveThreshold = consultationMode ? 0.85 : strictReferenceThreshold;
+  if (referenceSimilarity >= effectiveThreshold + 0.03) score += 420;
+  else if (referenceSimilarity >= effectiveThreshold) score += 260;
+  else if (referenceSimilarity >= effectiveThreshold - 0.03) score += strictListMode ? 80 : 120;
+  else if (strictListMode) score -= 500;
 
     // Only give +320 if the match is a whole-token hit (bounded by word boundaries)
     // This prevents "DORIXINA" from scoring +320 when query="DORIXINA FLEX"
