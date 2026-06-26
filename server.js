@@ -3967,13 +3967,18 @@ function extractRecipeMedicineLines(value) {
     'biotech','tecfar','farmacidio','grunenthal','janseen','kern','pharma','laboratorio',
     'medicamento','generico','genérico','genérica','recubiertas','recubierto','inyectable',
     'clorhidrato','bromuro','cloruro','sulfato','nitrato','fosfato','acetato',
-    'via','vía','oral','rectal','sublingual','tópico','tópica','topico','topica',
+    'via','vía','inh','inhal','oral','rectal','sublingual','tópico','tópica','topico','topica',
     'nasal','oftálmica','oftalmica','inhalatoria','intravenosa','intramuscular',
     'transdérmica','transdermica','vaginal','cutánea','cutaneo',
     'comp','comprimido','comprimidos','tab','tableta','tabletas','capsulas','capsulas','caps','cap',
     'ampolla','ampollas','vial','frasco','suspension','susp','jarabe','gotas','crema','gel',
     'polvo','polvos','sobres','granulado','unguento','supositorio','ovulo','parche','aerosol',
-    'inh','inhal','spray','drop','barra','capsules',
+    'spray','drop','barra','capsules',
+    // OCR noise from pharmaceutical boxes
+    'antialergico','antialérgico','antialergico','antihistaminico','antihistamínico',
+    'antialergico','antihistaminico','alergico','alérgico',
+    '10','veces','tableta','recubiertas','recubierto',
+    'mg','ml','mcg','g','gr','ui','iu','mL',
   ]);
   const PURE_DOSAGE_RE = /^\s*[\d.,]+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i;
   const pushCandidate = (candidate) => {
