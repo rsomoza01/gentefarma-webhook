@@ -1937,8 +1937,10 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
         strictListMode: !ocrOnly,
         ocrOnly,
         recipeMode,
-        strictConsultationMode: consultationMode,
-        forceExactConsultationToken: consultationMode && !recipeMode
+        // Use consultation mode (0.85 threshold) for multi-medicine queries
+        // so fuzzy matching tolerates misspellings like "cardesartan"→"candesartan".
+        strictConsultationMode: true,
+        forceExactConsultationToken: false
       });
       if (result && result.matches && result.matches.length) {
         groups.push(result);
