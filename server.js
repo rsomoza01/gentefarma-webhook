@@ -3975,6 +3975,7 @@ function extractRecipeMedicineLines(value) {
     'polvo','polvos','sobres','granulado','unguento','supositorio','ovulo','parche','aerosol',
     'inh','inhal','spray','drop','barra','capsules',
   ]);
+  const PURE_DOSAGE_RE = /^\s*[\d.,]+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i;
   const pushCandidate = (candidate) => {
     const normalized = normalizeText(candidate);
     if (!normalized) return;
