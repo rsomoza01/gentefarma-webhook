@@ -3969,7 +3969,11 @@ function extractRecipeMedicineLines(value) {
     if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return;
     if (!/[a-záéíóúñ]/i.test(candidate)) return;
     if (normalized.split(' ').length > 8) return;
-    if (!formOrDose.test(candidate) && !shortBrandLike.test(normalized)) return;
+    // Require BOTH a dosage form token AND a number — not just one or the other.
+    // This prevents "antialergico", "clorhidrato", "calox", "polvo para inhalacion" from passing.
+    const hasDosageNumber = /\d/.test(candidate);
+    const hasFormToken = formOrDose.test(candidate);
+    if (!hasDosageNumber || !hasFormToken) return;
     if (/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac|dr\.|dra\.|doctor|doctora|unidad|gastroenterologia|gastroenterología)\b/i.test(normalized)) return;
     // Skip lines that look like user query fragments (contain user query verbs)
     if (userQueryVerbPatterns.some((p) => p.test(normalized))) return;
