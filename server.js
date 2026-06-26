@@ -2581,24 +2581,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
       return { query, queryTokens, exchangeRate, matches: [] };
     }
   } else {
-    // DEBUG: log top 5 scored products before similarity filter
-    const topScored = scoredProducts.slice(0, 5).map(item => ({
-      title: item.productTitleFull,
-      score: item.score,
-      refSim: item.referenceSimilarity,
-      exactHit: item.exactHit,
-      fullFocusMatch: item.fullFocusMatch,
-      phraseHit: item.phraseHit,
-      effectiveThreshold
-    }));
-    console.log(`[SIMILARITY-DEBUG] topScored=${JSON.stringify(topScored)} isVitaminQuery=${isVitaminQuery} recipeMode=${recipeMode} consultationMode=${consultationMode} hasQueryDosage=${hasQueryDosage} strictListMode=${strictListMode}`);
-
-    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= effectiveThreshold);
+    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.80);
     candidateMatches = similarityMatches.filter((item) => {
       if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.referenceSimilarity ?? 0) >= effectiveThreshold || (item.score ?? 0) >= 180;
+      return (item.referenceSimilarity ?? 0) >= 0.80 || (item.score ?? 0) >= 180;
     });
-    console.log(`[SIMILARITY-RESULT] scoredProducts=${scoredProducts.length} similarityMatches=${similarityMatches.length} candidateMatches=${candidateMatches.length}`);
 
     if (hasQueryDosage) {
       candidateMatches = candidateMatches.filter((item) => {
