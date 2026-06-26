@@ -3971,9 +3971,19 @@ function extractRecipeMedicineLines(value) {
     if (normalized.split(' ').length > 8) return;
     // Require BOTH a dosage form token AND a number — not just one or the other.
     // This prevents "antialergico", "clorhidrato", "calox", "polvo para inhalacion" from passing.
+    // BUT: "FEXOFENADINA" has no number — it needs a medicine name, not just dosage form.
+    // Split: reject pure quantity strings (number + form, no medicine name).
     const hasDosageNumber = /\d/.test(candidate);
     const hasFormToken = formOrDose.test(candidate);
-    if (!hasDosageNumber || !hasFormToken) return;
+    const hasLikelyMedicineName = /[a-záéíóúñ]{4,}/i.test(candidate) && !/^(?:mg|mcg|g|gr|ml|mcg|mL|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad|retard|vía|via|oral|rectal|sublingual)$/i.test(candidate.split(/\s+/)[0]);
+    if (!hasDosageNumber || !hasFormToken) {
+      // No number or no form token — require a medicine name to pass
+      if (!hasLikelyMedicineName) return;
+    } else {
+      // Has number AND form token — likely a medicine line, but also check for
+      // pure quantity descriptors like "10 TABLETAS" (no medicine name, just qty + form)
+      if (!hasLikelyMedicineName) return;
+    }
     if (/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac|dr\.|dra\.|doctor|doctora|unidad|gastroenterologia|gastroenterología)\b/i.test(normalized)) return;
     // Skip lines that look like user query fragments (contain user query verbs)
     if (userQueryVerbPatterns.some((p) => p.test(normalized))) return;
