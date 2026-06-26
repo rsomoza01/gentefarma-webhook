@@ -2025,28 +2025,31 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const exactRoot = queryTokens.join(' ');
   const dosageLessQuery = queryTokens
     .filter((token) => !/^(\d+(?:[.,]\d+)?)$/.test(token))
-    .filter((token) => !/^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(token))
+    .filter((token) => !/^(mg|mgr|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(token))
     .join(' ')
     .trim();
   const matchQuery = dosageLessQuery || query;
   const matchTokens = tokenize(matchQuery).filter((t) => !STOPWORDS.has(t) && t.length > 1);
   if (!matchTokens.length) return { query, queryTokens, exchangeRate, matches: [] };
 
-  const isDosageToken = (token) => /^(\d+(?:[.,]\d+)?)$/.test(token) || /^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(token);
+  const isDosageToken = (token) => /^(\d+(?:[.,]\d+)?)$/.test(token) || /^(mg|mgr|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(token);
   const focusTokens = matchTokens.filter((token) => !isDosageToken(token));
   const primaryTokens = focusTokens.length ? focusTokens : matchTokens;
   const primaryRoot = primaryTokens.join(' ');
-  const dosagePattern = /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|gr|ml|cc|ui|iu)\b/gi;
+  // "mgr" must appear here so that "32 mgr" (with space) is normalized before dosagePattern runs.
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|gr|mgr|ml|cc|ui|iu)\b/gi;
   const extractDosageSignatures = (value) => {
     const normalizedValue = normalizeText(value)
       .replace(/\bmgr\.?\b/gi, 'mg')  // normalize "mgr" → "mg" (common OCR variant)
       .replace(/\bgram\.?\b/gi, 'g');  // normalize "gram" → "g"
-    if (!normalizedValue) return [];
+    // Also normalize "X mgr" (digit-space-mgr) → "Xmg" so the pattern above captures it.
+    const spaceNormalized = normalizedValue.replace(/(\d+)\s+mgr\.?/gi, '$1mg');
+    if (!spaceNormalized) return [];
     const signatures = [];
     let match;
-    while ((match = dosagePattern.exec(normalizedValue))) {
+    while ((match = dosagePattern.exec(spaceNormalized))) {
       const amount = String(match[1]).replace(',', '.');
-      const unit = String(match[2]).replace(/mL/i, 'ml').toLowerCase();
+      const unit = String(match[2]).replace(/mL/i, 'ml').replace(/mgr/i, 'mg').toLowerCase();
       signatures.push(`${amount}${unit}`);
     }
     dosagePattern.lastIndex = 0;
@@ -2912,7 +2915,7 @@ function splitSingleLineMedicineList(text) {
   }
 
   // ── Unit patterns ──
-  const UNIT_RE = /^(?:mg|mcg|g|gr|ml|mL|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
+  const UNIT_RE = /^(?:mg|mgr|mcg|g|gr|ml|mL|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
 
   // ── Strong stopwords to strip when extracting medicine name ──
   const STRONG_STOP_RE = /^(?:de|del|la|el|las|los|una|unos|que|y|con|para|por|sin|no|si|un|une)$/i;
@@ -4280,7 +4283,7 @@ function extractMedicineQuery(text) {
   if (!cleaned) return '';
 
   // Strip dosage FIRST so it doesn't pollute verb-pattern capture
-  const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
+  const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mg|mgr|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
   const cleanedDosage = normalizeText(text).replace(dosageStrip, ' ').replace(/\s+/g, ' ').trim();
 
   const verbList = [
