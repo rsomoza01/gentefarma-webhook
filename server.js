@@ -2936,15 +2936,24 @@ function splitSingleLineMedicineList(text) {
     const tokens = between.split(/\s+/);
 
     // Walk backwards skipping trailing "de NUM" pairs and stopwords
+    // STOPPING CONDITION: if the token preceding the "de NUM" anchor
+    // (in the raw text) is itself preceded by another "de NUM",
+    // the preceding medicine already owns that "de NUM" — stop here.
     const medTokens = [];
+    let hitMedicine = false; // true once we've added the first non-stopword token
     for (let j = tokens.length - 1; j >= 0; j--) {
       const tok = tokens[j];
+      // Skip "de NUM" pair: tokens[j-1]="de" and tokens[j]=digit
       if (j >= 1 && tokens[j - 1].toLowerCase() === 'de' && /^\d+$/.test(tok)) {
-        j--; // skip "de NUM" pair
+        j--; // skip "de" + digit together
         continue;
       }
-      if (STOP_RE.test(tok)) { j--; continue; }
+      if (STRONG_STOP_RE.test(tok)) { j--; continue; }
+      // Stop if we've already collected a medicine token and we encounter
+      // another one — we crossed into the previous segment's medicine name.
+      if (hitMedicine) break;
       medTokens.unshift(tok);
+      hitMedicine = true;
     }
 
     const segment = (medTokens.join(' ') + ' de ' + num).trim();
@@ -2961,6 +2970,13 @@ function extractMedicineRequestsFromSegments(text) {
 
   const segments = splitMedicineSegments(rawText);
   const pieces = segments.length > 1 ? segments : splitSingleLineMedicineList(rawText);
+  // [DIAG] log split results
+  console.log('🔬 extractMedicineRequests split:', {
+    rawText: rawText.slice(0, 120),
+    segmentsCount: segments.length,
+    piecesCount: pieces.length,
+    pieces: pieces.slice(0, 8)
+  });
   const filteredPieces = pieces.filter((piece) => !/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac)\b/i.test(normalizeText(piece)));
   const results = [];
 
@@ -2972,8 +2988,11 @@ function extractMedicineRequestsFromSegments(text) {
 
     const query = extractMedicineQuery(piece) || cleaned;
     if (!query) continue;
+    // [DIAG] log each query extraction
+    console.log('🔬 extractMedicineRequests query:', { piece: piece.slice(0, 80), query });
     if (!results.includes(query)) results.push(query);
   }
+  console.log('🔬 extractMedicineRequests results:', results);
 
   return results;
 }
