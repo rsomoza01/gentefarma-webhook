@@ -3966,7 +3966,7 @@ function extractRecipeMedicineLines(value) {
     'calox','genven','spefar','drotafarma','limate','la','sante','oflox','ofloxacina',
     'biotech','tecfar','farmacidio','grunenthal','janseen','kern','pharma','laboratorio','pharmetique',
     'medicamento','generico','genérico','genérica','recubiertas','recubierto','inyectable',
-    'clorhidrato','bromuro','cloruro','sulfato','nitrato','fosfato','acetato',
+    'clorhidrato','bromuro','cloruro','sulfato','nitrato','fosfato','acetato','potasico','potásico','sodico','sódico','magnesico','magnésico','cálcico','calcico','bisulfato',
     'via','vía','inh','inhal','oral','rectal','sublingual','tópico','tópica','topico','topica',
     'nasal','oftálmica','oftalmica','inhalatoria','intravenosa','intramuscular',
     'transdérmica','transdermica','vaginal','cutánea','cutaneo',
