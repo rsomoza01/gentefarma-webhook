@@ -4484,12 +4484,14 @@ function extractMedicineQuery(text) {
     if (!beforeNum || !beforeNum.trim()) return numStr;
   }
 
-  if (strongTokens.length) return strongTokens[0];
+  // Filter KNOWN_NON_MEDICINE from strongTokens so we don't return "potásico" as medicine name
+  const nonSaltStrong = strongTokens.filter((token) => !KNOWN_NON_MEDICINE.has(token));
+  if (nonSaltStrong.length) return nonSaltStrong[0];
   const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
   if (weakFiltered.length) return weakFiltered[0];
   if (formTokens.length && tokens.length > 1) {
     const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
-    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
+    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token) && !KNOWN_NON_MEDICINE.has(token));
     if (afterStrong) return afterStrong;
   }
   return weakFiltered[0] || '';
