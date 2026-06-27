@@ -3959,29 +3959,26 @@ function extractRecipeMedicineLines(value) {
     /\b(tienes?|tiene|tengo|tienen|tener|quiero|quiere|quieren|querer|busco|busca|buscan|buscar|necesito|necesita|necesitan|necesitar|hay|habia|habra|disponible|disponibles|disponibilidad|precio|costo|costar|cuesta|cuestan)\b/i,
     /\b(por\s+favor|me\s+puedes|me\s+ayuda|consulta|consultar|saber|cuanto|cuánto)\b/i
   ];
-  // Tokens that appear in pharmaceutical OCR but are NOT medicine names:
-  // brand names (CALOX, GENVEN...), descriptors (GENERICO, RECUBIERTAS),
-  // salt forms used alone (CLORHIDRATO alone), and form tokens used alone (CAPSULAS...).
-  const KNOWN_NON_MEDICINE = new Set([
-    'calox','genven','spefar','drotafarma','limate','la','sante','oflox','ofloxacina',
-    'biotech','tecfar','farmacidio','grunenthal','janseen','kern','pharma','laboratorio','pharmetique',
-    'medicamento','generico','genérico','genérica','recubiertas','recubierto','inyectable',
-    'clorhidrato','bromuro','cloruro','sulfato','nitrato','fosfato','acetato','potasico','potásico','sodico','sódico','magnesico','magnésico','cálcico','calcico','bisulfato',
-    'via','vía','inh','inhal','oral','rectal','sublingual','tópico','tópica','topico','topica',
-    'nasal','oftálmica','oftalmica','inhalatoria','intravenosa','intramuscular',
-    'transdérmica','transdermica','vaginal','cutánea','cutaneo',
-    'comp','comprimido','comprimidos','tab','tableta','tabletas','capsulas','capsulas','caps','cap',
-    'ampolla','ampollas','vial','frasco','suspension','susp','jarabe','gotas','crema','gel',
-    'polvo','polvos','sobres','granulado','unguento','supositorio','ovulo','parche','aerosol',
-    'spray','drop','barra','capsules',
-    // OCR noise from pharmaceutical boxes
-    'antialergico','antialérgico','antialergico','antihistaminico','antihistamínico',
-    'antialergico','antihistaminico','alergico','alérgico','moderan',
-    '10','veces','tableta','recubiertas','recubierto',
-    'mg','ml','mcg','g','gr','ui','iu','mL',
-    // Multi-word OCR fragments used as false section headers
-    'en','para','con','sin','cada','por','del','los','las','una','unos','unas',
-  ]);
+// Blocklist: first tokens that are known NOT to be medicine names.
+// Used by both extractRecipeMedicineLines (OCR/recipe) and extractMedicineQuery (text).
+const KNOWN_NON_MEDICINE = new Set([
+  'calox','genven','spefar','drotafarma','limate','la','sante','oflox','ofloxacina',
+  'biotech','tecfar','farmacidio','grunenthal','janseen','kern','pharma','laboratorio','pharmetique',
+  'medicamento','generico','genérico','genérica','recubiertas','recubierto','inyectable',
+  'clorhidrato','bromuro','cloruro','sulfato','nitrato','fosfato','acetato','potasico','potásico','sodico','sódico','magnesico','magnésico','cálcico','calcico','bisulfato',
+  'via','vía','inh','inhal','oral','rectal','sublingual','tópico','tópica','topico','topica',
+  'nasal','oftálmica','oftalmica','inhalatoria','intravenosa','intramuscular',
+  'transdérmica','transdermica','vaginal','cutánea','cutaneo',
+  'spray','drop','barra','capsules',
+  // OCR noise from pharmaceutical boxes
+  'antialergico','antialérgico','antialergico','antihistaminico','antihistamínico',
+  'alergico','alérgico','moderan',
+  '10','veces','tableta','recubiertas','recubierto',
+  'mg','ml','mcg','g','gr','ui','iu','mL',
+  // Multi-word OCR fragments used as false section headers
+  'en','para','con','sin','cada','por','del','los','las','una','unos','unas',
+]);
+
   // Patterns to catch full OCR fragments that are not medicines
   const NON_MEDICINE_PATTERNS = [
     /^(?:en|para)\s+(?:capsulas?|capsules?|caps|tabletas?|comp|comprimidos?|polvo|sobres?|inhalar|inhalador|aerosol|suspension)/i,
