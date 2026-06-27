@@ -1930,6 +1930,11 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     text: typeof text === 'string' ? text.slice(0, 200) : text
   });
 
+  // Log each medicineQuery before search
+  for (const medicineQuery of candidateMedicines) {
+    console.log(`[QUERY-SEARCH] medicineQuery='${medicineQuery}'`);
+  }
+
   if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCatalogProducts(2000);
@@ -2469,7 +2474,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     console.log(`[CONSULTATION-GATE] mode=${consultationMode} primaryTokens=${JSON.stringify(primaryTokens)} q='${q}' beforeCount=${beforeCount}`);
     // Log first 5 products before filter
     scoredProducts.slice(0, 5).forEach((item, i) => {
-      console.log(`[CONSULTATION-GATE] BEFORE[${i}] title='${item.productTitleFull}' tokenSet=${JSON.stringify([...item.tokenSet].slice(0, 10))} ingredient='${item.ingredient}'`);
+      console.log(`[CONSULTATION-GATE] BEFORE[${i}] title='${item.productTitleFull}' tokenSet=${JSON.stringify([...item.tokenSet].slice(0, 10))} ingredient='${item.ingredient}' tokenSetHasQ=${item.tokenSet.has(q)}`);
     });
     scoredProducts = scoredProducts.filter((item) => {
       // 1) Match exacto en tokenSet o title/ingredient
@@ -4290,6 +4295,11 @@ function extractPrimaryRecipeMedicineQuery(value) {
     const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token) && !KNOWN_NON_MEDICINE.has(token));
     if (afterStrong) return afterStrong;
   }
+  // Fallback: if cleanedTokens is empty but we have non-dose, non-weak tokens
+  // (e.g. "DOBET gotas" where "gotas" was filtered but "dobet" remained),
+  // use the first token that isn't a stopword.
+  const nonStopTokens = tokens.filter((t) => t.length >= 3 && !STOPWORDS.has(t) && !KNOWN_NON_MEDICINE.has(t));
+  if (nonStopTokens.length) return nonStopTokens[0];
   return weakFiltered[0] || '';
 }
 
