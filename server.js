@@ -4446,7 +4446,7 @@ function extractMedicineQuery(text) {
   const dosageTokens = tokens.filter((token) => isDoseToken(token));
   const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
 
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token) && !KNOWN_NON_MEDICINE.has(token));
   const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
   if (firstStrongToken) return firstStrongToken;
 
