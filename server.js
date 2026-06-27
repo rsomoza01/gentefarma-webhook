@@ -4407,6 +4407,10 @@ function extractMedicineQuery(text) {
     .replace(/^(?:saber|precio|costo|valor|consulta|consultar)\s+/i, '')
     .trim();
 
+  // Block salt forms and other noise from being returned as medicine names
+  const firstToken = normalizeText(candidate).split(/\s+/)[0];
+  if (KNOWN_NON_MEDICINE.has(firstToken)) return '';
+
   const vitaminDirectMatch = candidate.match(/\bvitamina\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
   if (vitaminDirectMatch) {
     return `vitamina ${normalizeText(vitaminDirectMatch[1])}`.trim();
