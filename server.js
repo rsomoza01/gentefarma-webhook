@@ -2907,10 +2907,16 @@ function extractMedicineRequests(text) {
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
     if (!/(\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)|(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina))/.test(cleaned) && cleaned.length < 6) continue;
-    const query = extractMedicineQuery(segment) || segment;
-    if (!query) continue;
+    const query = extractMedicineQuery(segment);
+    // Only use segment as fallback if it has a valid first token
+    const fallback = (() => {
+      const first = normalizeText(segment).split(/\s+/)[0];
+      return KNOWN_NON_MEDICINE.has(first) ? '' : segment;
+    })();
+    const finalQuery = (query && query.trim()) ? query : fallback;
+    if (!finalQuery || !finalQuery.trim()) continue;
 
-    if (!results.includes(query)) results.push(query);
+    if (!results.includes(finalQuery)) results.push(finalQuery);
   }
 
   return results;
