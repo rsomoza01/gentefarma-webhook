@@ -4253,7 +4253,7 @@ function extractPrimaryRecipeMedicineQuery(value) {
   const dosageTokens = tokens.filter((token) => isDoseToken(token));
   const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
 
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token) && !KNOWN_NON_MEDICINE.has(token));
   const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
   if (firstStrongToken) return firstStrongToken;
 
@@ -4263,31 +4263,34 @@ function extractPrimaryRecipeMedicineQuery(value) {
     const dose = normalizeText(dosageMatch[1]);
     const beforeDose = raw.slice(0, dosageMatch.index).trim();
     const beforeTokens = normalizeText(beforeDose).split(' ').filter((t) => t.length > 1 && !STOPWORDS.has(t));
-    const beforeStrong = beforeTokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
+    const beforeStrong = beforeTokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !KNOWN_NON_MEDICINE.has(token));
     if (beforeStrong.length) return beforeStrong[0];
     return dose;
   }
 
-  if (strongTokens.length) {
-    const top = strongTokens[0];
+  // Filter KNOWN_NON_MEDICINE from strongTokens so we don't return "potásico" as medicine name
+  const nonSaltStrong = strongTokens.filter((token) => !KNOWN_NON_MEDICINE.has(token));
+  if (nonSaltStrong.length) {
+    const top = nonSaltStrong[0];
     // Reject short tokens and known query residuals
-    const hasDosageForm = MED_FORM_TOKENS.has(tokenize(candidate).find((t) => MED_FORM_TOKENS.has(t)));
+    const hasDosageForm = MED_FORM_TOKENS.has(tokenize(raw).find((t) => MED_FORM_TOKENS.has(t)));
     if (top.length < 4 && !hasDosageForm) {
       // Short token without a dosage form — reject it
     } else {
       return top;
     }
     // Also reject common conversational residuals that survived cleanup
-    if (/^(noches|mananas|tardes|dias|favor|ahora|también|tampoco|así|asimesmo|小伙子|entonces|mientras|más|bien|mal|quizás|quizá|puede|pueden|puedo)$/i.test(top)) return '';
+    if (/^(noches|mananas|tardes|dias|favor|ahora|también|tampoco|así|asimesmo|entonces|mientras|más|bien|mal|quizás|quizá|puede|pueden|puedo)$/i.test(top)) return '';
     return top;
   }
-  if (cleanedTokens.length) return cleanedTokens[0];
+  const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  if (weakFiltered.length) return weakFiltered[0];
   if (formTokens.length && tokens.length > 1) {
     const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
-    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
+    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token) && !KNOWN_NON_MEDICINE.has(token));
     if (afterStrong) return afterStrong;
   }
-  return tokens[0] || '';
+  return weakFiltered[0] || '';
 }
 
 function looksLikeMedicineName(value) {
