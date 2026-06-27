@@ -4377,7 +4377,7 @@ function extractMedicineQuery(text) {
   // The bare number belongs to the current medicine. This pattern is intentionally
   // stricter so it does NOT consume the next medicine name.
   // FIXED: only capture the bare number; the cleanup replace handles " de NUMERO" suffix.
-  const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)(?:\s+|$)/i;
+  const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)\s+(?=mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)/i;
 
   const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+)$`, 'i');
 
@@ -4414,9 +4414,12 @@ function extractMedicineQuery(text) {
     .replace(/^(?:saber|precio|costo|valor|consulta|consultar)\s+/i, '')
     .trim();
 
-  // Block salt forms and other noise from being returned as medicine names
-  const firstToken = normalizeText(candidate).split(/\s+/)[0];
-  if (KNOWN_NON_MEDICINE.has(firstToken)) return '';
+  // Block single-token salt forms and other noise from being returned as medicine names.
+  // Only reject if the entire query is a single blocklisted token (e.g. "potásico" alone).
+  // Multi-token queries like "losartán potásico" are valid — the salt form is just a modifier.
+  const normalizedCandidate = normalizeText(candidate);
+  const candidateTokens = normalizedCandidate.split(/\s+/);
+  if (candidateTokens.length === 1 && KNOWN_NON_MEDICINE.has(candidateTokens[0])) return '';
 
   const vitaminDirectMatch = candidate.match(/\bvitamina\s+([a-z]\d*|\d+[a-z]?)(?:\b|\s|$)/i);
   if (vitaminDirectMatch) {
