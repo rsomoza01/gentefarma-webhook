@@ -3558,6 +3558,8 @@ const STOPWORDS = new Set([
   'hay',
   'mas',
   'más',
+  'información',
+  'informacion',
 ]);
 
 function normalizeText(value) {
@@ -4262,9 +4264,12 @@ function extractPrimaryRecipeMedicineQuery(value) {
   const dosageTokens = tokens.filter((token) => isDoseToken(token));
   const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
 
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token) && !KNOWN_NON_MEDICINE.has(token));
-  const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
-  if (firstStrongToken) return firstStrongToken;
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  // Note: KNOWN_NON_MEDICINE single-token rejection is already done above (line 4447).
+  // Salt-form tokens (potasico, clorhidrato, etc.) are intentionally kept here so
+  // multi-token medicine names like "losartan potasico" survive the filter intact.
+  const strongCandidateTokens = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  if (strongCandidateTokens.length) return strongCandidateTokens.join(' ');
 
   const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
   const dosageMatch = raw.match(dosagePattern);
@@ -4477,9 +4482,12 @@ function extractMedicineQuery(text) {
   const dosageTokens = tokens.filter((token) => isDoseToken(token));
   const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
 
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token) && !KNOWN_NON_MEDICINE.has(token));
-  const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
-  if (firstStrongToken) return firstStrongToken;
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  // Note: KNOWN_NON_MEDICINE single-token rejection is already done above (line 4447).
+  // Salt-form tokens (potasico, clorhidrato, etc.) are intentionally kept here so
+  // multi-token medicine names like "losartan potasico" survive the filter intact.
+  const strongCandidateTokens = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  if (strongCandidateTokens.length) return strongCandidateTokens.join(' ');
 
   const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
   const dosageMatch = candidate.match(dosagePattern);
