@@ -3027,7 +3027,7 @@ function extractMedicineRequestsFromSegments(text) {
     const cleaned = normalizeText(piece);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
-    if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned)) continue;
+    if (!/(\d|mg|mcg|g\b|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|gramos?)\b/.test(cleaned)) continue;
 
     const query = extractMedicineQuery(piece) || cleaned;
     if (!query) continue;
@@ -3555,7 +3555,9 @@ const STOPWORDS = new Set([
   'comprar',
   'tienes',
   'tiene',
-  'hay'
+  'hay',
+  'mas',
+  'más',
 ]);
 
 function normalizeText(value) {
@@ -3959,6 +3961,8 @@ const KNOWN_NON_MEDICINE = new Set([
   'mg','ml','mcg','g','gr','ui','iu','mL',
   // Multi-word OCR fragments used as false section headers
   'en','para','con','sin','cada','por','del','los','las','una','unos','unas',
+  // dosage residual after strip
+  'gramos','gramo',
 ]);
 
 function extractRecipeMedicineLines(value) {
@@ -4363,7 +4367,9 @@ function extractMedicineQuery(text) {
   if (!cleaned) return '';
 
   // Strip dosage FIRST so it doesn't pollute verb-pattern capture
-  const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mg|mgr|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
+  // grampos(g): put 'gramos' BEFORE 'g'/'gramo'/'gr' to prevent 'g' from partial-matching inside 'gramos'.
+  // 'g' alone is kept for standalone 'g' references (e.g. topical formulations), but 'gramos' must match first.
+  const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mg|mgr|mcg|gramos|gramo|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
   const cleanedDosage = normalizeText(text).replace(dosageStrip, ' ').replace(/\s+/g, ' ').trim();
 
   const verbList = [
@@ -4381,8 +4387,9 @@ function extractMedicineQuery(text) {
 
   // Pattern 2a: "de X [unit]" where unit follows the number → strip X unit
   // e.g. "de 75 mg de Paracetamol" → strip "75 mg", keep "Paracetamol"
+  // FIX: \b(?:\s+|$) after unit fails at end-of-string; use (?=\s|$) lookahead instead.
   const unitList = 'mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?';
-  const P2A = new RegExp(`^(?:de|del|para|con)\\s+(\\d+(?:[.,]\\d+)?)\\s+(${unitList})\\b(?:\\s+|$)(.+)$`, 'i');
+  const P2A = new RegExp(`^(?:de|del|para|con)\\s+(\\d+(?:[.,]\\d+)?)\\s+(${unitList})(?=\\s|$).*`, 'i');
   // Pattern 2b: "de X" where X is a bare number followed by another word → DON'T strip
   // The bare number belongs to the current medicine. This pattern is intentionally
   // stricter so it does NOT consume the next medicine name.
@@ -4417,12 +4424,20 @@ function extractMedicineQuery(text) {
     // number, so this cleanup removes " de 30" that remains after P2B match in cases
     // like "atorvastatina de 30 nifedipina" → "atorvastatina"
     .replace(/\s+(?:de|del)\s+\d+(?:[.,]\d+)?\s*$/gi, ' ')
+    // Strip " de un/una [unit]" residual from end — "Diosmina de un gramos" → "Diosmina"
+    // Only matches at end to avoid removing 'de' from medicine names that contain it.
+    .replace(/\s+de\s+(?:un|una|uno|dos|tres)\s+(?:gramos?|tablets?|capsulas?|cápsulas?|ml|miligrams?|mililitros?|comprimidos?)\s*$/gi, ' ')
     .trim();
   candidate = candidate.replace(/\s+y$/i, '').trim();
 
   candidate = candidate
     .replace(/^(?:saber|precio|costo|valor|consulta|consultar)\s+/i, '')
     .trim();
+
+  // After dosageStrip, "de NUM UNIT" leaves trailing " de" that P2A doesn't catch
+  // (P2A only matches when "de NUM UNIT" is at string start).
+  // Strip trailing " de", " del", " la", " el" left after dosage removal.
+  candidate = candidate.replace(/\s+(?:de|del|la|el)\s*$/gi, '').trim();
 
   // Block single-token salt forms and other noise from being returned as medicine names.
   // Only reject if the entire query is a single blocklisted token (e.g. "potásico" alone).
