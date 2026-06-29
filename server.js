@@ -4274,9 +4274,10 @@ function extractMedicineQuery(text) {
   // (e.g. "cotrimazol en gotas para el oido" → captured as "cotrimazol en gotas para el oido",
   // then filtered to "cotrimazol").
   const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+?)$`, 'i');
-
+  const verbReStr = verbRe.toString();
+  console.log('🧪 [DIAG-EMQ] IN="%s" cleanedNoFavor="%s" verbRe_full="%s" verbRe_len=%d verbRe_test=%s', _dbg_input, cleanedNoFavor, verbReStr.slice(0,120), verbReStr.length, verbRe.test(cleanedNoFavor));
+  console.log('🧪 [DIAG-EMQ] verbRe.lastIndex=%s', verbRe.lastIndex);
   let candidate = cleanedNoFavor;
-  console.log('🧪 [DIAG-EMQ] IN="%s" cleanedNoFavor="%s" verbRe="%s"', _dbg_input, cleanedNoFavor, verbRe.toString().slice(0, 80));
   for (const pattern of [verbRe, P2A, P2B]) {
     const match = cleanedNoFavor.match(pattern);
     if (match?.[1]) {
