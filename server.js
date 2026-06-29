@@ -1380,7 +1380,8 @@ async function routeMessage(phone, text, session, context = {}) {
     console.log('🧾 OCR medicines extraction rawOcr SOURCE:', {
       recipeSourceTextTruthy: Boolean(recipeSourceText),
       recipeSourceText: recipeSourceText?.slice(0, 100),
-      text: text?.slice(0, 100)
+      text: text?.slice(0, 300),
+      fullText: text
     });
     console.log('🧾 prescriptionClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
     const prescriptionClean = sanitizePrescriptionText(rawOcr);
