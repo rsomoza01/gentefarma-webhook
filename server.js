@@ -4158,6 +4158,7 @@ function extractPrimaryRecipeMedicineQuery(value) {
     'disponible', 'disponibles', 'disponibilidad',
     // Spanish conversational openers at start of queries
     'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
+    'es', 'soy', 'son', 'está', 'están',
     'quiero', 'quisiera', 'necesito', 'busco', 'busque'
   ]);
   // WEAK OPENERS that start conversation phrases — tokens equal to these or starting with
@@ -4374,6 +4375,7 @@ function extractMedicineQuery(text) {
     'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por',
     'disponible', 'disponibles', 'disponibilidad',
     'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
+    'es', 'soy', 'son', 'está', 'están',
     'quiero', 'quisiera', 'necesito', 'busco', 'busque'
   ]);
   const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier'];
