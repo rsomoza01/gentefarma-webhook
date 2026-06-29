@@ -1970,7 +1970,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   rememberCatalogSnapshot(session, result.matches, result.query || singleQuery, buildSearchDiagnosticMessage(result, singleQuery));
   appendConsultationToSheet({ products: [singleQuery], exists: 1, phone: userInfo.phone, userName: userInfo.pushName });
 
-  return buildSearchDiagnosticMessage(result, singleQuery);
+  const responseText = buildSearchDiagnosticMessage(result, singleQuery);
+  console.log(`🧪 [FINAL-RESPONSE] length=${responseText.length} firstLine="${responseText.split('\n')[0]}" matchesCount=${result.matches.length}`);
+  return responseText;
 }
 
 async function searchMedicinesByName(userQuery, options = {}) {
