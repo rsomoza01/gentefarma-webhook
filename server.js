@@ -2523,79 +2523,8 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (!candidateMatches.length) {
       return { query, queryTokens, exchangeRate, matches: [] };
     }
-  } else {
-    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.93);
-    candidateMatches = similarityMatches.filter((item) => {
-      if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.referenceSimilarity ?? 0) >= 0.93 || (item.score ?? 0) >= 180;
-    });
-
-    if (hasQueryDosage) {
-      candidateMatches = candidateMatches.filter((item) => {
-        const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
-        const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
-        const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
-        return candidateHasAmount && candidateHasUnit && item.dosageExactMatch;
-      });
-
-      if (!candidateMatches.length) {
-        const relaxedTokens = primaryTokens.length > 0 ? primaryTokens : matchTokens;
-        candidateMatches = scoredProducts.filter((item) => {
-          const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' '));
-          if (!candidateText) return false;
-
-          const tokenOverlap = relaxedTokens.some((token) => candidateText.includes(token));
-          const dosageOverlap = candidateText.includes(matchQuery) || candidateText.includes(dosageLessQuery) || candidateText.includes(exactRoot);
-          const relaxedScore = (item.score ?? 0) >= 80 || item.fullFocusMatch || item.exactHit || item.phraseHit;
-
-          return tokenOverlap && (dosageOverlap || relaxedScore);
-        });
-      }
-    }
-
-    console.log(`🧪 [CONSULTATION-MATCHES] after first filter candidateMatches.length=${candidateMatches.length} scoredProducts=${scoredProducts.length} topSample=` + JSON.stringify(scoredProducts.slice(0,3).map(i=>({t:i.productTitleFull,s:i.score??0,rs:i.referenceSimilarity??0,ffm:i.fullFocusMatch,eh:i.exactHit,ph:i.phraseHit}))));
-
-    if (!candidateMatches.length) {
-      const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
-      const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
-      console.log(`🧪 [CONSULTATION-FALLBACK] candidateMatches=0, queryCore='${queryCore}', altTokens=${JSON.stringify(alternativeTokens)}, scoredProducts=${scoredProducts.length}, sample=` + JSON.stringify(scoredProducts.slice(0,3).map(i=>({t:i.productTitleFull,s:i.score??0,rs:i.referenceSimilarity??0}))));
-const degradedMatches = scoredProducts.filter((item) => {
-        const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
-        if (!candidateCore) return false;
-
-        const tokenOverlap = alternativeTokens.length === 0
-          ? candidateCore.includes(queryCore)
-          : alternativeTokens.some((token) => {
-              if (candidateCore.includes(token)) return true;
-              // consultationMode: lower threshold to 0.76 so cotrimazol↔clotrimazol passes
-              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.76);
-            });
-
-        const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
-        const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.60 || item.fullFocusMatch || item.exactHit || item.phraseHit;
-        const willReturn = tokenOverlap && (dosageOverlap || softScore);
-        // DETAILED LOG: print each condition's result for first product
-        if (item.productTitleFull && item.productTitleFull.includes('canderm')) {
-          console.log(`🧪 [BLK2-DETAIL] title='${item.productTitleFull}' tokenOverlap=${tokenOverlap} dosageOverlap=${dosageOverlap} softScore=${softScore} FINAL=${willReturn}`);
-          tokenize(candidateCore).forEach(ct => {
-            const sim = tokenSimilarity("cotrimazol", ct);
-            if (sim >= 0.76) console.log(`🧪 [BLK2-DETAIL] MATCH! token='cotrimazol' vs '${ct}' = ${sim}`);
-          });
-        }
-
-        return willReturn;
-      });
-
-      if (degradedMatches.length) {
-        candidateMatches = degradedMatches;
-      }
-    }
-
-    console.log(`🧪 [CONSULTATION-DEGRADED] candidateMatches.length=${candidateMatches.length} returning empty. query='${query}'`);
-    if (!candidateMatches.length) {
-      return { query, queryTokens, exchangeRate, matches: [] };
-    }
   }
+  // [REMOVED: else { const similarityMatches } that was overwriting candidateMatches]
 
   const topMatches = candidateMatches
     .slice(0, 5)
