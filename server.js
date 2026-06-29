@@ -4273,7 +4273,9 @@ function extractMedicineQuery(text) {
   // allowing the MED_FORM_TOKENS filter downstream to clean trailing forms correctly
   // (e.g. "cotrimazol en gotas para el oido" → captured as "cotrimazol en gotas para el oido",
   // then filtered to "cotrimazol").
-  const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+?)$`, 'i');
+  const verbListJoined = verbList.join('|');
+  console.log('🧪 [DIAG-EMQ] verbListJoined_len=%d verbListJoined_sample=%s', verbListJoined.length, verbListJoined.slice(0, 200));
+  const verbRe = new RegExp(`(?:^|\\s)(?:${verbListJoined})\\s+(.+?)$`, 'i');
   const verbReStr = verbRe.toString();
   // Print full regex to see if 'custa' is actually inside it
   console.log('🧪 [DIAG-EMQ] IN="%s" verbRe_len=%d verbRe_test=%s verbRe=%s', _dbg_input, verbReStr.length, verbRe.test(cleanedNoFavor), verbReStr);
