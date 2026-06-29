@@ -4411,12 +4411,13 @@ function extractMedicineQuery(text) {
 
   const verbList = [
     'por\\sfavor','me\\spuedes\\sayudar\\scon','me\\sayudas\\scon','necesito','busco','busque','buscame','buscando','quiero',
-    'quisiera','me\\sinteresa','me\\sinteresan','(?<!\\w)tienes\\b','(?<!\\w)tiene\\b','(?<!\\w)tienen\\b','(?<!\\w)hay\\b',
-    'disponibilidad(?:\\sde)?','informar(?:\\ssobre)?','informe(?:\\ssobre)?','consultar(?:\\ssobre)?',
-    'consulta(?:\\ssobre)?','informame(?:\\ssobre)?','informarme(?:\\ssobre)?','precio(?:\\sde)?','conoces','(?<!\\w)vendes?(?!\\w)',
-    'dónde\\s(?:puedo\\s)?comprar','donde\\s(?:puedo\\s)?comprar','dónde\\scomprar','donde\\scomprar',
-    'dónde\\s(?:puedo\\s)?conseguir','donde\\s(?:puedo\\s)?conseguir','dónde\\sconseguir','donde\\sconseguir',
-    'dónde\\sconsigo','donde\\sconsigo','dónde\\sencuentro','donde\\sencuentro'
+    'quisiera','me\\sinteresa','me\\sinteresan','(?<!\w)tienes\b','(?<!\w)tiene\b','(?<!\w)tienen\b','(?<!\w)hay\b',
+    'disponibilidad(?:\sde)?','informar(?:\ssobre)?','informe(?:\ssobre)?','consultar(?:\ssobre)?',
+    'consulta(?:\ssobre)?','informame(?:\ssobre)?','informarme(?:\ssobre)?','precio(?:\sde)?','conoces','(?<!\w)vendes?(?!\w)',
+    'dónde\s(?:puedo\s)?comprar','donde\s(?:puedo\s)?comprar','dónde\scomprar','donde\scomprar',
+    'dónde\s(?:puedo\s)?conseguir','donde\s(?:puedo\s)?conseguir','dónde\sconseguir','donde\sconseguir',
+    'dónde\sconsigo','donde\sconsigo','dónde\sencuentro','donde\sencuentro',
+    '(?<!\w)cuesta\b'   // <-- price query: "cuanto me cuesta X"
   ];
 
   // Remove 'por favor' from the middle BEFORE verb matching so it doesn't confuse the greedy .+
@@ -4433,7 +4434,10 @@ function extractMedicineQuery(text) {
   // FIXED: only capture the bare number; the cleanup replace handles " de NUMERO" suffix.
   const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)\s+(?=mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)/i;
 
-  const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+)$`, 'i');
+  // NOTE: (.+?) is NON-GREEDY so it stops at the first dosage-form boundary,
+  // allowing DOSAGE_FORM_CLEANUP below to strip trailing forms correctly
+  // (e.g. "cotrimazol en gotas para el oido" → "cotrimazol").
+  const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+?)$`, 'i');
 
   let candidate = cleanedNoFavor;
   for (const pattern of [verbRe, P2A, P2B]) {
