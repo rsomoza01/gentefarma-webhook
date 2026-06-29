@@ -20,7 +20,15 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const OCR_PROVIDER = process.env.OCR_PROVIDER || (OPENAI_API_KEY ? 'openai' : 'none');
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
-const OPENAI_VISION_PROMPT = process.env.OPENAI_VISION_PROMPT || 'Transcribe all visible text from this prescription or medicine box image. Return only the extracted text, preserving line breaks when helpful.';
+const OPENAI_VISION_PROMPT = process.env.OPENAI_VISION_PROMPT || `Eres un asistente de farmacia. De esta imagen de un medicamento, extrae PRIMERO y sobre todo el NOMBRE DEL PRINCIPIO ACTIVO (el nombre del medicamento, ej: "Fexofenadina", "Paracetamol", "Ibuprofeno").
+
+Busca el nombre del medicamento principal - generalmente aparece en la parte superior del empaque, suele ser el texto mas grande o mas prominente.
+
+Despues de extraer el nombre del principio activo, agrega la dosis (ej: "500 mg", "120 mg").
+
+FORMATO DE RESPUESTA:
+Si encontraste el nombre del medicamento: "NOMBREMEDICAMENTO DOSIS" (ej: "Fexofenadina 120 mg")
+Si NO pudiste leer el nombre del medicamento (solo leiste dosis, marca o texto secundario), indica: "NO ENCONTRADO"`;
 
 // ----------------------------------------------------
 // Firebase init
