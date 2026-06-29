@@ -1305,7 +1305,10 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if ((isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) || isViableDirectQuery) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true }, { phone, pushName });
+    // Pass strictConsultationQuery as preExtractedMedicines so it lands in candidateMedicines
+    // and avoids the multi-medicine block that uses strictConsultationMode threshold (0.80)
+    const preExt = (strictConsultationQuery && strictConsultationQuery.length > 1) ? [strictConsultationQuery] : [];
+    return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: preExt }, { phone, pushName });
   }
 
   if (/^(listo|resumen)\b/.test(normalized)) {
