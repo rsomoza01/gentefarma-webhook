@@ -667,7 +667,14 @@ async function processIncomingMessage(payload) {
     console.log('🧪 [DEBUG] extractBody rawBody:', JSON.stringify(rawBody?.slice(0, 200)));
     console.log('🧪 [DEBUG] mediaAnalysis text?', mediaAnalysis ? `found (${(mediaAnalysis.text||'').length} chars)` : 'null');
     const sanitizedOcrText = mediaAnalysis?.text ? sanitizeRecipeText(mediaAnalysis.text) : '';
-    const body = mediaAnalysis?.text ? (sanitizedOcrText || rawBody) : rawBody;
+    // When both user text and OCR are present, concatenate them so the user's typed query
+    // (e.g. "cotrimazol en gotas para el oido") isn't lost when an image with caption arrives.
+    // rawBody = user's typed text, sanitizedOcrText = OCR from image.
+    // For images the OCR typically has richer context (brand name, dosage, etc.) so it goes first;
+    // user text is appended to ensure the actual query isn't discarded.
+    const body = mediaAnalysis?.text
+      ? (sanitizedOcrText ? `${sanitizedOcrText}\n${rawBody}` : rawBody)
+      : rawBody;
     console.log('🧪 [DIAG-BODY] rawBody:', JSON.stringify(rawBody?.slice(0, 200)));
     console.log('🧪 [DIAG-BODY] sanitizedOcrText:', JSON.stringify(sanitizedOcrText?.slice(0, 200)));
     console.log('🧪 [DIAG-BODY] body (final):', JSON.stringify(body?.slice(0, 200)));
