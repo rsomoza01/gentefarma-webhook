@@ -2559,7 +2559,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
       const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
       console.log(`🧪 [CONSULTATION-FALLBACK] candidateMatches=0, queryCore='${queryCore}', altTokens=${JSON.stringify(alternativeTokens)}, scoredProducts=${scoredProducts.length}, sample=` + JSON.stringify(scoredProducts.slice(0,3).map(i=>({t:i.productTitleFull,s:i.score??0,rs:i.referenceSimilarity??0}))));
-      const degradedMatches = scoredProducts.filter((item) => {
+const degradedMatches = scoredProducts.filter((item) => {
         const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateCore) return false;
 
@@ -2573,8 +2573,17 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
         const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
         const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.60 || item.fullFocusMatch || item.exactHit || item.phraseHit;
+        const willReturn = tokenOverlap && (dosageOverlap || softScore);
+        // DETAILED LOG: print each condition's result for first product
+        if (item.productTitleFull && item.productTitleFull.includes('canderm')) {
+          console.log(`🧪 [BLK2-DETAIL] title='${item.productTitleFull}' tokenOverlap=${tokenOverlap} dosageOverlap=${dosageOverlap} softScore=${softScore} FINAL=${willReturn}`);
+          tokenize(candidateCore).forEach(ct => {
+            const sim = tokenSimilarity("cotrimazol", ct);
+            if (sim >= 0.76) console.log(`🧪 [BLK2-DETAIL] MATCH! token='cotrimazol' vs '${ct}' = ${sim}`);
+          });
+        }
 
-        return tokenOverlap && (dosageOverlap || softScore);
+        return willReturn;
       });
 
       if (degradedMatches.length) {
