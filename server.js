@@ -1974,6 +1974,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
 }
 
 async function searchMedicinesByName(userQuery, options = {}) {
+  console.log(`🧪 [SEARCH-KICK] userQuery='${userQuery}' strictConsultationMode=${options.strictConsultationMode} preExtractedMedicines=${JSON.stringify(options.preExtractedMedicines)}`);
   if (!db) return null;
 
   const strictListMode = Boolean(options.strictListMode);
@@ -1982,6 +1983,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  console.log(`🧪 [SEARCH-MAIN] query='${query}' queryTokens=${JSON.stringify(queryTokens)} consultationMode_opt=${options.strictConsultationMode}`);
   if (!queryTokens.length) return null;
 
   const consultationMode = Boolean(options.strictConsultationMode);
@@ -2432,7 +2434,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
     scoredProducts.forEach((item, i) => {
       console.log(`[CONSULTATION-GATE] AFTER[${i}] title='${item.productTitleFull}'`);
     });
-    if (!scoredProducts.length) return { query, queryTokens, exchangeRate, matches: [] };
+    if (!scoredProducts.length) {
+      console.log(`🧪 [CONSULTATION-EMPTY] scoredProducts is empty after filter! beforeCount=${beforeCount} scoredProducts.length=${scoredProducts.length}`);
+      return { query, queryTokens, exchangeRate, matches: [] };
+    } else {
+      console.log(`🧪 [CONSULTATION-AFTER-FILTER] scoredProducts.length=${scoredProducts.length} proceeding to candidate matching`);
+    }
   } else {
     console.log(`[CONSULTATION-GATE] SKIPPED: consultationMode=${consultationMode} primaryTokens.length=${primaryTokens.length}`);
   }
