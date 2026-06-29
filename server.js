@@ -2482,7 +2482,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
   }
 
   if (consultationMode && primaryTokens.length > 0) {
-    const q = primaryTokens[0];
+    // Use the FIRST non-stopword token as the consultation query
+    // to avoid filtering by a leading stopword like "en", "me", "para".
+    const firstMeaningfulToken = primaryTokens.find((t) => !STOPWORDS.has(t) && t.length > 1) || primaryTokens[0];
+    const q = firstMeaningfulToken;
     const beforeCount = scoredProducts.length;
     console.log(`[CONSULTATION-GATE] mode=${consultationMode} primaryTokens=${JSON.stringify(primaryTokens)} q='${q}' beforeCount=${beforeCount}`);
     // Log first 5 products before filter
@@ -4459,6 +4462,15 @@ function extractMedicineQuery(text) {
   // (P2A only matches when "de NUM UNIT" is at string start).
   // Strip trailing " de", " del", " la", " el" left after dosage removal.
   candidate = candidate.replace(/\s+(?:de|del|la|el)\s*$/gi, '').trim();
+
+  // Remove dosage-form keywords and everything after them:
+  // "cotrimazol en gotas para el oido" → "cotrimazol"
+  // "medicamento en crema dermatologica" → "medicamento"
+  // "jarabe para la tos" → "jarabe"
+  const DOSAGE_FORM_CLEANUP = /\b(?:en\s+)?(?:gotas?|crema(?:s)?|gel(?:s)?|jarabe|suspension|susp|unguento|unguentos?|polvo(?:s)?|sobres?|capsulas?|capsules?|tabletas?|ampollas?|vial(?:es)?|frasco(?:s)?|retad|retadar|retardar)\b.*$/i;
+  candidate = candidate.replace(DOSAGE_FORM_CLEANUP, '').trim();
+  // Clean up any residual trailing prepositions left after the above strip.
+  candidate = candidate.replace(/\s+(?:de|del|para|con|la|el|las|los|un|una|unos|unas)\s*$/i, '').trim();
 
   // Block single-token salt forms and other noise from being returned as medicine names.
   // Only reject if the entire query is a single blocklisted token (e.g. "potásico" alone).
