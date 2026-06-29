@@ -2650,7 +2650,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     : topMatches;
 
   const finalMatches = consultationMode
-    ? filteredTopMatches
+    ? topMatches
     : (recipeMode
       ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
       : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches)));
