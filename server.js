@@ -2631,7 +2631,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
           const queryToken = strictQueryTokens[0];
           const candidateTokens = tokenize(candidateText);
           const exactWordMatch = candidateTokens.includes(queryToken) || candidateText.includes(` ${queryToken} `) || candidateText.startsWith(`${queryToken} `) || candidateText.endsWith(` ${queryToken}`) || candidateText === queryToken;
-          const closeWordMatch = exactWordMatch || candidateTokens.some((candidateToken) => tokenSimilarity(queryToken, candidateToken) >= 0.95);
+          const closeWordMatch = exactWordMatch || candidateTokens.some((candidateToken) => tokenSimilarity(queryToken, candidateToken) >= 0.76);
           return closeWordMatch;
         }
 
