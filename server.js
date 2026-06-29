@@ -1899,7 +1899,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     ...recipeLineMedicines
   ]).filter((item) => {
     const normalizedItem = normalizeText(item);
-    if (/\b(belen|belén|arcia|paciente|nombre|apellido|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
+    if (normalizedItem.length < 3) return false;
+    if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
     return Boolean(normalizedItem);
   }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
