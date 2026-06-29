@@ -1730,6 +1730,7 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   const medicineQuery = extractMedicineQuery(text);
+  console.log('[DIAG-ROUTE] extractMedicineQuery text:', JSON.stringify(text?.slice(0, 200)), '-> medicineQuery:', JSON.stringify(medicineQuery));
   if (isProductSearchRequest(normalized) || looksLikeMedicineName(normalized) || medicineQuery) {
     const productQuery = medicineQuery || text;
     const searchOptions = {
@@ -2034,6 +2035,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
 
 async function searchMedicinesByName(userQuery, options = {}) {
   if (!db) return null;
+
+  console.log('[SEARCH-IN] userQuery:', JSON.stringify(userQuery), 'options:', JSON.stringify({ strictListMode: options.strictListMode, ocrOnly: options.ocrOnly, recipeMode: options.recipeMode, strictConsultationMode: options.strictConsultationMode }));
 
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
@@ -4394,6 +4397,9 @@ function isMenuOption(value) {
 }
 
 function extractMedicineQuery(text) {
+  // DIAG: log raw input to diagnose encoding/Unicode corruption
+  const rawInput = String(text ?? '');
+  console.log('[DIAG-EMQ] RAW INPUT:', JSON.stringify(rawInput.slice(0, 200)));
   const cleaned = normalizeText(text);
   if (!cleaned) return '';
 
