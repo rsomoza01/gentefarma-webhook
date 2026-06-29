@@ -4141,7 +4141,7 @@ function extractPrimaryRecipeMedicineQuery(value) {
   if (!normalized) return '';
 
   if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return '';
-  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return '';
+  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|stadium|ano nac|año nac|datum|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return '';
 
   const tokens = normalized.split(' ').filter(Boolean);
   if (!tokens.length) return '';
@@ -4151,60 +4151,16 @@ function extractPrimaryRecipeMedicineQuery(value) {
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
     'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
-  // MED_QUERY_WEAK_TOKENS: words that are weak medicine-query tokens
-  const MED_QUERY_WEAK_TOKENS = new Set([
-    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber',
-    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por',
-    'disponible', 'disponibles', 'disponibilidad',
-    // Spanish conversational openers at start of queries
-    'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
-    'es', 'soy', 'son', 'está', 'están',
-    'quiero', 'quisiera', 'necesito', 'busco', 'busque'
-  ]);
-  // WEAK OPENERS that start conversation phrases — tokens equal to these or starting with
-  // these prefixes (except exact equal) are filtered so verbRe failures don't return
-  // conversational garbage like "me超值", "cuanto", "busco cotrimazol"
-  const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier'];
-  function isWeakOpener(token) {
-    const lower = token.toLowerCase();
-    // Exact match: "me", "en", "cuesta", "cuanto", "necesito", "busco" etc.
-    if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
-    // Starts with a weak opener prefix (but is not the exact word)
-    return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
-  }
+  const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
 
-  const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
-  if (firstStrongToken) return firstStrongToken;
-  const dosagePattern = /\\b(\\d+(?:[.,]\\d+)?\\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\\b/i;
-  const dosageMatch = raw.match(dosagePattern);
-  if (dosageMatch) {
-    const dose = normalizeText(dosageMatch[1]);
-    const beforeDose = raw.slice(0, dosageMatch.index).trim();
-    const beforeTokens = normalizeText(beforeDose).split(' ').filter((t) => t.length > 1 && !STOPWORDS.has(t));
-    const beforeStrong = beforeTokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
-    if (beforeStrong.length) return beforeStrong[0];
-    return dose;
-  }
-
-  if (strongTokens.length) {
-    const top = strongTokens[0];
-    // Reject short tokens and known query residuals
-    const hasDosageForm = MED_FORM_TOKENS.has(tokenize(candidate).find((t) => MED_FORM_TOKENS.has(t)));
-    if (top.length < 4 && !hasDosageForm) {
-      // Short token without a dosage form — reject it
-    } else {
-      return top;
-    }
-    // Also reject common conversational residuals that survived cleanup
-    if (/^(noches|mananas|tardes|dias|favor|ahora|también|tampoco|así|asimesmo|小伙子|entonces|mientras|más|bien|mal|quizás|quizá|puede|pueden|puedo)$/i.test(top)) return '';
-    return top;
-  }
   if (cleanedTokens.length) return cleanedTokens[0];
-  if (formTokens.length && tokens.length > 1) {
-    const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
-    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
-    if (afterStrong) return afterStrong;
-  }
+
+  // Fallback: try to extract dosage (e.g. "40 mg" -> return "40 mg")
+  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
+  const dosageMatch = raw.match(dosagePattern);
+  if (dosageMatch) return dosageMatch[1];
+
   return tokens[0] || '';
 }
 
