@@ -1249,6 +1249,7 @@ async function routeMessage(phone, text, session, context = {}) {
   if (consultationIsMedicine) {
     clearSelectionState(session);
     const searchQuery = consultationQuery || text;
+    console.log('🧪 [DIAG-ROUTE] consultationQuery=%s strictConsultationQuery=%s directMedicineQuery=%s searchQuery=%s text=%s', JSON.stringify(consultationQuery), JSON.stringify(strictConsultationQuery), JSON.stringify(directMedicineQuery), JSON.stringify(searchQuery), JSON.stringify(text));
     return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
   }
 
