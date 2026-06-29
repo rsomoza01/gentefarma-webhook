@@ -1394,6 +1394,13 @@ async function routeMessage(phone, text, session, context = {}) {
 
     // Prefer prescription if it extracted multiple lines, else box if single drug, else recipe
     const allRecipeMedicines = prescriptionClean || boxClean || recipeClean;
+    // Guard: if raw OCR is purely dosage (e.g. "120 MG") without any drug name, reject it
+    const PURE_DOSAGE_RE = /^\s*\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|mL|ui|iu|tabletas?|capsulas?|ampollas?|comprimidos?|pastillas?)?\s*$/i;
+    const rawIsPureDosage = PURE_DOSAGE_RE.test(rawOcr?.trim() || '');
+    if (rawIsPureDosage && !allRecipeMedicines) {
+      console.log('🧾 OCR rejected as pure dosage-only: "%s"', rawOcr);
+      return '🤖 Solo pude leer la dosis de la imagen (ej. "120 mg"), pero no el nombre del medicamento. ¿Podrías escribir el nombre del producto que buscas?';
+    }
     const searchQuery = allRecipeMedicines || rawOcr;
     console.log('🧾 OCR medicines extraction:', {
       hasOcrText,
@@ -1402,6 +1409,7 @@ async function routeMessage(phone, text, session, context = {}) {
       boxClean,
       recipeClean,
       allRecipeMedicines,
+      rawIsPureDosage,
       searchQuery
     });
     return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
