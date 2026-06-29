@@ -2516,9 +2516,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
       }
     }
 
+    console.log(`🧪 [CONSULTATION-MATCHES] after first filter candidateMatches.length=${candidateMatches.length} scoredProducts=${scoredProducts.length} topSample=` + JSON.stringify(scoredProducts.slice(0,3).map(i=>({t:i.productTitleFull,s:i.score??0,rs:i.referenceSimilarity??0,ffm:i.fullFocusMatch,eh:i.exactHit,ph:i.phraseHit}))));
+
     if (!candidateMatches.length) {
       const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
       const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+      console.log(`🧪 [CONSULTATION-FALLBACK] candidateMatches=0, queryCore='${queryCore}', altTokens=${JSON.stringify(alternativeTokens)}, scoredProducts=${scoredProducts.length}, sample=` + JSON.stringify(scoredProducts.slice(0,3).map(i=>({t:i.productTitleFull,s:i.score??0,rs:i.referenceSimilarity??0}))));
       const degradedMatches = scoredProducts.filter((item) => {
         const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateCore) return false;
@@ -2541,6 +2544,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       }
     }
 
+    console.log(`🧪 [CONSULTATION-DEGRADED] candidateMatches.length=${candidateMatches.length} returning empty. query='${query}'`);
     if (!candidateMatches.length) {
       return { query, queryTokens, exchangeRate, matches: [] };
     }
