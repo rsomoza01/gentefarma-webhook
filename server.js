@@ -2520,11 +2520,42 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
 
     console.log(`🧪 [CONSULTATION-EXIT] candidateMatches.length=${candidateMatches.length} query='${query}'`);
-    if (!candidateMatches.length) {
-      return { query, queryTokens, exchangeRate, matches: [] };
+  } else {
+    // non-recipeMode path (consultation queries like "cotrimazol" land here)
+    // reuse the same degraded fallback below
+  }
+
+  // ── Degraded fallback: applies to ALL paths (recipeMode AND non-recipeMode) ──
+  if (!candidateMatches.length) {
+    const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
+    const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+    console.log(`🧪 [DEGRADED-FALLBACK] queryCore='${queryCore}' altTokens=${JSON.stringify(alternativeTokens)} scoredProducts=${scoredProducts.length}`);
+    const degradedMatches = scoredProducts.filter((item) => {
+      const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
+      if (!candidateCore) return false;
+
+      const tokenOverlap = alternativeTokens.length === 0
+        ? candidateCore.includes(queryCore)
+        : alternativeTokens.some((token) => {
+            if (candidateCore.includes(token)) return true;
+            return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.76);
+          });
+
+      const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
+      const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.60 || item.fullFocusMatch || item.exactHit || item.phraseHit;
+
+      return tokenOverlap && (dosageOverlap || softScore);
+    });
+    console.log(`🧪 [DEGRADED-FALLBACK-RESULT] degradedMatches.length=${degradedMatches.length}`);
+    if (degradedMatches.length) {
+      candidateMatches = degradedMatches;
     }
   }
-  // [REMOVED: else { const similarityMatches } that was overwriting candidateMatches]
+
+  if (!candidateMatches.length) {
+    console.log(`🧪 [FINAL-RETURN] candidateMatches empty, returning no results`);
+    return { query, queryTokens, exchangeRate, matches: [] };
+  }
 
   const topMatches = candidateMatches
     .slice(0, 5)
