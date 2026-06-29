@@ -4275,8 +4275,12 @@ function extractMedicineQuery(text) {
   // then filtered to "cotrimazol").
   const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+?)$`, 'i');
   const verbReStr = verbRe.toString();
-  console.log('🧪 [DIAG-EMQ] IN="%s" cleanedNoFavor="%s" verbRe_full="%s" verbRe_len=%d verbRe_test=%s', _dbg_input, cleanedNoFavor, verbReStr.slice(0,120), verbReStr.length, verbRe.test(cleanedNoFavor));
-  console.log('🧪 [DIAG-EMQ] verbRe.lastIndex=%s', verbRe.lastIndex);
+  // Print full regex to see if 'custa' is actually inside it
+  console.log('🧪 [DIAG-EMQ] IN="%s" verbRe_len=%d verbRe_test=%s verbRe=%s', _dbg_input, verbReStr.length, verbRe.test(cleanedNoFavor), verbReStr);
+  console.log('🧪 [DIAG-EMQ] verbRe_cuesta_in_regex=%s', verbReStr.includes('cuesta'));
+  console.log('🧪 [DIAG-EMQ] direct_cuesta_test=%s', /\bcu[ée]sta\b/i.test('me cuesta cotrimazol'));
+  const custaRe = /(?<!\w)cu[ée]sta\b/i;
+  console.log('🧪 [DIAG-EMQ] custaRe_match="%s"', JSON.stringify('en cuanto me cuesta cotrimazol'.match(custaRe)));
   let candidate = cleanedNoFavor;
   for (const pattern of [verbRe, P2A, P2B]) {
     const match = cleanedNoFavor.match(pattern);
