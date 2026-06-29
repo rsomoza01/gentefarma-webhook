@@ -4129,21 +4129,30 @@ function extractPrimaryRecipeMedicineQuery(value) {
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
     'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
+  // MED_QUERY_WEAK_TOKENS: words that are weak medicine-query tokens
   const MED_QUERY_WEAK_TOKENS = new Set([
-    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
-    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor',
-    'disponible', 'disponibles', 'disponibilidad'
+    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber',
+    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por',
+    'disponible', 'disponibles', 'disponibilidad',
+    // Spanish conversational openers at start of queries
+    'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
+    'quiero', 'quisiera', 'necesito', 'busco', 'busque'
   ]);
-  const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
-  const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
-  const dosageTokens = tokens.filter((token) => isDoseToken(token));
-  const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
+  // WEAK OPENERS that start conversation phrases — tokens equal to these or starting with
+  // these prefixes (except exact equal) are filtered so verbRe failures don't return
+  // conversational garbage like "me超值", "cuanto", "busco cotrimazol"
+  const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier'];
+  function isWeakOpener(token) {
+    const lower = token.toLowerCase();
+    // Exact match: "me", "en", "cuesta", "cuanto", "necesito", "busco" etc.
+    if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
+    // Starts with a weak opener prefix (but is not the exact word)
+    return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
+  }
 
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
-  const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
   if (firstStrongToken) return firstStrongToken;
-
-  const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
+  const dosagePattern = /\\b(\\d+(?:[.,]\\d+)?\\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\\b/i;
   const dosageMatch = raw.match(dosagePattern);
   if (dosageMatch) {
     const dose = normalizeText(dosageMatch[1]);
@@ -4339,17 +4348,21 @@ function extractMedicineQuery(text) {
     'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
   const MED_QUERY_WEAK_TOKENS = new Set([
-    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
-    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor',
-    'disponible', 'disponibles', 'disponibilidad'
+    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber',
+    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por',
+    'disponible', 'disponibles', 'disponibilidad',
+    'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
+    'quiero', 'quisiera', 'necesito', 'busco', 'busque'
   ]);
+  const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier'];
+  function isWeakOpener(token) {
+    const lower = token.toLowerCase();
+    if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
+    return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
+  }
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
-  const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
-  const dosageTokens = tokens.filter((token) => isDoseToken(token));
-  const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
-
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
-  const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
   if (firstStrongToken) {
     console.log('🧪 [DIAG-EMQ] IN="%s" => returning firstStrongToken="%s" (cleanedTokens=%s)', _dbg_input, firstStrongToken, JSON.stringify(cleanedTokens));
     return firstStrongToken;
