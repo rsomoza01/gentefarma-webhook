@@ -2655,6 +2655,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
       : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches)));
 
+  console.log(`🧪 [SMN-RETURN] query='${query}' finalMatches.length=${finalMatches.length} topMatches.length=${topMatches.length} consultationMode=${consultationMode}`);
   return {
     query,
     queryTokens,
