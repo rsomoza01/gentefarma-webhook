@@ -4232,8 +4232,13 @@ function isMenuOption(value) {
 }
 
 function extractMedicineQuery(text) {
+  // DEBUG: log input and output to trace production behavior
+  const _dbg_input = String(text ?? '').trim().slice(0, 80);
   const cleaned = normalizeText(text);
-  if (!cleaned) return '';
+  if (!cleaned) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "" (empty)', _dbg_input, cleaned);
+    return '';
+  }
 
   // Strip dosage FIRST so it doesn't pollute verb-pattern capture
   const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
@@ -4270,9 +4275,11 @@ function extractMedicineQuery(text) {
   const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+?)$`, 'i');
 
   let candidate = cleanedNoFavor;
+  console.log('🧪 [DIAG-EMQ] IN="%s" cleanedNoFavor="%s" verbRe="%s"', _dbg_input, cleanedNoFavor, verbRe.toString().slice(0, 80));
   for (const pattern of [verbRe, P2A, P2B]) {
     const match = cleanedNoFavor.match(pattern);
     if (match?.[1]) {
+      console.log('🧪 [DIAG-EMQ] IN="%s" pattern="%s" matched="%s" => candidate="%s"', _dbg_input, pattern.toString().slice(0, 40), match[0], match[1]);
       candidate = normalizeText(match[1]);
       break;
     }
@@ -4335,7 +4342,10 @@ function extractMedicineQuery(text) {
 
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
   const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
-  if (firstStrongToken) return firstStrongToken;
+  if (firstStrongToken) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => returning firstStrongToken="%s" (cleanedTokens=%s)', _dbg_input, firstStrongToken, JSON.stringify(cleanedTokens));
+    return firstStrongToken;
+  }
 
   const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
   const dosageMatch = candidate.match(dosagePattern);
@@ -4371,14 +4381,21 @@ function extractMedicineQuery(text) {
     if (!beforeNum || !beforeNum.trim()) return numStr;
   }
 
-  if (strongTokens.length) return strongTokens[0];
+  if (strongTokens.length) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => returning strongToken[0]="%s"', _dbg_input, strongTokens[0]);
+    return strongTokens[0];
+  }
   const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
-  if (weakFiltered.length) return weakFiltered[0];
+  if (weakFiltered.length) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, weakFiltered[0]);
+    return weakFiltered[0];
+  }
   if (formTokens.length && tokens.length > 1) {
     const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
     const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
     if (afterStrong) return afterStrong;
   }
+  console.log('🧪 [DIAG-EMQ] IN="%s" => returning "%s" (weakFiltered=%s strongTokens=%s formTokens=%s)', _dbg_input, weakFiltered[0] || '', JSON.stringify(weakFiltered), JSON.stringify(strongTokens), JSON.stringify(formTokens));
   return weakFiltered[0] || '';
 }
 
