@@ -4252,7 +4252,8 @@ function extractMedicineQuery(text) {
     'dónde\s(?:puedo\s)?comprar','donde\s(?:puedo\s)?comprar','dónde\scomprar','donde\scomprar',
     'dónde\s(?:puedo\s)?conseguir','donde\s(?:puedo\s)?conseguir','dónde\sconseguir','donde\sconseguir',
     'dónde\sconsigo','donde\sconsigo','dónde\sencuentro','donde\sencuentro',
-    '(?<!\w)cuesta\b'   // <-- price query: "cuanto me cuesta X"
+    '(?<!\w)cuesta\b'  // FIX: removed trailing \s+ — "me cuesta X" has no space after `cuesta`,
+    // so the original pattern `(?<!\w)cuesta\b\s+(.+?)$` could never match.
   ];
 
   // Remove 'por favor' from the middle BEFORE verb matching so it doesn't confuse the greedy .+
