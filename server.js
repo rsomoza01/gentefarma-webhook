@@ -4427,21 +4427,12 @@ function extractMedicineQuery(text) {
     if (!beforeNum || !beforeNum.trim()) return numStr;
   }
 
-  if (strongTokens.length) {
-    console.log('🧪 [DIAG-EMQ] IN="%s" => returning strongToken[0]="%s"', _dbg_input, strongTokens[0]);
-    return strongTokens[0];
-  }
   const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
   if (weakFiltered.length) {
     console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, weakFiltered[0]);
     return weakFiltered[0];
   }
-  if (formTokens.length && tokens.length > 1) {
-    const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
-    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
-    if (afterStrong) return afterStrong;
-  }
-  console.log('🧪 [DIAG-EMQ] IN="%s" => returning "%s" (weakFiltered=%s strongTokens=%s formTokens=%s)', _dbg_input, weakFiltered[0] || '', JSON.stringify(weakFiltered), JSON.stringify(strongTokens), JSON.stringify(formTokens));
+  console.log('🧪 [DIAG-EMQ] IN="%s" => returning "%s" (weakFiltered=%s)', _dbg_input, weakFiltered[0] || '', JSON.stringify(weakFiltered));
   return weakFiltered[0] || '';
 }
 
