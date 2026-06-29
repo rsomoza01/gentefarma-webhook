@@ -1902,6 +1902,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (normalizedItem.length < 3) return false;
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
+    if (/\b(paciente)\b/i.test(normalizedItem)) return false;
+    if (/\b(nombre)\b/i.test(normalizedItem)) return false;
+    if (/\b(apellido)\b/i.test(normalizedItem)) return false;
     return Boolean(normalizedItem);
   }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
 
@@ -1950,6 +1953,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   }
 
   const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text.trim();
+  console.log(`🧪 [SINGLE-QUERY] candidateMedicines[0]='${candidateMedicines[0]}' extractMedicineQuery='${extractMedicineQuery(text)}' singleQuery='${singleQuery}'`);
   const result = await searchMedicinesByName(singleQuery, {
     products: await fetchCatalogProducts(2000),
     exchangeRate: await getBcvRate(),
@@ -4381,6 +4385,7 @@ function extractMedicineQuery(text) {
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
   const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
+  console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "%s" (cleanedTokens=%s firstStrong=%s)', _dbg_input, cleaned, firstStrongToken || '', JSON.stringify(cleanedTokens), firstStrongToken || 'none');
   if (firstStrongToken) {
     console.log('🧪 [DIAG-EMQ] IN="%s" => returning firstStrongToken="%s" (cleanedTokens=%s)', _dbg_input, firstStrongToken, JSON.stringify(cleanedTokens));
     return firstStrongToken;
