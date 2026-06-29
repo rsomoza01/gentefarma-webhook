@@ -2567,11 +2567,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
           ? candidateCore.includes(queryCore)
           : alternativeTokens.some((token) => {
               if (candidateCore.includes(token)) return true;
-              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.9);
+              // consultationMode: lower threshold to 0.76 so cotrimazol↔clotrimazol passes
+              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.76);
             });
 
         const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
-        const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.78 || item.fullFocusMatch || item.exactHit || item.phraseHit;
+        const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.60 || item.fullFocusMatch || item.exactHit || item.phraseHit;
 
         return tokenOverlap && (dosageOverlap || softScore);
       });
