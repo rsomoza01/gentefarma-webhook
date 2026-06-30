@@ -1906,7 +1906,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const consultationMode = Boolean(options.strictConsultationMode);
   const forceExactConsultationToken = Boolean(options.forceExactConsultationToken);
   const preExtracted = Array.isArray(options.preExtractedMedicines) ? options.preExtractedMedicines : [];
-  const requestedMedicines = preExtracted.length > 0 ? preExtracted : (ocrOnly ? [] : extractMedicineRequests(text));
+  // Always extract medicine list - even for OCR, we want multi-medicine support.
+  // ocrOnly only affects the matching/search behavior, not the extraction.
+  const requestedMedicines = preExtracted.length > 0 ? preExtracted : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
@@ -1925,12 +1927,17 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     return Boolean(normalizedItem);
   }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
 
-  if (candidateMedicines.length > 1) {
+  console.log('🧪 [CANDIDATE-MEDICINES] ocrOnly=%s preExtracted=%s requestedMedicines=%s fallbackMedicines=%s recipeLineMedicines=%s candidateMedicines=%s',
+    ocrOnly, JSON.stringify(preExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(recipeLineMedicines), JSON.stringify(candidateMedicines));
+
+    if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCatalogProducts(2000);
     const groups = [];
     const missingMedicines = [];
     const missingMedicineSet = new Set();
+
+    console.log('🧪 [MULTI-MEDICINE] candidateMedicines=%s (count=%d)', JSON.stringify(candidateMedicines), candidateMedicines.length);
 
     for (const medicineQuery of candidateMedicines) {
       const result = await searchMedicinesByName(medicineQuery, {
