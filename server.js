@@ -3931,9 +3931,11 @@ function extractRecipeMedicineLines(value) {
     /\b(tienes?|tiene|tengo|tienen|tener|quiero|quiere|quieren|querer|busco|busca|buscan|buscar|necesito|necesita|necesitan|necesitar|hay|habia|habra|disponible|disponibles|disponibilidad|precio|costo|costar|cuesta|cuestan)\b/i,
     /\b(por\s+favor|me\s+puedes|me\s+ayuda|consulta|consultar|saber|cuanto|cuánto)\b/i
   ];
+  console.log('🧪 [EXTRACT-RECIPE] raw value=%s chunks=%s', raw.slice(0, 200), JSON.stringify(chunks));
   const pushCandidate = (candidate) => {
     const normalized = normalizeText(candidate);
     if (!normalized) return;
+    console.log('🧪 [PUSH-CANDIDATE] candidate="%s" normalized="%s"', candidate, normalized);
     if (metaPatterns.some((pattern) => pattern.test(candidate) || pattern.test(normalized))) return;
     if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return;
     if (!/[a-záéíóúñ]/i.test(candidate)) return;
@@ -3958,6 +3960,7 @@ function extractRecipeMedicineLines(value) {
     pushCandidate(chunk);
   }
 
+  console.log('🧪 [EXTRACT-RECIPE] candidates (before dedup)=%s', JSON.stringify(candidates));
   return [...new Set(candidates)];
 }
 
