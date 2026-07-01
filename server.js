@@ -3118,7 +3118,19 @@ function extractMedicineRequestsFromSegments(text) {
 }
 
 function dedupeStrings(values) {
-  return [...new Set((values || []).map((value) => normalizeText(value)).filter(Boolean))];
+  if (!Array.isArray(values)) return [];
+  // Normalize all values first
+  const normalized = values.map((v) => normalizeText(v)).filter(Boolean);
+  // Remove exact duplicates
+  const unique = [...new Set(normalized)];
+  // Remove candidates that are substring subsets of other candidates — keep shortest (most specific)
+  const result = [];
+  for (const item of unique) {
+    // Skip if any existing result is a proper substring of this item (item is a superset)
+    const isSuperset = result.some((existing) => existing.length < item.length && item.includes(existing));
+    if (!isSuperset) result.push(item);
+  }
+  return result;
 }
 
 function looksLikeListToken(token) {
