@@ -2418,6 +2418,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
         feeAmountUsd: pricing.feeAmountUsd
       };
     })
+    // DIAGNOSTIC: find all products whose tokenSet contains 'calaminol'
+    .map((item, idx) => {
+      if (item.tokenSet && (item.tokenSet.has('calaminol') || (item.productTitleFull && /calaminol/i.test(item.productTitleFull)))) {
+        console.log(`[TOKEN-DIAG] idx=${idx} score=${item.score} productTitleFull='${item.productTitleFull}' tokenSetHasCalaminol=${item.tokenSet.has('calaminol')} arrayTokens=${JSON.stringify(item.arrayTokens || [])} titleTokens=${JSON.stringify(item.titleTokens || [])}`);
+      }
+      return item;
+    })
     .sort((a, b) => {
       const vitaminA = a.vitaminHit ? 1 : 0;
       const vitaminB = b.vitaminHit ? 1 : 0;
@@ -3463,7 +3470,7 @@ async function fetchCollectionDocuments(collectionName, limit = 500) {
 
 async function fetchCatalogProducts(limit = 500) {
   const primary = await fetchCollectionDocuments('products-market', limit);
-  console.log(`[CATALOG-FETCH] products-market count=${primary.length}`);
+  console.log(`[CATALOG-FETCH] products-market count=${primary.length}${primary.length > 0 ? " firstTitles=" + JSON.stringify(primary.slice(0,3).map(d => d.ProductTitle || d.productTitle)) : ''}`);
   if (primary.length) return primary;
 
   const fallback = await fetchCollectionDocuments('providers-products', limit);
