@@ -2611,6 +2611,35 @@ async function searchMedicinesByName(userQuery, options = {}) {
         result.providersProducts.forEach((p, i) => console.log(`[MODERAN-QUERY] PP[${i}] id=${p.id} productTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
       }
     });
+    // Async diagnostic: query both collections for CALAMINOL by name
+    findProductByNormalizedName('calaminol').then((result) => {
+      console.log(`[CALAMINOL-QUERY] productsMarket=${result.productsMarket.length} providersProducts=${result.providersProducts.length} error=${result.error || 'none'}`);
+      if (result.productsMarket.length > 0) {
+        result.productsMarket.forEach((p, i) => console.log(`[CALAMINOL-QUERY] PM[${i}] id=${p.id} ProductTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
+      }
+      if (result.providersProducts.length > 0) {
+        result.providersProducts.forEach((p, i) => console.log(`[CALAMINOL-QUERY] PP[${i}] id=${p.id} productTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
+      }
+    });
+    // Targeted CALAMINOL diagnostic: find CALAMINOL-branded products in scoredProducts
+    const calaminolIdx = scoredProducts.findIndex((item) => item.tokenSet && (
+      item.tokenSet.has('calaminol') || (item.productTitleFull && /calaminol/i.test(item.productTitleFull))
+    ));
+    if (calaminolIdx >= 0) {
+      const calaminolItem = scoredProducts[calaminolIdx];
+      const calaminolCandidateCore = normalizeText([calaminolItem.productTitleFull, calaminolItem.titleArrayTextFull, calaminolItem.ingredient, calaminolItem.productText, calaminolItem.title].filter(Boolean).join(' '));
+      const calaminolSoftScore = (calaminolItem.score ?? 0) >= 40 || (calaminolItem.referenceSimilarity ?? 0) >= 0.60 || calaminolItem.fullFocusMatch || calaminolItem.exactHit || calaminolItem.phraseHit;
+      const calaminolDosageOverlap = !hasQueryDosage || calaminolCandidateCore.includes(matchQuery) || calaminolCandidateCore.includes(dosageLessQuery) || calaminolCandidateCore.includes(exactRoot);
+      const calaminolTokenOverlap = alternativeTokens.length === 0
+        ? calaminolCandidateCore.includes(queryCore)
+        : alternativeTokens.some((token) => {
+            if (calaminolCandidateCore.includes(token)) return true;
+            return tokenize(calaminolCandidateCore).some((ct) => tokenSimilarity(token, ct) >= 0.76);
+          });
+      console.log(`[DEGRADED-CALAMINOL] rank=${calaminolIdx} score=${calaminolItem.score} refSim=${calaminolItem.referenceSimilarity} softScore=${calaminolSoftScore} dosageOverlap=${calaminolDosageOverlap} tokenOverlap=${calaminolTokenOverlap} candCore='${calaminolCandidateCore.slice(0, 80)}' pass=${calaminolTokenOverlap && (calaminolDosageOverlap || calaminolSoftScore)}`);
+    } else {
+      console.log(`[DEGRADED-CALAMINOL] NOT FOUND in scoredProducts`);
+    }
     // Async diagnostic: query both collections for DAFLON by name
     findProductByNormalizedName('daflon').then((result) => {
       console.log(`[DAFLON-QUERY] productsMarket=${result.productsMarket.length} providersProducts=${result.providersProducts.length} error=${result.error || 'none'}`);
