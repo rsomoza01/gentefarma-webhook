@@ -2716,12 +2716,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
     // ── Firestore direct fallback: when scoredProducts (2000 limit) misses the target,
     // query Firebase directly using arrayContains on productTitleArray to catch products
     // that exist beyond document 2000 in Firestore's default order.
+    const queryToken = strictQueryTokens[0];
     const currentTopHasTarget = candidateMatches.some((item) => {
       const targetRe = new RegExp(`^${queryToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
       return item.tokenSet && (item.tokenSet.has(queryToken) || (item.productTitleFull && targetRe.test(item.productTitleFull)));
     });
     if (!currentTopHasTarget && isSingleTokenQuery && db) {
-      const queryToken = strictQueryTokens[0];
       console.log(`[FIREBASE-DIRECT] token='${queryToken}' catalog limited, querying Firebase arrayContains...`);
       try {
         const [pmSnap, ppSnap] = await Promise.all([
