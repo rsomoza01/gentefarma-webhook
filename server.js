@@ -2868,7 +2868,8 @@ async function searchMedicinesByName(userQuery, options = {}) {
       ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
       : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches)));
 
-  console.log(`🧪 [SMN-RETURN] query='${query}' finalMatches.length=${finalMatches.length} topMatches.length=${topMatches.length} consultationMode=${consultationMode}`);
+  const top3titles = finalMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
+  console.log(`🧪 [SMN-RETURN] query='${query}' finalMatches.length=${finalMatches.length} topMatches.length=${topMatches.length} top3=[${top3titles}] consultationMode=${consultationMode}`);
   return {
     query,
     queryTokens,
