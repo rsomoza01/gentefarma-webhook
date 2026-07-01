@@ -3463,9 +3463,11 @@ async function fetchCollectionDocuments(collectionName, limit = 500) {
 
 async function fetchCatalogProducts(limit = 500) {
   const primary = await fetchCollectionDocuments('products-market', limit);
+  console.log(`[CATALOG-FETCH] products-market count=${primary.length}`);
   if (primary.length) return primary;
 
   const fallback = await fetchCollectionDocuments('providers-products', limit);
+  console.log(`[CATALOG-FETCH] providers-products fallback count=${fallback.length}`);
   if (fallback.length) return fallback;
 
   return [];
