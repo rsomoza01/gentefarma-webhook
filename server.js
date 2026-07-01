@@ -2795,6 +2795,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
           .sort((a, b) => b.score - a.score);
         console.log(`[FIREBASE-DIRECT] scored ${directScored.length} products, top title='${directScored[0]?.productTitleFull}' score=${directScored[0]?.score}`);
         candidateMatches = [...candidateMatches, ...directScored];
+        topMatches = [...topMatches, ...directScored];
       }
     } catch (e) {
       console.error(`[FIREBASE-DIRECT] error: ${e.message}`);
