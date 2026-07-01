@@ -2720,7 +2720,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     return { query, queryTokens, exchangeRate, matches: [] };
   }
 
-  const topMatches = candidateMatches
+  let topMatches = candidateMatches
     .slice(0, 5)
     .sort((a, b) => {
       const exactA = a.exactHit ? 1 : 0;
