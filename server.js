@@ -2796,13 +2796,39 @@ async function searchMedicinesByName(userQuery, options = {}) {
         console.log(`[FIREBASE-DIRECT] scored ${directScored.length} products, top title='${directScored[0]?.productTitleFull}' score=${directScored[0]?.score}`);
         candidateMatches = [...candidateMatches, ...directScored];
         topMatches = [...topMatches, ...directScored];
+        // Recompute filteredTopMatches since topMatches changed (Firebase direct ran after initial filter)
+        filteredTopMatches = topMatches.slice(0, 20).sort((a, b) => {
+          const exactA = a.exactHit ? 1 : 0;
+          const exactB = b.exactHit ? 1 : 0;
+          if (exactA !== exactB) return exactB - exactA;
+          const phraseA = a.phraseHit ? 1 : 0;
+          const phraseB = b.phraseHit ? 1 : 0;
+          if (phraseA !== phraseB) return phraseB - phraseA;
+          const scoreA = a.score ?? 0;
+          const scoreB = b.score ?? 0;
+          if (scoreA !== scoreB) return scoreB - scoreA;
+          const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+          const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+          return priceA - priceB;
+        }).filter((item) => {
+          const candidateText = (item.productTitleFull || '').toLowerCase();
+          const queryToken = strictQueryTokens[0];
+          if (candidateText.includes(queryToken)) return true;
+          for (const candidateToken of tokenize(candidateText)) {
+            if (candidateToken === queryToken) return true;
+            const similarity = tokenSimilarity(queryToken, candidateToken);
+            if (similarity >= 0.9) return true;
+          }
+          return false;
+        });
+        console.log(`[FIREBASE-DIRECT] filteredTopMatches recomputed length=${filteredTopMatches.length}`);
       }
     } catch (e) {
       console.error(`[FIREBASE-DIRECT] error: ${e.message}`);
     }
   }
 
-  const filteredTopMatches = strictQueryTokens.length
+  let filteredTopMatches = strictQueryTokens.length
     ? topMatches.filter((item) => {
         const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateText) return false;
