@@ -2031,6 +2031,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const exchangeRate = options.exchangeRate ?? await getBcvRate();
   const products = options.products ?? await fetchCatalogProducts(2000);
   const catalogHealth = summarizeCatalogHealth(products);
+  // TEMP DIAGNOSTIC: check raw Firebase matches for "calaminol"
+  if (queryTokens.includes('calaminol')) {
+    const fbResult = await findProductByNormalizedName('calaminol');
+    console.log(`🧪 [FIREBASE-CALAMINOL] productsMarket=${fbResult.productsMarket.length} providersProducts=${fbResult.providersProducts.length}`);
+    fbResult.productsMarket.slice(0,10).forEach((p,i) => console.log(`🧪 [FIREBASE-PM] ${i} ProductTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray||[])}`));
+    fbResult.providersProducts.slice(0,10).forEach((p,i) => console.log(`🧪 [FIREBASE-PP] ${i} ProductTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray||[])}`));
+  }
   if (catalogHealth.available === 0) {
     return { query, queryTokens, exchangeRate, matches: [] };
   }
