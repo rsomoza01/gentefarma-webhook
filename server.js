@@ -20,7 +20,24 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const OCR_PROVIDER = process.env.OCR_PROVIDER || (OPENAI_API_KEY ? 'openai' : 'none');
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
-const OPENAI_VISION_PROMPT = process.env.OPENAI_VISION_PROMPT || 'Transcribe all visible text from this prescription or medicine box image. Return only the extracted text, preserving line breaks when helpful.';
+const OPENAI_VISION_PROMPT = process.env.OPENAI_VISION_PROMPT || `Eres un asistente de farmacia. De esta imagen, extrae TODOS los nombres de medicamentos que aparezcan.
+
+Pueden ser de dos tipos:
+1. RECETA MÉDICA: lista de varios medicamentos (ej: "Esoz 40 mg", "Leporit 25 mg", "Daflon 500 mg")
+2. FOTO DE MEDICAMENTO: un solo medicamento (ej: "Paracetamol 500 mg")
+
+Busca CADA medicamento visible en la imagen - no te detengas en el primero.
+
+FORMATO DE RESPUESTA:
+- Si hay VARIOS medicamentos: cada uno en su propia línea, formato "NOMBRE DOSIS"
+  Ejemplo para receta con 3 medicamentos:
+  ESOZ 40 MG
+  LEPRIT 25 MG
+  DAFLON 500 MG
+
+- Si hay UN SOLO medicamento: "NOMBREMEDICAMENTO DOSIS" (una sola línea, igual que antes)
+
+- Si NO pudiste leer ningún medicamento: "NO ENCONTRADO"`;
 
 // ----------------------------------------------------
 // Firebase init
@@ -791,7 +808,6 @@ async function processIncomingMessage(payload) {
 
     const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text), ocrSearchText, rawOcrText, pushName });
     if (response) {
-      console.log('📤 Sending WhatsApp response:', response.slice(0, 500));
       await sendOutboundWhatsAppMessage(from, response);
     }
   } catch (error) {
@@ -1250,6 +1266,7 @@ async function routeMessage(phone, text, session, context = {}) {
   if (consultationIsMedicine) {
     clearSelectionState(session);
     const searchQuery = consultationQuery || text;
+    console.log('🧪 [DIAG-ROUTE] consultationQuery=%s strictConsultationQuery=%s directMedicineQuery=%s searchQuery=%s text=%s', JSON.stringify(consultationQuery), JSON.stringify(strictConsultationQuery), JSON.stringify(directMedicineQuery), JSON.stringify(searchQuery), JSON.stringify(text));
     return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
   }
 
@@ -1305,7 +1322,10 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if ((isMedicineConsultationPhrase(normalized) && !isSelectionPhrase(normalized)) || isViableDirectQuery) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true }, { phone, pushName });
+    // Pass strictConsultationQuery as preExtractedMedicines so it lands in candidateMedicines
+    // and avoids the multi-medicine block that uses strictConsultationMode threshold (0.80)
+    const preExt = (strictConsultationQuery && strictConsultationQuery.length > 1) ? [strictConsultationQuery] : [];
+    return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: preExt }, { phone, pushName });
   }
 
   if (/^(listo|resumen)\b/.test(normalized)) {
@@ -1377,7 +1397,8 @@ async function routeMessage(phone, text, session, context = {}) {
     console.log('🧾 OCR medicines extraction rawOcr SOURCE:', {
       recipeSourceTextTruthy: Boolean(recipeSourceText),
       recipeSourceText: recipeSourceText?.slice(0, 100),
-      text: text?.slice(0, 100)
+      text: text?.slice(0, 300),
+      fullText: text
     });
     console.log('🧾 prescriptionClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
     const prescriptionClean = sanitizePrescriptionText(rawOcr);
@@ -1391,6 +1412,13 @@ async function routeMessage(phone, text, session, context = {}) {
 
     // Prefer prescription if it extracted multiple lines, else box if single drug, else recipe
     const allRecipeMedicines = prescriptionClean || boxClean || recipeClean;
+    // Guard: if raw OCR is purely dosage (e.g. "120 MG") without any drug name, reject it
+    const PURE_DOSAGE_RE = /^\s*\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|mL|ui|iu|tabletas?|capsulas?|ampollas?|comprimidos?|pastillas?)?\s*$/i;
+    const rawIsPureDosage = PURE_DOSAGE_RE.test(rawOcr?.trim() || '');
+    if (rawIsPureDosage && !allRecipeMedicines) {
+      console.log('🧾 OCR rejected as pure dosage-only: "%s"', rawOcr);
+      return '🤖 Solo pude leer la dosis de la imagen (ej. "120 mg"), pero no el nombre del medicamento. ¿Podrías escribir el nombre del producto que buscas?';
+    }
     const searchQuery = allRecipeMedicines || rawOcr;
     console.log('🧾 OCR medicines extraction:', {
       hasOcrText,
@@ -1399,6 +1427,7 @@ async function routeMessage(phone, text, session, context = {}) {
       boxClean,
       recipeClean,
       allRecipeMedicines,
+      rawIsPureDosage,
       searchQuery
     });
     return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
@@ -1886,12 +1915,10 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const consultationMode = Boolean(options.strictConsultationMode);
   const forceExactConsultationToken = Boolean(options.forceExactConsultationToken);
   const preExtracted = Array.isArray(options.preExtractedMedicines) ? options.preExtractedMedicines : [];
-  // In OCR prescription mode, use preExtracted from sanitizePrescriptionText (already clean).
-  // Do NOT call extractMedicineRequests/textSplit which strips dosage and creates noise.
-  const requestedMedicines = preExtracted.length > 0 ? preExtracted : (ocrOnly ? [] : extractMedicineRequests(text));
-  // Skip extractMedicineRequestsFromSegments in recipe/OCR mode — it strips dosage and
-  // generates bare drug names without strength, polluting candidateMedicines.
-  const fallbackMedicines = ocrOnly ? [] : extractMedicineRequestsFromSegments(text);
+  // Always extract medicine list - even for OCR, we want multi-medicine support.
+  // ocrOnly only affects the matching/search behavior, not the extraction.
+  const requestedMedicines = preExtracted.length > 0 ? preExtracted : extractMedicineRequests(text);
+  const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
   const candidateMedicines = dedupeStrings([
@@ -1900,42 +1927,32 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     ...recipeLineMedicines
   ]).filter((item) => {
     const normalizedItem = normalizeText(item);
-    if (/\b(belen|belén|arcia|paciente|nombre|apellido|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
+    if (normalizedItem.length < 3) return false;
+    if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
+    if (/\b(paciente)\b/i.test(normalizedItem)) return false;
+    if (/\b(nombre)\b/i.test(normalizedItem)) return false;
+    if (/\b(apellido)\b/i.test(normalizedItem)) return false;
     return Boolean(normalizedItem);
-  }).map((item) => {
-    if (recipeMode) {
-      // In recipe mode, keep the original medicine line intact (e.g. "ESOZ 40 MG").
-      // extractPrimaryRecipeMedicineQuery strips dosage and returns just "esoz" which
-      // is too generic for search. The dosage is essential for accurate matching.
-      return item;
-    }
-    return extractPrimaryRecipeMedicineQuery(item);
-  }).filter(Boolean);
+  }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
 
-  console.log('🔍 searchAndBuildCatalogResponse INTERNAL:', {
-    ocrOnly,
-    recipeMode,
-    requestedMedicines,
-    fallbackMedicines,
-    recipeLineMedicines,
-    candidateMedicines,
-    text: typeof text === 'string' ? text.slice(0, 200) : text
-  });
+  console.log('🧪 [CANDIDATE-MEDICINES] ocrOnly=%s preExtracted=%s requestedMedicines=%s fallbackMedicines=%s recipeLineMedicines=%s candidateMedicines=%s',
+    ocrOnly, JSON.stringify(preExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(recipeLineMedicines), JSON.stringify(candidateMedicines));
 
-  if (candidateMedicines.length > 1) {
+    if (candidateMedicines.length > 1) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCatalogProducts(2000);
     const groups = [];
     const missingMedicines = [];
     const missingMedicineSet = new Set();
 
+    console.log('🧪 [MULTI-MEDICINE] candidateMedicines=%s (count=%d)', JSON.stringify(candidateMedicines), candidateMedicines.length);
+
     for (const medicineQuery of candidateMedicines) {
       const result = await searchMedicinesByName(medicineQuery, {
         products,
         exchangeRate,
         strictListMode: !ocrOnly,
-        ocrOnly,
         recipeMode,
         strictConsultationMode: consultationMode,
         forceExactConsultationToken: consultationMode && !recipeMode
@@ -1969,11 +1986,11 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   }
 
   const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text.trim();
+  console.log(`🧪 [SINGLE-QUERY] candidateMedicines[0]='${candidateMedicines[0]}' extractMedicineQuery='${extractMedicineQuery(text)}' singleQuery='${singleQuery}'`);
   const result = await searchMedicinesByName(singleQuery, {
     products: await fetchCatalogProducts(2000),
     exchangeRate: await getBcvRate(),
     strictListMode: !ocrOnly,
-    ocrOnly,
     recipeMode,
     strictConsultationMode: consultationMode,
     forceExactConsultationToken: consultationMode && !recipeMode
@@ -1991,25 +2008,22 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   rememberCatalogSnapshot(session, result.matches, result.query || singleQuery, buildSearchDiagnosticMessage(result, singleQuery));
   appendConsultationToSheet({ products: [singleQuery], exists: 1, phone: userInfo.phone, userName: userInfo.pushName });
 
-  return buildSearchDiagnosticMessage(result, singleQuery);
+  const responseText = buildSearchDiagnosticMessage(result, singleQuery);
+  console.log(`🧪 [FINAL-RESPONSE] length=${responseText.length} firstLine="${responseText.split('\n')[0]}" matchesCount=${result.matches.length}`);
+  return responseText;
 }
 
 async function searchMedicinesByName(userQuery, options = {}) {
+  console.log(`🧪 [SEARCH-KICK] userQuery='${userQuery}' strictConsultationMode=${options.strictConsultationMode} preExtractedMedicines=${JSON.stringify(options.preExtractedMedicines)}`);
   if (!db) return null;
 
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
-  const ocrOnly = Boolean(options.ocrOnly);
-  console.log(`[SEARCH-IN] recipeMode=${recipeMode} ocrOnly=${ocrOnly} strictListMode=${strictListMode}`);
-  // In OCR recipe mode, use the lower threshold (0.70) instead of 0.96.
-  // OCR text has inherent recognition noise (e.g. "retadar" vs "retard",
-  // "clopidrogel" vs "clopidogrel", "daflon 500 mg" vs "diosmina 500mg").
-  // A 0.80+ threshold is too strict for OCR. Use 0.70 to ensure real
-  // products are found despite OCR noise and dosage suffix mismatches.
-  const strictReferenceThreshold = (recipeMode && !ocrOnly) ? 0.96 : (strictListMode ? 0.93 : 0.70);
+  const strictReferenceThreshold = recipeMode ? 0.96 : (strictListMode ? 0.93 : 0.88);
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  console.log(`🧪 [SEARCH-MAIN] query='${query}' queryTokens=${JSON.stringify(queryTokens)} consultationMode_opt=${options.strictConsultationMode}`);
   if (!queryTokens.length) return null;
 
   const consultationMode = Boolean(options.strictConsultationMode);
@@ -2214,14 +2228,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
 
     const candidateDosageSignatures = extractDosageSignatures([signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' '));
-    if (ocrOnly && queryDosageSignatures.length > 0) {
-      const candidateJoined = [signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' ');
-      if (candidateDosageSignatures.length === 0 && queryDosageSignatures.length > 0) {
-        console.log(`[DOSAGE-SIG-MISS] querySigs=${JSON.stringify(queryDosageSignatures)} candidate='${signal.productTitleFull}' candidateJoinedLen=${candidateJoined.length} first200='${candidateJoined.slice(0, 200)}'`);
-      } else {
-        console.log(`[DOSAGE-SIG] query='${query}' querySigs=${JSON.stringify(queryDosageSignatures)} candidate='${signal.productTitleFull}' candSigs=${JSON.stringify(candidateDosageSignatures)} dosageExactMatch=${!hasQueryDosage || queryDosageSignatures.some((sig) => candidateDosageSignatures.includes(sig))}`);
-      }
-    }
     const dosageExactMatch = !hasQueryDosage || queryDosageSignatures.some((sig) => candidateDosageSignatures.includes(sig));
 
     if (signal.productTitleFull === matchQuery) score += 600;
@@ -2231,6 +2237,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     if (referenceSimilarity >= strictReferenceThreshold + 0.03) score += 420;
     else if (referenceSimilarity >= strictReferenceThreshold) score += 260;
     else if (referenceSimilarity >= strictReferenceThreshold - 0.03) score += strictListMode ? 80 : 120;
+    else if (referenceSimilarity >= 0.70) score += strictListMode ? 40 : 60; // intermediate tier: good similarity but below threshold
     else if (strictListMode) score -= 500;
 
     // Only give +320 if the match is a whole-token hit (bounded by word boundaries)
@@ -2468,7 +2475,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
     scoredProducts.forEach((item, i) => {
       console.log(`[CONSULTATION-GATE] AFTER[${i}] title='${item.productTitleFull}'`);
     });
-    if (!scoredProducts.length) return { query, queryTokens, exchangeRate, matches: [] };
+    if (!scoredProducts.length) {
+      console.log(`🧪 [CONSULTATION-EMPTY] scoredProducts is empty after filter! beforeCount=${beforeCount} scoredProducts.length=${scoredProducts.length}`);
+      return { query, queryTokens, exchangeRate, matches: [] };
+    } else {
+      console.log(`🧪 [CONSULTATION-AFTER-FILTER] scoredProducts.length=${scoredProducts.length} proceeding to candidate matching`);
+    }
   } else {
     console.log(`[CONSULTATION-GATE] SKIPPED: consultationMode=${consultationMode} primaryTokens.length=${primaryTokens.length}`);
   }
@@ -2484,14 +2496,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     candidateMatches = focusedVitaminMatches;
   } else if (recipeMode) {
-    const recipeToken = primaryTokens[0] || matchTokens[0] || '';
-    if (!recipeToken) {
-      return { query, queryTokens, exchangeRate, matches: [] };
-    }
+  const recipeToken = primaryTokens[0] || matchTokens[0] || '';
+  if (!recipeToken) {
+    return { query, queryTokens, exchangeRate, matches: [] };
+  }
 
-    console.log(`[RECIPE-FILTER] query='${query}' recipeToken='${recipeToken}' matchQuery='${matchQuery}' hasQueryDosage=${hasQueryDosage} dosageExactMatch=${scoredProducts[0]?.dosageExactMatch} strictReferenceThreshold=${strictReferenceThreshold}`);
-
-    const recipeMatches = scoredProducts.filter((item) => {
+  const recipeMatches = scoredProducts.filter((item) => {
       const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
       if (!candidateText) return false;
 
@@ -2503,49 +2513,15 @@ async function searchMedicinesByName(userQuery, options = {}) {
         tokenSimilarity(recipeToken, candidateToken) >= 0.96
       ));
 
-      const pass = exactTokenMatch && (
+      return exactTokenMatch && (
         item.fullFocusMatch ||
         item.exactHit ||
         item.phraseHit ||
         (item.referenceSimilarity ?? 0) >= strictReferenceThreshold
       );
-      if (!pass && item.referenceSimilarity >= 0.80) {
-        console.log(`[RECIPE-FILTER] REJECTED candidate='${item.productTitleFull}' exactTokenMatch=${exactTokenMatch} refSim=${item.referenceSimilarity?.toFixed(3)} score=${item.score}`);
-      }
-      return pass;
     });
 
-    console.log(`[RECIPE-FILTER] recipeMatches count=${recipeMatches.length} hasQueryDosage=${hasQueryDosage}`);
     candidateMatches = recipeMatches;
-    if (hasQueryDosage) {
-      const before = candidateMatches.length;
-      candidateMatches = candidateMatches.filter((item) => {
-        const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
-        const candidateHasAmount = /\b\d+(?:[.,]\d+)?\b/.test(candidateText);
-        const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
-        // Pass if: dosage exact match OR (hasAmount+hasUnit AND strong reference)
-        // The "strong reference" fallback accepts products that have any dosage
-        // even if it doesn't match the query dosage, when the product itself
-        // has high reference similarity (useful for OCR queries like "esoz 40 mg"
-        // against a product "esoz 20mg" where the dosage differs but the
-        // reference product is clearly the same item).
-        const pass = item.dosageExactMatch || (candidateHasAmount && candidateHasUnit && (item.referenceSimilarity ?? 0) >= 0.70);
-        if (!pass) console.log(`[RECIPE-DOSAGE] REJECTED candidate='${item.productTitleFull}' dosageExactMatch=${item.dosageExactMatch} hasAmount=${candidateHasAmount} hasUnit=${candidateHasUnit} refSim=${item.referenceSimilarity}`);
-        return pass;
-      });
-      console.log(`[RECIPE-FILTER] after dosage filter: ${before} -> ${candidateMatches.length}`);
-    }
-
-    if (!candidateMatches.length) {
-      return { query, queryTokens, exchangeRate, matches: [] };
-    }
-  } else {
-    const similarityMatches = scoredProducts.filter((item) => item.fullFocusMatch || item.exactHit || item.phraseHit || (item.score ?? 0) >= 120 || (item.referenceSimilarity ?? 0) >= 0.93);
-    candidateMatches = similarityMatches.filter((item) => {
-      if (item.fullFocusMatch || item.exactHit || item.phraseHit) return true;
-      return (item.referenceSimilarity ?? 0) >= 0.93 || (item.score ?? 0) >= 180;
-    });
-
     if (hasQueryDosage) {
       candidateMatches = candidateMatches.filter((item) => {
         const candidateText = [item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' ');
@@ -2553,25 +2529,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
         const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
         return candidateHasAmount && candidateHasUnit && item.dosageExactMatch;
       });
-
-      if (!candidateMatches.length) {
-        const relaxedTokens = primaryTokens.length > 0 ? primaryTokens : matchTokens;
-        candidateMatches = scoredProducts.filter((item) => {
-          const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText].filter(Boolean).join(' '));
-          if (!candidateText) return false;
-
-          const tokenOverlap = relaxedTokens.some((token) => candidateText.includes(token));
-          const dosageOverlap = candidateText.includes(matchQuery) || candidateText.includes(dosageLessQuery) || candidateText.includes(exactRoot);
-          const relaxedScore = (item.score ?? 0) >= 80 || item.fullFocusMatch || item.exactHit || item.phraseHit;
-
-          return tokenOverlap && (dosageOverlap || relaxedScore);
-        });
-      }
     }
 
     if (!candidateMatches.length) {
+      console.log(`🧪 [CONSULTATION-DEGRADED] candidateMatches=0 after first filter, trying degraded fallback...`);
       const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
       const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+      console.log(`🧪 [CONSULTATION-FALLBACK] queryCore='${queryCore}' altTokens=${JSON.stringify(alternativeTokens)} scoredProducts=${scoredProducts.length}`);
       const degradedMatches = scoredProducts.filter((item) => {
         const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateCore) return false;
@@ -2580,23 +2544,136 @@ async function searchMedicinesByName(userQuery, options = {}) {
           ? candidateCore.includes(queryCore)
           : alternativeTokens.some((token) => {
               if (candidateCore.includes(token)) return true;
-              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.9);
+              return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.76);
             });
 
         const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
-        const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.78 || item.fullFocusMatch || item.exactHit || item.phraseHit;
+        // For consultationMode: use lower threshold (0.70) to allow fuzzy matches like cotrimazol↔clotrimazol
+        const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.70 || item.fullFocusMatch || item.exactHit || item.phraseHit;
 
         return tokenOverlap && (dosageOverlap || softScore);
       });
+      console.log(`🧪 [CONSULTATION-FALLBACK-RESULT] degradedMatches.length=${degradedMatches.length} top=` + JSON.stringify(degradedMatches.slice(0,3).map(i=>({t:i.productTitleFull,s:i.score??0,rs:i.referenceSimilarity??0}))));
 
       if (degradedMatches.length) {
         candidateMatches = degradedMatches;
       }
     }
 
-    if (!candidateMatches.length) {
-      return { query, queryTokens, exchangeRate, matches: [] };
+    console.log(`🧪 [CONSULTATION-EXIT] candidateMatches.length=${candidateMatches.length} query='${query}'`);
+  } else {
+    // non-recipeMode path (consultation queries like "cotrimazol" land here)
+    // reuse the same degraded fallback below
+  }
+
+  // ── Degraded fallback: applies to ALL paths (recipeMode AND non-recipeMode) ──
+  if (!candidateMatches.length) {
+    const queryCore = normalizeText(dosageLessQuery || exactRoot || query);
+    const alternativeTokens = tokenize(queryCore).filter((token) => !STOPWORDS.has(token) && token.length > 1);
+    console.log(`🧪 [DEGRADED-FALLBACK] queryCore='${queryCore}' altTokens=${JSON.stringify(alternativeTokens)} scoredProducts=${scoredProducts.length}`);
+    // Log top-5 products by score for debugging
+    scoredProducts.slice(0, 5).forEach((item, i) => {
+      const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
+      console.log(`[DEGRADED-TOP${i}] title='${item.productTitleFull}' score=${item.score ?? 'N/A'} refSim=${item.referenceSimilarity ?? 'N/A'} candCore='${candidateCore.slice(0, 60)}' tokenSetHasMederan=${item.tokenSet ? item.tokenSet.has('moderan') : 'N/A'}`);
+    });
+    // Targeted MODERAN diagnostic: find it in the full list and log its score/rank
+    const moderanIdx = scoredProducts.findIndex((item) => item.tokenSet && item.tokenSet.has('moderan'));
+    if (moderanIdx >= 0) {
+      const moderanItem = scoredProducts[moderanIdx];
+      const moderanCandidateCore = normalizeText([moderanItem.productTitleFull, moderanItem.titleArrayTextFull, moderanItem.ingredient, moderanItem.productText, moderanItem.title].filter(Boolean).join(' '));
+      const moderanSoftScore = (moderanItem.score ?? 0) >= 40 || (moderanItem.referenceSimilarity ?? 0) >= 0.60 || moderanItem.fullFocusMatch || moderanItem.exactHit || moderanItem.phraseHit;
+      const moderanDosageLessQuery = dosageLessQuery || exactRoot || query;
+      const moderanDosageOverlap = !hasQueryDosage || moderanCandidateCore.includes(matchQuery) || moderanCandidateCore.includes(dosageLessQuery) || moderanCandidateCore.includes(exactRoot);
+      const moderanTokenOverlap = alternativeTokens.length === 0
+        ? moderanCandidateCore.includes(queryCore)
+        : alternativeTokens.some((token) => {
+            if (moderanCandidateCore.includes(token)) return true;
+            return tokenize(moderanCandidateCore).some((ct) => tokenSimilarity(token, ct) >= 0.76);
+          });
+      console.log(`[DEGRADED-MODERAN] rank=${moderanIdx} score=${moderanItem.score} refSim=${moderanItem.referenceSimilarity} softScore=${moderanSoftScore} dosageOverlap=${moderanDosageOverlap} tokenOverlap=${moderanTokenOverlap} candCore='${moderanCandidateCore.slice(0, 80)}' pass=${moderanTokenOverlap && (moderanDosageOverlap || moderanSoftScore)}`);
+    } else {
+      console.log(`[DEGRADED-MODERAN] NOT FOUND in scoredProducts (checked tokenSet for 'moderan')`);
     }
+    // Async diagnostic: query both collections for MODERAN by name
+    findProductByNormalizedName('moderan').then((result) => {
+      console.log(`[MODERAN-QUERY] productsMarket=${result.productsMarket.length} providersProducts=${result.providersProducts.length} error=${result.error || 'none'}`);
+      if (result.productsMarket.length > 0) {
+        result.productsMarket.forEach((p, i) => console.log(`[MODERAN-QUERY] PM[${i}] id=${p.id} ProductTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
+      }
+      if (result.providersProducts.length > 0) {
+        result.providersProducts.forEach((p, i) => console.log(`[MODERAN-QUERY] PP[${i}] id=${p.id} productTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
+      }
+    });
+    // Async diagnostic: query both collections for DAFLON by name
+    findProductByNormalizedName('daflon').then((result) => {
+      console.log(`[DAFLON-QUERY] productsMarket=${result.productsMarket.length} providersProducts=${result.providersProducts.length} error=${result.error || 'none'}`);
+      if (result.productsMarket.length > 0) {
+        result.productsMarket.forEach((p, i) => console.log(`[DAFLON-QUERY] PM[${i}] id=${p.id} ProductTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
+      }
+      if (result.providersProducts.length > 0) {
+        result.providersProducts.forEach((p, i) => console.log(`[DAFLON-QUERY] PP[${i}] id=${p.id} productTitle='${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
+      }
+    });
+    // Targeted DAFLON diagnostic: find it in the full scoredProducts list
+    const daflonIdx = scoredProducts.findIndex((item) => item.tokenSet && item.tokenSet.has('daflon'));
+    if (daflonIdx >= 0) {
+      const daflonItem = scoredProducts[daflonIdx];
+      const daflonCandidateCore = normalizeText([daflonItem.productTitleFull, daflonItem.titleArrayTextFull, daflonItem.ingredient, daflonItem.productText, daflonItem.title].filter(Boolean).join(' '));
+      const daflonSoftScore = (daflonItem.score ?? 0) >= 40 || (daflonItem.referenceSimilarity ?? 0) >= 0.60 || daflonItem.fullFocusMatch || daflonItem.exactHit || daflonItem.phraseHit;
+      const daflonDosageOverlap = !hasQueryDosage || daflonCandidateCore.includes(matchQuery) || daflonCandidateCore.includes(dosageLessQuery) || daflonCandidateCore.includes(exactRoot);
+      const daflonTokenOverlap = alternativeTokens.length === 0
+        ? daflonCandidateCore.includes(queryCore)
+        : alternativeTokens.some((token) => {
+            if (daflonCandidateCore.includes(token)) return true;
+            return tokenize(daflonCandidateCore).some((ct) => tokenSimilarity(token, ct) >= 0.76);
+          });
+      console.log(`[DEGRADED-DAFLON] rank=${daflonIdx} score=${daflonItem.score} refSim=${daflonItem.referenceSimilarity} softScore=${daflonSoftScore} dosageOverlap=${daflonDosageOverlap} tokenOverlap=${daflonTokenOverlap} candCore='${daflonCandidateCore.slice(0, 80)}' pass=${daflonTokenOverlap && (daflonDosageOverlap || daflonSoftScore)}`);
+    } else {
+      console.log(`[DEGRADED-DAFLON] NOT FOUND in scoredProducts (checked tokenSet for 'daflon')`);
+    }
+    const degradedMatches = scoredProducts.filter((item) => {
+      const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
+      if (!candidateCore) return false;
+
+      // For the primary query token, use substring match for long tokens (>=4) to avoid
+      // short-prefix false positives (calaminol vs calzinc), but fall back to token similarity.
+      const tokenOverlap = alternativeTokens.length === 0
+        ? candidateCore.includes(queryCore)
+        : alternativeTokens.some((token) => {
+            if (token.length >= 4) {
+              if (candidateCore.includes(token)) return true;
+            } else {
+              const shortRe = new RegExp(`(?:^|\\s)${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|\\s)`, 'i');
+              if (shortRe.test(candidateCore)) return true;
+            }
+            return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.76);
+          });
+
+      // Require tokenOverlap — eliminate the softScore bypass that was letting
+      // high-score products (calzinc, calcitrex, calpal) through without real token match.
+      if (!tokenOverlap) return false;
+
+      // strictMatchCandidate: only pass if the product has real alignment with the query.
+      // Requires score>=40 AND refSim>=0.60 (not just score>=40 alone).
+      const strictMatchCandidate = (item.referenceSimilarity ?? 0) >= 0.75
+        || item.fullFocusMatch
+        || item.exactHit
+        || item.phraseHit
+        || ((item.score ?? 0) >= 40 && (item.referenceSimilarity ?? 0) >= 0.60);
+
+      const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
+
+      return strictMatchCandidate || dosageOverlap;
+    });
+    console.log(`🧪 [DEGRADED-FALLBACK-RESULT] degradedMatches.length=${degradedMatches.length}`);
+    if (degradedMatches.length) {
+      candidateMatches = degradedMatches;
+    }
+  }
+
+  if (!candidateMatches.length) {
+    console.log(`🧪 [FINAL-RETURN] candidateMatches empty, returning no results`);
+    return { query, queryTokens, exchangeRate, matches: [] };
   }
 
   const topMatches = candidateMatches
@@ -2673,7 +2750,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
           const queryToken = strictQueryTokens[0];
           const candidateTokens = tokenize(candidateText);
           const exactWordMatch = candidateTokens.includes(queryToken) || candidateText.includes(` ${queryToken} `) || candidateText.startsWith(`${queryToken} `) || candidateText.endsWith(` ${queryToken}`) || candidateText === queryToken;
-          const closeWordMatch = exactWordMatch || candidateTokens.some((candidateToken) => tokenSimilarity(queryToken, candidateToken) >= 0.95);
+          const closeWordMatch = exactWordMatch || candidateTokens.some((candidateToken) => tokenSimilarity(queryToken, candidateToken) >= 0.76);
           return closeWordMatch;
         }
 
@@ -2690,11 +2767,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
     : topMatches;
 
   const finalMatches = consultationMode
-    ? filteredTopMatches
+    ? topMatches
     : (recipeMode
       ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
       : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches)));
 
+  console.log(`🧪 [SMN-RETURN] query='${query}' finalMatches.length=${finalMatches.length} topMatches.length=${topMatches.length} consultationMode=${consultationMode}`);
   return {
     query,
     queryTokens,
@@ -2908,60 +2986,112 @@ function splitSingleLineMedicineList(text) {
   // ── Strong stopwords to strip when extracting medicine name ──
   const STRONG_STOP_RE = /^(?:de|del|la|el|las|los|una|unos|que|y|con|para|por|sin|no|si|un|une)$/i;
 
-  // ── Split by dosage anchors ──
-  // For each "de NUM" anchor, find the medicine name that precedes it
-  // by looking in the text segment between the PREVIOUS anchor's end
-  // and this anchor's start, and stripping any embedded "de NUM" tokens.
-  const anchorRe = /\bde\s+(\d+)\b/gi;
-  const anchors = [];
-  let aMatch;
-  anchorRe.lastIndex = 0;
-  while ((aMatch = anchorRe.exec(raw)) !== null) {
-    anchors.push({ start: aMatch.index, end: aMatch.index + aMatch[0].length, num: aMatch[1] });
+  // ── Tokenize preserving position ──
+  const tokenRe = /\S+/g;
+  const tokens = [];
+  let m;
+  while ((m = tokenRe.exec(raw)) !== null) {
+    tokens.push({ tok: m[0], start: m.index, end: m.index + m[0].length });
+  }
+  if (tokens.length < 2) return [raw];
+
+  // ── Pass 1: identify medicine-start positions (segment boundaries) ──
+  // A new medicine starts at position i when the PREVIOUS token ends a dosage:
+  //   a) tokens[i-1] is a number  AND  tokens[i] is a unit  (e.g. "10 mg" → next starts at "mg")
+  //   b) tokens[i-1] is a number  AND  tokens[i] is UPPERCASE  (e.g. "de 75 Losartan")
+  //   c) tokens[i-1] is a number  AND  tokens[i] is lowercase BUT preceded by "de NUMBER"
+  //      within the same segment (e.g. "de 30 nifedipina" → nifedipina starts new segment)
+  // We store these as medStart indices (where each medicine segment begins).
+  // ── Pass 2: within each segment, find " de NUMBER" (last occurrence)
+  // and extract medicine = last capitalized word(s) before it.
+  const medStartIndices = new Set([0]); // segment 0 always starts at 0
+
+  for (let i = 1; i < tokens.length; i++) {
+    const cur = tokens[i].tok;
+    const prev = tokens[i - 1] ? tokens[i - 1].tok : null;
+    const prevNum = prev && /^\d+(?:[.,]\d+)?$/.test(prev);
+    const curIsUpper = /^[A-ZÁÉÍÓÚÑ]/.test(cur);
+    const prevIsDe = /^(?:de|del)$/i.test(tokens[i - 2] ? tokens[i - 2].tok : null);
+    // Case (c): lowercase after number but the "de" before the number belongs to this medicine
+    // e.g. "atorvastatina de 30 nifedipina" → nifedipina starts after " de 30"
+    const prevPrev = i >= 2 ? tokens[i - 2].tok : null;
+    const prevPrevIsDe = /^(?:de|del)$/i.test(prevPrev);
+    const prevPrevNum = prevPrev && /^\d+(?:[.,]\d+)?$/.test(prevPrev);
+
+    if ((prevNum && curIsUpper) ||                      // case (b): "de 75 Losartan"
+        (prevNum && !curIsUpper && prevPrevIsDe)) {     // case (c): "de 30 nifedipina"
+      medStartIndices.add(i);
+    }
+    // Case (a): "de 10 mg" — boundary AFTER the unit (i+1 = start of next medicine)
+    // Only add if i+1 is within bounds; if at end of input, no boundary needed.
+    if (i > 0 && prevNum && UNIT_RE.test(cur) && i + 1 < tokens.length) {
+      medStartIndices.add(i + 1);
+    }
   }
 
-  if (anchors.length === 0) return [raw];
+  if (medStartIndices.size < 2) return [raw];
 
-  const results = [];
-  for (let i = 0; i < anchors.length; i++) {
-    const { start: aStart, num } = anchors[i];
-    const prevChar = aStart > 0 ? raw[aStart - 1] : ' ';
-    // Skip "de NUM" preceded by uppercase letter (e.g. "atorvastatinade 50")
-    if (prevChar !== ' ' && prevChar === prevChar.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(prevChar)) {
-      continue;
-    }
+  // ── Pass 2: build segments and extract medicine+drugs ──
+  const sortedStarts = [...medStartIndices].sort((a, b) => a - b);
+  const result = [];
 
-    const segStart = i > 0 ? anchors[i - 1].end : 0;
-    const between = raw.substring(segStart, aStart).trim();
-    const tokens = between.split(/\s+/);
+  for (let s = 0; s < sortedStarts.length; s++) {
+    const start = sortedStarts[s];
+    const end = s + 1 < sortedStarts.length ? sortedStarts[s + 1] : tokens.length;
+    if (start >= end) continue;
+    const segTokens = tokens.slice(start, end);
+    const segText = segTokens.map(t => t.tok).join(' ');
 
-    // Walk backwards skipping trailing "de NUM" pairs and stopwords
-    // STOPPING CONDITION: if the token preceding the "de NUM" anchor
-    // (in the raw text) is itself preceded by another "de NUM",
-    // the preceding medicine already owns that "de NUM" — stop here.
-    const medTokens = [];
-    let hitMedicine = false; // true once we've added the first non-stopword token
-    for (let j = tokens.length - 1; j >= 0; j--) {
-      const tok = tokens[j];
-      // Skip "de NUM" pair: tokens[j-1]="de" and tokens[j]=digit
-      if (j >= 1 && tokens[j - 1].toLowerCase() === 'de' && /^\d+$/.test(tok)) {
-        j--; // skip "de" + digit together
-        continue;
+    // Find the LAST " de NUMBER" in the segment (the actual dosage for this medicine)
+    // Look for pattern: " de " followed by a digit
+    let dosageDeIdx = -1; // local index in segTokens
+    for (let j = segTokens.length - 1; j >= 0; j--) {
+      const t = segTokens[j].tok;
+      const prevT = j > 0 ? segTokens[j - 1].tok : null;
+      if (/^(?:de|del)$/i.test(prevT) && /^\d/.test(t)) {
+        dosageDeIdx = j - 1; // " de " starts at j-1
+        break;
       }
-      if (STRONG_STOP_RE.test(tok)) { j--; continue; }
-      // Stop if we've already collected a medicine token and we encounter
-      // another one — we crossed into the previous segment's medicine name.
-      if (hitMedicine) break;
-      medTokens.unshift(tok);
-      hitMedicine = true;
     }
 
-    const segment = (medTokens.join(' ') + ' de ' + num).trim();
-    if (segment.length > 2) results.push(segment);
+    let medicineStr = '';
+    if (dosageDeIdx >= 0) {
+      medicineStr = segTokens.slice(0, dosageDeIdx).map(t => t.tok).join(' ').trim();
+      const lastTok = segTokens[segTokens.length - 1].tok;
+      const lastTokIsNum = /^\d+(?:[.,]\d+)?$/.test(lastTok);
+      // If segment ends with a number and next token in original array is a unit, include it
+      let trailingUnit = '';
+      if (lastTokIsNum && (start + segTokens.length) < tokens.length) {
+        const nextTok = tokens[start + segTokens.length] ? tokens[start + segTokens.length].tok : null;
+        if (nextTok && UNIT_RE.test(nextTok)) trailingUnit = ' ' + nextTok;
+      }
+      const dosageWithUnit = (UNIT_RE.test(lastTok)
+        ? segTokens.slice(dosageDeIdx, end - start).map(t => t.tok).join(' ').trim()
+        : segTokens.slice(dosageDeIdx, end - start).map(t => t.tok).join(' ').trim()) + trailingUnit;
+      const combined = (medicineStr + ' ' + dosageWithUnit).trim();
+      // Reject segments that are preamble/greeting fragments:
+      // - medicineStr has >5 words (likely a greeting prepended to medicine)
+      //   UNLESS combined >= 15 chars (might be a short valid dosage)
+      const medicineWords = medicineStr.split(/\s+/).filter(Boolean);
+      const isGreetingLike = medicineWords.length > 5 && combined.length < 15;
+      if (!isGreetingLike) {
+        result.push(combined);
+      }
+    } else {
+      // No dosage found — whole segment is the query.
+      // Skip if it's just a unit (e.g. "mg" leftover from previous dosage).
+      const segText2 = segText.trim();
+      if (segText2.length >= 3 && !UNIT_RE.test(segText2)) {
+        result.push(segText2);
+      }
+    }
+
   }
 
-  if (results.length >= 2) return results;
-  return [raw];
+  if (result.length >= 2) return result;
+  // Fallback: whole text
+  const whole = extractMedicineQuery(raw);
+  return whole && whole.trim().length >= 2 ? [whole.trim()] : [raw];
 }
 
 function extractMedicineRequestsFromSegments(text) {
@@ -2970,13 +3100,6 @@ function extractMedicineRequestsFromSegments(text) {
 
   const segments = splitMedicineSegments(rawText);
   const pieces = segments.length > 1 ? segments : splitSingleLineMedicineList(rawText);
-  // [DIAG] log split results
-  console.log('🔬 extractMedicineRequests split:', {
-    rawText: rawText.slice(0, 120),
-    segmentsCount: segments.length,
-    piecesCount: pieces.length,
-    pieces: pieces.slice(0, 8)
-  });
   const filteredPieces = pieces.filter((piece) => !/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac)\b/i.test(normalizeText(piece)));
   const results = [];
 
@@ -2988,11 +3111,8 @@ function extractMedicineRequestsFromSegments(text) {
 
     const query = extractMedicineQuery(piece) || cleaned;
     if (!query) continue;
-    // [DIAG] log each query extraction
-    console.log('🔬 extractMedicineRequests query:', { piece: piece.slice(0, 80), query });
     if (!results.includes(query)) results.push(query);
   }
-  console.log('🔬 extractMedicineRequests results:', results);
 
   return results;
 }
@@ -3301,6 +3421,26 @@ async function fetchCatalogProducts(limit = 500) {
   if (fallback.length) return fallback;
 
   return [];
+}
+
+// Diagnostic: find a specific product by normalized name in both collections
+async function findProductByNormalizedName(name) {
+  if (!db) return { productsMarket: [], providersProducts: [] };
+  const normalized = normalizeText(name);
+  try {
+    const [pmSnap, ppSnap] = await Promise.all([
+      db.collection('products-market').limit(2000).get(),
+      db.collection('providers-products').limit(2000).get(),
+    ]);
+    const matches = (snap) => snap.docs.filter((d) => {
+      const t = normalizeText(d.data().ProductTitle || d.data().productTitle || '');
+      const arr = Array.isArray(d.data().productTitleArray) ? d.data().productTitleArray.map(normalizeText) : [];
+      return t.includes(normalized) || arr.some((a) => a.includes(normalized));
+    }).map((d) => ({ id: d.id, ProductTitle: d.data().ProductTitle || d.data().productTitle, productTitleArray: d.data().productTitleArray }));
+    return { productsMarket: matches(pmSnap), providersProducts: matches(ppSnap) };
+  } catch (e) {
+    return { productsMarket: [], providersProducts: [], error: e.message };
+  }
 }
 
 function summarizeCatalogHealth(products) {
@@ -3658,7 +3798,6 @@ function sanitizePrescriptionText(value) {
 function sanitizeMedicineBoxText(value) {
   const raw = String(value || '');
   if (!raw) return '';
-  let bestLine; // ← declare locally (was missing: implicit global in PASS 1)
 
   // Classification/therapeutic category words to remove everywhere
   const TRASH_WORDS = new Set([
@@ -3698,42 +3837,22 @@ function sanitizeMedicineBoxText(value) {
 
   const lines = raw.split(/\r?\n+/).map(l => l.trim()).filter(Boolean);
 
-  // ── PASS 1: Find lines that contain a registered ® or trademark ™ symbol.
-  //    These are almost always the commercial brand name on a medicine box.
+  // Find the first line that looks like a drug name (has letters, not mostly numbers)
+  // and has at least one dosage-like token (number followed by unit or number alone in dosage context)
+  let bestLine = '';
   for (const line of lines) {
-    if (/®|™/.test(line)) {
-      const clean = line.replace(/\s+/g, ' ').trim();
-      // This line has a brand marker — use it even if it has other content
-      const alphaAfterFilter = clean.replace(/\d/g, '').replace(/[\s®™-]/g, '').length;
-      if (alphaAfterFilter >= 3) {
-        bestLine = clean;
-        break;
-      }
-    }
-  }
-
-  // ── PASS 2: Find the first line that looks like a drug name
-  //    (has letters, not mostly numbers) and has at least one
-  //    dosage-like token OR recognizable medicine content word.
-  if (!bestLine) {
-    for (const line of lines) {
-      const cleanLine = line.replace(/\s+/g, ' ').trim();
-      // Skip lines that are purely numeric or too short
-      if (cleanLine.replace(/\d/g, '').replace(/\s/g, '').length < 4) continue;
-      // Skip lines that are mostly numbers/symbols
-      if (/^[\d\s.,+-]+$/.test(cleanLine)) continue;
-      // Skip lines that match classification/marketing/brand only
-      const lineLower = cleanLine.toLowerCase();
-      const words = lineLower.split(/\s+/);
-      const hasContent = words.some(w =>
-        !TRASH_WORDS.has(w) &&
-        !PURE_DOSAGE_TOKEN.test(w) &&
-        /[a-záéíóúñ]/i.test(w)
-      );
-      if (!hasContent) continue;
-      bestLine = cleanLine;
-      break;
-    }
+    const cleanLine = line.replace(/\s+/g, ' ').trim();
+    // Skip lines that are purely numeric or too short
+    if (cleanLine.replace(/\d/g, '').replace(/\s/g, '').length < 4) continue;
+    // Skip lines that are mostly numbers/symbols
+    if (/^[\d\s.,+-]+$/.test(cleanLine)) continue;
+    // Skip lines that match classification/marketing/brand only
+    const lineLower = cleanLine.toLowerCase();
+    const words = lineLower.split(/\s+/);
+    const hasContent = words.some(w => !TRASH_WORDS.has(w) && !PURE_DOSAGE_TOKEN.test(w) && /[a-záéíóúñ]/i.test(w));
+    if (!hasContent) continue;
+    bestLine = cleanLine;
+    break;
   }
 
   if (!bestLine) return '';
@@ -3752,10 +3871,10 @@ function sanitizeMedicineBoxText(value) {
   // Rejoin remaining tokens — these should be the drug name (possibly with dosage number)
   let result = tokens.join(' ');
 
-  // Remove dosage suffixes and trademark/registered symbols
+  // Remove dosage suffixes like "120 mg" from the end, keeping just the drug name
+  // But if there's a dosage number in the middle (e.g. "METFORMINA 500mg") keep it
   result = result
     .replace(/\s*\d+\s*(mg|mcg|g|gr|ml|mL|ui|iu)\b\.?/gi, '')
-    .replace(/[®™]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -3920,9 +4039,11 @@ function extractRecipeMedicineLines(value) {
     /\b(tienes?|tiene|tengo|tienen|tener|quiero|quiere|quieren|querer|busco|busca|buscan|buscar|necesito|necesita|necesitan|necesitar|hay|habia|habra|disponible|disponibles|disponibilidad|precio|costo|costar|cuesta|cuestan)\b/i,
     /\b(por\s+favor|me\s+puedes|me\s+ayuda|consulta|consultar|saber|cuanto|cuánto)\b/i
   ];
+  console.log('🧪 [EXTRACT-RECIPE] raw value=%s chunks=%s', raw.slice(0, 200), JSON.stringify(chunks));
   const pushCandidate = (candidate) => {
     const normalized = normalizeText(candidate);
     if (!normalized) return;
+    console.log('🧪 [PUSH-CANDIDATE] candidate="%s" normalized="%s"', candidate, normalized);
     if (metaPatterns.some((pattern) => pattern.test(candidate) || pattern.test(normalized))) return;
     if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return;
     if (!/[a-záéíóúñ]/i.test(candidate)) return;
@@ -3947,6 +4068,7 @@ function extractRecipeMedicineLines(value) {
     pushCandidate(chunk);
   }
 
+  console.log('🧪 [EXTRACT-RECIPE] candidates (before dedup)=%s', JSON.stringify(candidates));
   return [...new Set(candidates)];
 }
 
@@ -4154,7 +4276,7 @@ function extractPrimaryRecipeMedicineQuery(value) {
   if (!normalized) return '';
 
   if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return '';
-  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return '';
+  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|stadium|ano nac|año nac|datum|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return '';
 
   const tokens = normalized.split(' ').filter(Boolean);
   if (!tokens.length) return '';
@@ -4164,50 +4286,17 @@ function extractPrimaryRecipeMedicineQuery(value) {
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
     'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
-  const MED_QUERY_WEAK_TOKENS = new Set([
-    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
-    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor',
-    'disponible', 'disponibles', 'disponibilidad'
-  ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
-  const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
-  const dosageTokens = tokens.filter((token) => isDoseToken(token));
-  const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
-
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
-  const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
-  if (firstStrongToken) return firstStrongToken;
+  console.log('🧪 [EXTRACT-PRIMARY] raw="%s" tokens=%s cleanedTokens=%s => returning "%s"', raw, JSON.stringify(tokens), JSON.stringify(cleanedTokens), cleanedTokens[0] || 'NONE');
 
+  if (cleanedTokens.length) return cleanedTokens[0];
+
+  // Fallback: try to extract dosage (e.g. "40 mg" -> return "40 mg")
   const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
   const dosageMatch = raw.match(dosagePattern);
-  if (dosageMatch) {
-    const dose = normalizeText(dosageMatch[1]);
-    const beforeDose = raw.slice(0, dosageMatch.index).trim();
-    const beforeTokens = normalizeText(beforeDose).split(' ').filter((t) => t.length > 1 && !STOPWORDS.has(t));
-    const beforeStrong = beforeTokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
-    if (beforeStrong.length) return beforeStrong[0];
-    return dose;
-  }
+  if (dosageMatch) return dosageMatch[1];
 
-  if (strongTokens.length) {
-    const top = strongTokens[0];
-    // Reject short tokens and known query residuals
-    const hasDosageForm = MED_FORM_TOKENS.has(tokenize(candidate).find((t) => MED_FORM_TOKENS.has(t)));
-    if (top.length < 4 && !hasDosageForm) {
-      // Short token without a dosage form — reject it
-    } else {
-      return top;
-    }
-    // Also reject common conversational residuals that survived cleanup
-    if (/^(noches|mananas|tardes|dias|favor|ahora|también|tampoco|así|asimesmo|小伙子|entonces|mientras|más|bien|mal|quizás|quizá|puede|pueden|puedo)$/i.test(top)) return '';
-    return top;
-  }
-  if (cleanedTokens.length) return cleanedTokens[0];
-  if (formTokens.length && tokens.length > 1) {
-    const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
-    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
-    if (afterStrong) return afterStrong;
-  }
   return tokens[0] || '';
 }
 
@@ -4267,8 +4356,13 @@ function isMenuOption(value) {
 }
 
 function extractMedicineQuery(text) {
+  // DEBUG: log input and output to trace production behavior
+  const _dbg_input = String(text ?? '').trim().slice(0, 80);
   const cleaned = normalizeText(text);
-  if (!cleaned) return '';
+  if (!cleaned) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "" (empty)', _dbg_input, cleaned);
+    return '';
+  }
 
   // Strip dosage FIRST so it doesn't pollute verb-pattern capture
   const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
@@ -4276,12 +4370,14 @@ function extractMedicineQuery(text) {
 
   const verbList = [
     'por\\sfavor','me\\spuedes\\sayudar\\scon','me\\sayudas\\scon','necesito','busco','busque','buscame','buscando','quiero',
-    'quisiera','me\\sinteresa','me\\sinteresan','(?<!\\w)tienes\\b','(?<!\\w)tiene\\b','(?<!\\w)tienen\\b','(?<!\\w)hay\\b',
-    'disponibilidad(?:\\sde)?','informar(?:\\ssobre)?','informe(?:\\ssobre)?','consultar(?:\\ssobre)?',
-    'consulta(?:\\ssobre)?','informame(?:\\ssobre)?','informarme(?:\\ssobre)?','precio(?:\\sde)?','conoces','(?<!\\w)vendes?(?!\\w)',
-    'dónde\\s(?:puedo\\s)?comprar','donde\\s(?:puedo\\s)?comprar','dónde\\scomprar','donde\\scomprar',
-    'dónde\\s(?:puedo\\s)?conseguir','donde\\s(?:puedo\\s)?conseguir','dónde\\sconseguir','donde\\sconseguir',
-    'dónde\\sconsigo','donde\\sconsigo','dónde\\sencuentro','donde\\sencuentro'
+    'quisiera','me\\sinteresa','me\\sinteresan','(?<!\w)tienes\b','(?<!\w)tiene\b','(?<!\w)tienen\b','(?<!\w)hay\b',
+    'disponibilidad(?:\sde)?','informar(?:\ssobre)?','informe(?:\ssobre)?','consultar(?:\ssobre)?',
+    'consulta(?:\ssobre)?','informame(?:\ssobre)?','informarme(?:\ssobre)?','precio(?:\sde)?','conoces','(?<!\w)vendes?(?!\w)',
+    'dónde\s(?:puedo\s)?comprar','donde\s(?:puedo\s)?comprar','dónde\scomprar','donde\scomprar',
+    'dónde\s(?:puedo\s)?conseguir','donde\s(?:puedo\s)?conseguir','dónde\sconseguir','donde\sconseguir',
+    'dónde\sconsigo','donde\sconsigo','dónde\sencuentro','donde\sencuentro',
+    '(?<!\w)cuesta\b'  // FIX: removed trailing \s+ — "me cuesta X" has no space after `cuesta`,
+    // so the original pattern `(?<!\w)cuesta\b\s+(.+?)$` could never match.
   ];
 
   // Remove 'por favor' from the middle BEFORE verb matching so it doesn't confuse the greedy .+
@@ -4297,12 +4393,25 @@ function extractMedicineQuery(text) {
   // FIXED: only capture the bare number; the cleanup replace handles " de NUMERO" suffix.
   const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)(?:\s+|$)/i;
 
-  const verbRe = new RegExp(`(?:^|\\s)(?:${verbList.join('|')})\\s+(.+)$`, 'i');
-
+  // NOTE: (.+?) is NON-GREEDY so it stops at the first dosage-form boundary,
+  // allowing the MED_FORM_TOKENS filter downstream to clean trailing forms correctly
+  // (e.g. "cotrimazol en gotas para el oido" → captured as "cotrimazol en gotas para el oido",
+  // then filtered to "cotrimazol").
+  const verbListJoined = verbList.join('|');
+  console.log('🧪 [DIAG-EMQ] verbListJoined_len=%d verbListJoined_sample=%s', verbListJoined.length, verbListJoined.slice(0, 200));
+  const verbRe = new RegExp(`(?:^|\\s)(?:${verbListJoined})\\s+(.+?)$`, 'i');
+  const verbReStr = verbRe.toString();
+  // Print full regex to see if 'custa' is actually inside it
+  console.log('🧪 [DIAG-EMQ] IN="%s" verbRe_len=%d verbRe_test=%s verbRe=%s', _dbg_input, verbReStr.length, verbRe.test(cleanedNoFavor), verbReStr);
+  console.log('🧪 [DIAG-EMQ] verbRe_cuesta_in_regex=%s', verbReStr.includes('cuesta'));
+  console.log('🧪 [DIAG-EMQ] direct_cuesta_test=%s', /\bcu[ée]sta\b/i.test('me cuesta cotrimazol'));
+  const custaRe = /(?<!\w)cu[ée]sta\b/i;
+  console.log('🧪 [DIAG-EMQ] custaRe_match="%s"', JSON.stringify('en cuanto me cuesta cotrimazol'.match(custaRe)));
   let candidate = cleanedNoFavor;
   for (const pattern of [verbRe, P2A, P2B]) {
     const match = cleanedNoFavor.match(pattern);
     if (match?.[1]) {
+      console.log('🧪 [DIAG-EMQ] IN="%s" pattern="%s" matched="%s" => candidate="%s"', _dbg_input, pattern.toString().slice(0, 40), match[0], match[1]);
       candidate = normalizeText(match[1]);
       break;
     }
@@ -4354,18 +4463,27 @@ function extractMedicineQuery(text) {
     'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
   const MED_QUERY_WEAK_TOKENS = new Set([
-    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber', 'cuanto', 'cuánto', 'quisiera', 'quiero',
-    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por', 'favor',
-    'disponible', 'disponibles', 'disponibilidad'
+    'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber',
+    'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por',
+    'disponible', 'disponibles', 'disponibilidad',
+    'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
+    'es', 'soy', 'son', 'está', 'están',
+    'quiero', 'quisiera', 'necesito', 'busco', 'busque'
   ]);
+  const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier'];
+  function isWeakOpener(token) {
+    const lower = token.toLowerCase();
+    if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
+    return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
+  }
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
-  const strongTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token));
-  const dosageTokens = tokens.filter((token) => isDoseToken(token));
-  const formTokens = tokens.filter((token) => MED_FORM_TOKENS.has(token));
-
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
-  const firstStrongToken = cleanedTokens.find((token) => !MED_QUERY_WEAK_TOKENS.has(token));
-  if (firstStrongToken) return firstStrongToken;
+  const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
+  console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "%s" (cleanedTokens=%s firstStrong=%s)', _dbg_input, cleaned, firstStrongToken || '', JSON.stringify(cleanedTokens), firstStrongToken || 'none');
+  if (firstStrongToken) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => returning firstStrongToken="%s" (cleanedTokens=%s)', _dbg_input, firstStrongToken, JSON.stringify(cleanedTokens));
+    return firstStrongToken;
+  }
 
   const dosagePattern = /\b(\d+(?:[.,]\d+)?\s?(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?))\b/i;
   const dosageMatch = candidate.match(dosagePattern);
@@ -4401,14 +4519,12 @@ function extractMedicineQuery(text) {
     if (!beforeNum || !beforeNum.trim()) return numStr;
   }
 
-  if (strongTokens.length) return strongTokens[0];
   const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
-  if (weakFiltered.length) return weakFiltered[0];
-  if (formTokens.length && tokens.length > 1) {
-    const afterForm = tokens.slice(tokens.findIndex((token) => MED_FORM_TOKENS.has(token)) + 1);
-    const afterStrong = afterForm.find((token) => !MED_QUERY_WEAK_TOKENS.has(token) && !isDoseToken(token) && !MED_FORM_TOKENS.has(token));
-    if (afterStrong) return afterStrong;
+  if (weakFiltered.length) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, weakFiltered[0]);
+    return weakFiltered[0];
   }
+  console.log('🧪 [DIAG-EMQ] IN="%s" => returning "%s" (weakFiltered=%s)', _dbg_input, weakFiltered[0] || '', JSON.stringify(weakFiltered));
   return weakFiltered[0] || '';
 }
 
