@@ -2750,84 +2750,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const isSingleTokenQuery = !isVitaminQuery && !hasQueryDosage && normalizedQueryTokens.length === 1;
   const strictQueryTokens = isSingleTokenQuery ? normalizedQueryTokens : leadingQueryTokens;
 
-  // ── Firestore direct fallback: when scoredProducts (2000 limit) misses the target,
-  // query Firebase directly using arrayContains on productTitleArray to catch products
-  // that exist beyond document 2000 in Firestore's default order.
-  const queryToken = strictQueryTokens[0];
-  const currentTopHasTarget = candidateMatches.some((item) => {
-    const targetRe = new RegExp(`^${queryToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
-    return item.tokenSet && (item.tokenSet.has(queryToken) || (item.productTitleFull && targetRe.test(item.productTitleFull)));
-  });
-  if (!currentTopHasTarget && isSingleTokenQuery && db) {
-    console.log(`[FIREBASE-DIRECT] token='${queryToken}' catalog limited, querying Firebase arrayContains...`);
-    try {
-      const [pmSnap, ppSnap] = await Promise.all([
-        db.collection('products-market').where('productTitleArray', 'array-contains', queryToken).limit(20).get(),
-        db.collection('providers-products').where('productTitleArray', 'array-contains', queryToken).limit(20).get(),
-      ]);
-      const firebaseDirectMatches = [...pmSnap.docs, ...ppSnap.docs].map((d) => d.data());
-      console.log(`[FIREBASE-DIRECT] products-market=${pmSnap.size} providers-products=${ppSnap.size}`);
-      if (firebaseDirectMatches.length > 0) {
-        const directScored = firebaseDirectMatches
-          .map((doc) => {
-            const s = buildCatalogSignal(doc);
-            const m = scoreSignal(s);
-            const basePriceUsd = getPrice(doc);
-            const basePriceBs = getPriceBs(doc, exchangeRate);
-            const pricing = applySalesPricing(basePriceUsd, exchangeRate);
-            return {
-              ...s,
-              score: m.score,
-              referenceSimilarity: m.referenceSimilarity,
-              exactHit: m.exactPhraseHit || m.strongTokenCoverage || m.vitaminHit || m.titleContentMatch || m.arrayContentMatch,
-              fullFocusMatch: m.fullFocusMatch,
-              phraseHit: m.phraseHit,
-              vitaminHit: m.vitaminHit,
-              tokenCoverage: Math.max(m.tokenHitsTitle, m.tokenHitsArray, m.tokenHitsIngredient),
-              basePriceUsd,
-              basePriceBs,
-              priceUsd: pricing.displayUsd,
-              priceBs: pricing.displayBs,
-              feeRate: pricing.feeRate,
-              feeAmountUsd: pricing.feeAmountUsd,
-            };
-          })
-          .sort((a, b) => b.score - a.score);
-        console.log(`[FIREBASE-DIRECT] scored ${directScored.length} products, top title='${directScored[0]?.productTitleFull}' score=${directScored[0]?.score}`);
-        candidateMatches = [...candidateMatches, ...directScored];
-        topMatches = [...topMatches, ...directScored];
-        // Recompute filteredTopMatches since topMatches changed (Firebase direct ran after initial filter)
-        filteredTopMatches = topMatches.slice(0, 20).sort((a, b) => {
-          const exactA = a.exactHit ? 1 : 0;
-          const exactB = b.exactHit ? 1 : 0;
-          if (exactA !== exactB) return exactB - exactA;
-          const phraseA = a.phraseHit ? 1 : 0;
-          const phraseB = b.phraseHit ? 1 : 0;
-          if (phraseA !== phraseB) return phraseB - phraseA;
-          const scoreA = a.score ?? 0;
-          const scoreB = b.score ?? 0;
-          if (scoreA !== scoreB) return scoreB - scoreA;
-          const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
-          const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
-          return priceA - priceB;
-        }).filter((item) => {
-          const candidateText = (item.productTitleFull || '').toLowerCase();
-          const queryToken = strictQueryTokens[0];
-          if (candidateText.includes(queryToken)) return true;
-          for (const candidateToken of tokenize(candidateText)) {
-            if (candidateToken === queryToken) return true;
-            const similarity = tokenSimilarity(queryToken, candidateToken);
-            if (similarity >= 0.9) return true;
-          }
-          return false;
-        });
-        console.log(`[FIREBASE-DIRECT] filteredTopMatches recomputed length=${filteredTopMatches.length}`);
-      }
-    } catch (e) {
-      console.error(`[FIREBASE-DIRECT] error: ${e.message}`);
-    }
-  }
-
   let filteredTopMatches = strictQueryTokens.length
     ? topMatches.filter((item) => {
         const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
@@ -2887,6 +2809,83 @@ async function searchMedicinesByName(userQuery, options = {}) {
         });
       })
     : topMatches;
+
+  // ── Firestore direct fallback: when scoredProducts (2000 limit) misses the target,
+  // query Firebase directly using arrayContains on productTitleArray to catch products
+  // that exist beyond document 2000 in Firestore's default order.
+  const queryToken = strictQueryTokens[0];
+  const currentTopHasTarget = candidateMatches.some((item) => {
+    const targetRe = new RegExp(`^${queryToken.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+    return item.tokenSet && (item.tokenSet.has(queryToken) || (item.productTitleFull && targetRe.test(item.productTitleFull)));
+  });
+  if (!currentTopHasTarget && isSingleTokenQuery && db) {
+    console.log(`[FIREBASE-DIRECT] token='${queryToken}' catalog limited, querying Firebase arrayContains...`);
+    try {
+      const [pmSnap, ppSnap] = await Promise.all([
+        db.collection('products-market').where('productTitleArray', 'array-contains', queryToken).limit(20).get(),
+        db.collection('providers-products').where('productTitleArray', 'array-contains', queryToken).limit(20).get(),
+      ]);
+      const firebaseDirectMatches = [...pmSnap.docs, ...ppSnap.docs].map((d) => d.data());
+      console.log(`[FIREBASE-DIRECT] products-market=${pmSnap.size} providers-products=${ppSnap.size}`);
+      if (firebaseDirectMatches.length > 0) {
+        const directScored = firebaseDirectMatches
+          .map((doc) => {
+            const s = buildCatalogSignal(doc);
+            const m = scoreSignal(s);
+            const basePriceUsd = getPrice(doc);
+            const basePriceBs = getPriceBs(doc, exchangeRate);
+            const pricing = applySalesPricing(basePriceUsd, exchangeRate);
+            return {
+              ...s,
+              score: m.score,
+              referenceSimilarity: m.referenceSimilarity,
+              exactHit: m.exactPhraseHit || m.strongTokenCoverage || m.vitaminHit || m.titleContentMatch || m.arrayContentMatch,
+              fullFocusMatch: m.fullFocusMatch,
+              phraseHit: m.phraseHit,
+              vitaminHit: m.vitaminHit,
+              tokenCoverage: Math.max(m.tokenHitsTitle, m.tokenHitsArray, m.tokenHitsIngredient),
+              basePriceUsd,
+              basePriceBs,
+              priceUsd: pricing.displayUsd,
+              priceBs: pricing.displayBs,
+              feeRate: pricing.feeRate,
+              feeAmountUsd: pricing.feeAmountUsd,
+            };
+          })
+          .sort((a, b) => b.score - a.score);
+        console.log(`[FIREBASE-DIRECT] scored ${directScored.length} products, top title='${directScored[0]?.productTitleFull}' score=${directScored[0]?.score}`);
+        candidateMatches = [...candidateMatches, ...directScored];
+        topMatches = [...topMatches, ...directScored];
+        filteredTopMatches = topMatches.slice(0, 20).sort((a, b) => {
+          const exactA = a.exactHit ? 1 : 0;
+          const exactB = b.exactHit ? 1 : 0;
+          if (exactA !== exactB) return exactB - exactA;
+          const phraseA = a.phraseHit ? 1 : 0;
+          const phraseB = b.phraseHit ? 1 : 0;
+          if (phraseA !== phraseB) return phraseB - phraseA;
+          const scoreA = a.score ?? 0;
+          const scoreB = b.score ?? 0;
+          if (scoreA !== scoreB) return scoreB - scoreA;
+          const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+          const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+          return priceA - priceB;
+        }).filter((item) => {
+          const candidateText = (item.productTitleFull || '').toLowerCase();
+          const qToken = strictQueryTokens[0];
+          if (candidateText.includes(qToken)) return true;
+          for (const candidateToken of tokenize(candidateText)) {
+            if (candidateToken === qToken) return true;
+            const similarity = tokenSimilarity(qToken, candidateToken);
+            if (similarity >= 0.9) return true;
+          }
+          return false;
+        });
+        console.log(`[FIREBASE-DIRECT] filteredTopMatches recomputed length=${filteredTopMatches.length}`);
+      }
+    } catch (e) {
+      console.error(`[FIREBASE-DIRECT] error: ${e.message}`);
+    }
+  }
 
   const finalMatches = consultationMode
     ? topMatches
