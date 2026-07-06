@@ -1890,7 +1890,10 @@ function isAppQuestion(value) {
 
 function isLocationQuestion(value) {
   const text = normalizeText(value);
-  return /\b(donde estan ubicados|donde estan|ubicados|ubicacion|ubicación|direccion|dirección|local fisico|local físico|tienen local|donde queda|dónde queda)\b/.test(text);
+  // NOTE: \b before "ubic" fails after NFD+strip normalization because the
+  // combining accent char (NFD) disappears, making \b see \w\w (c + a) = no boundary.
+  // Solution: remove \b before "ubic" — "ubic" alone is specific enough.
+  return /\b(donde estan ubicados|donde estan|ubicados|ubicacion|ubicación|direccion|dirección|local fisico|local físico|tienen local|donde queda|dónde queda|ubic)\b/.test(text);
 }
 
 function isMoreInfoRequest(value) {
