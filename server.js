@@ -676,7 +676,11 @@ async function processIncomingMessage(payload) {
     const mediaAnalysis = media ? await analyzeIncomingMedia(media) : null;
     const rawBody = extractBody(payload) || '';
     const sanitizedOcrText = mediaAnalysis?.text ? sanitizeRecipeText(mediaAnalysis.text) : '';
-    const body = mediaAnalysis?.text ? (sanitizedOcrText || rawBody) : rawBody;
+    // Placeholder tokens that Evolution GO may set as caption for image messages
+    const PLACEHOLDER_BODY_TOKENS = new Set(['image', 'foto', 'photo', 'imagen', 'pic', 'picture']);
+    const rawBodyIsPlaceholder = PLACEHOLDER_BODY_TOKENS.has(rawBody.trim().toLowerCase());
+    // Prioritize user's typed text when meaningful; use OCR only as fallback (image-only messages)
+    const body = (rawBody && !rawBodyIsPlaceholder) ? rawBody : (mediaAnalysis?.text ? (sanitizedOcrText || rawBody) : rawBody);
     const normalizedBody = normalizeText(body);
     const ocrSearchText = sanitizedOcrText || '';
     const rawOcrText = mediaAnalysis?.text || '';
