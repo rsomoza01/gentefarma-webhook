@@ -1890,10 +1890,10 @@ function isAppQuestion(value) {
 
 function isLocationQuestion(value) {
   const text = normalizeText(value);
-  // NOTE: \b before "ubic" fails after NFD+strip normalization because the
-  // combining accent char (NFD) disappears, making \b see \w\w (c + a) = no boundary.
-  // Solution: remove \b before "ubic" — "ubic" alone is specific enough.
-  return /\b(donde estan ubicados|donde estan|ubicados|ubicacion|ubicación|direccion|dirección|local fisico|local físico|tienen local|donde queda|dónde queda|ubic)\b/.test(text);
+  // ubic prefix must be checked separately: \bubic\b fails for "ubicada"/"ubicacion"
+  // because after 'c' comes 'a'/'i' (word char) — no word boundary.
+  // Full-word alternatives keep trailing \b; ubic is matched as bare substring.
+  return /\b(donde estan ubicados|donde estan|ubicacion|ubicación|ubicados|direccion|dirección|local fisico|local físico|tienen local|donde queda|dónde queda)\b|ubic/.test(text);
 }
 
 function isMoreInfoRequest(value) {
