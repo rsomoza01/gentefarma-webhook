@@ -2610,22 +2610,26 @@ async function searchMedicinesByName(userQuery, options = {}) {
         const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
         if (!candidateCore) return false;
 
+        // Require meaningful token overlap: at least one query token of length >=2 must match the candidate
+        const meaningfulTokens = alternativeTokens.filter(t => t.length >= 2);
         const tokenOverlap = alternativeTokens.length === 0
           ? candidateCore.includes(queryCore)
-          : alternativeTokens.some((token) => {
+          : meaningfulTokens.some((token) => {
               if (candidateCore.includes(token)) return true;
               return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.76);
             });
 
         const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
-        // For consultationMode: use lower threshold (0.70) to allow fuzzy matches like cotrimazol↔clotrimazol
-        const softScore = (item.score ?? 0) >= 40 || (item.referenceSimilarity ?? 0) >= 0.70 || item.fullFocusMatch || item.exactHit || item.phraseHit;
+        // For consultationMode: strict threshold (0.76) — reject low-refSim matches like daflon↔sonda
+        const softScore = (item.referenceSimilarity ?? 0) >= 0.76 || item.fullFocusMatch || item.exactHit || item.phraseHit;
 
         return tokenOverlap && (dosageOverlap || softScore);
       });
       console.log(`🧪 [CONSULTATION-FALLBACK-RESULT] degradedMatches.length=${degradedMatches.length} top=` + JSON.stringify(degradedMatches.slice(0,3).map(i=>({t:i.productTitleFull,s:i.score??0,rs:i.referenceSimilarity??0}))));
 
-      if (degradedMatches.length) {
+      // Reject degraded results with refSim < 0.76 — they are spurious for prescription scans
+      const consultBestRefSim = degradedMatches.length > 0 ? (degradedMatches[0].referenceSimilarity ?? 0) : 0;
+      if (degradedMatches.length && consultBestRefSim >= 0.76) {
         candidateMatches = degradedMatches;
       }
     }
@@ -2753,21 +2757,29 @@ async function searchMedicinesByName(userQuery, options = {}) {
       if (!tokenOverlap) return false;
 
       // strictMatchCandidate: only pass if the product has real alignment with the query.
-      // Requires score>=40 AND refSim>=0.60 (not just score>=40 alone).
-      const strictMatchCandidate = (item.referenceSimilarity ?? 0) >= 0.75
+      // Requires refSim>=0.76 OR exact match — reject spurious degraded matches like daflon↔sonda
+      const strictMatchCandidate = (item.referenceSimilarity ?? 0) >= 0.76
         || item.fullFocusMatch
         || item.exactHit
-        || item.phraseHit
-        || ((item.score ?? 0) >= 40 && (item.referenceSimilarity ?? 0) >= 0.60);
+        || item.phraseHit;
 
       const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
+      // Require BOTH token overlap AND (strictMatchCandidate OR dosageOverlap) — no dosage-alone fallback
+      const queryTokensForOverlap = alternativeTokens.filter(t => t.length >= 2);
+      const hasTokenOverlap = queryTokensForOverlap.length === 0
+        ? candidateCore.includes(queryCore)
+        : queryTokensForOverlap.some(token => candidateCore.includes(token));
 
-      return strictMatchCandidate || dosageOverlap;
+      return hasTokenOverlap && (strictMatchCandidate || dosageOverlap);
     });
     console.log(`🧪 [DEGRADED-FALLBACK-RESULT] degradedMatches.length=${degradedMatches.length}`);
-    if (degradedMatches.length) {
+    // Reject degraded matches with very low reference similarity — they are spurious
+    // (e.g., daflon↔sonda with refSim≈0.55 should NOT appear as a catalog result)
+    const bestRefSim = degradedMatches.length > 0 ? (degradedMatches[0].referenceSimilarity ?? 0) : 0;
+    if (degradedMatches.length && bestRefSim >= 0.70) {
       candidateMatches = degradedMatches;
     }
+    // else: candidateMatches stays empty — do NOT use degraded results with refSim < 0.70
 
     }
 
