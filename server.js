@@ -1271,7 +1271,8 @@ async function routeMessage(phone, text, session, context = {}) {
     clearSelectionState(session);
     const searchQuery = consultationQuery || text;
     console.log('🧪 [DIAG-ROUTE] consultationQuery=%s strictConsultationQuery=%s directMedicineQuery=%s searchQuery=%s text=%s', JSON.stringify(consultationQuery), JSON.stringify(strictConsultationQuery), JSON.stringify(directMedicineQuery), JSON.stringify(searchQuery), JSON.stringify(text));
-    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
+    const catalogResult = await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
+    if (catalogResult !== null) return catalogResult;
   }
 
   if (/^(bot|agente|volver al bot|retomar bot|activar bot)$/i.test(normalized)) {
@@ -1334,7 +1335,8 @@ async function routeMessage(phone, text, session, context = {}) {
       const n = normalizeText(item);
       return n.length >= 3 && !/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(n) && !/^\d+$/.test(n);
     });
-    return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: preExt }, { phone, pushName });
+    const catalogResult = await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: preExt }, { phone, pushName });
+    if (catalogResult !== null) return catalogResult;
   }
 
   if (/^(listo|resumen)\b/.test(normalized)) {
@@ -1441,12 +1443,14 @@ async function routeMessage(phone, text, session, context = {}) {
       rawIsPureDosage,
       searchQuery
     });
-    return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
+    const catalogResult_ocr = await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
+    if (catalogResult_ocr !== null) return catalogResult_ocr;
   }
 
   if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global')) {
     clearSelectionState(session);
-    return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText }, { phone, pushName });
+    const catalogResult = await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText }, { phone, pushName });
+    if (catalogResult !== null) return catalogResult;
   }
 
   // Skip selection block if real medicine names were detected in the text (dose numbers
@@ -1507,7 +1511,8 @@ async function routeMessage(phone, text, session, context = {}) {
     if (hasNewMedicineQuery) {
       // New medicine query detected — clear stale selection state and route to search
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
+      const catalogResult_nmq = await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
+      if (catalogResult_nmq !== null) return catalogResult_nmq;
     }
     return '⚠️ Primero debes ver los resultados del catálogo. Busca el medicamento y luego escribe el número de opción y la cantidad.';
   }
@@ -1634,7 +1639,8 @@ async function routeMessage(phone, text, session, context = {}) {
     if (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || session.mode === 'awaiting_product_name') {
       clearSelectionState(session);
     }
-    return await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: Boolean(isMedicineConsultationPhrase(normalized)) }, { phone, pushName });
+    const catalogResult_mse = await searchAndBuildCatalogResponse(text, session, { hasOcrText, strictConsultationMode: Boolean(isMedicineConsultationPhrase(normalized)) }, { phone, pushName });
+    if (catalogResult_mse !== null) return catalogResult_mse;
   }
 
   // Early exit para declaraciones de interés en medicamentos — siempre muestra bienvenida
@@ -1669,7 +1675,8 @@ async function routeMessage(phone, text, session, context = {}) {
     const medicineRequests = extractMedicineRequests(text);
     if (medicineRequests.length > 0 || isProductSearchRequest(normalized)) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+      const catalogResult_awc = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+      if (catalogResult_awc !== null) return catalogResult_awc;
     }
 
     const parsed = parseSelectionCommand(normalized);
@@ -1708,7 +1715,8 @@ async function routeMessage(phone, text, session, context = {}) {
     const medicineRequests = extractMedicineRequests(text);
     if (medicineRequests.length > 0 || isProductSearchRequest(normalized)) {
       clearSelectionState(session);
-      return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+      const catalogResult_awcg = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+      if (catalogResult_awcg !== null) return catalogResult_awcg;
     }
 
     const parsed = parseSelectionCommand(normalized);
@@ -1763,12 +1771,14 @@ async function routeMessage(phone, text, session, context = {}) {
         return formatSelectionSavedMessage(selected, parsed.quantity, session);
       }
     }
-    return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+    const catalogResult_awcgelse = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+    if (catalogResult_awcgelse !== null) return catalogResult_awcgelse;
   }
 
   const multiMedicineRequests = extractMedicineRequests(text);
   if (multiMedicineRequests.length > 1) {
-    return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+    const catalogResult_multi = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+    if (catalogResult_multi !== null) return catalogResult_multi;
   }
 
   // ── NO-CONSULTA gate global en routeMessage ──────────────────────────
@@ -1974,6 +1984,22 @@ function shouldSendInstagramReel(value) {
 async function searchAndBuildCatalogResponse(text, session, options = {}, userInfo = {}) {
   if (!db) {
     return '⚠️ No tengo conexión al catálogo en este momento. Intenta de nuevo más tarde.';
+  }
+
+  // ULTRA-GUARD: si el texto es puramente una frase de selección y candidateMedicines
+  // estaría vacío, retornar null para que routeMessage use la lógica de selección.
+  // Esto cubre el caso en que tanto isViableDirectQuery como medicineSearchIntent
+  // fueronfalse por algún motivo pero el texto aún llegó aquí.
+  if (!options.ocrOnly && !options.strictConsultationMode) {
+    const normalized = normalizeText(text);
+    if (isSelectionPhrase(normalized)) {
+      const preExt = Array.isArray(options.preExtractedMedicines) ? options.preExtractedMedicines : [];
+      const reqMeds = preExt.length > 0 ? preExt : extractMedicineRequests(text);
+      if (reqMeds.length === 0) {
+        console.log('🛡️ [SELECTION-GUARD] Selection phrase detected in searchAndBuildCatalogResponse but no candidates — returning null so routeMessage handles it');
+        return null;
+      }
+    }
   }
 
   const ocrOnly = Boolean(options.ocrOnly);
