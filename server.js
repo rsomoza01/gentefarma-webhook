@@ -2784,7 +2784,48 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
 
   if (!candidateMatches.length) {
-    console.log(`🧪 [FINAL-RETURN] candidateMatches empty, returning no results`);
+    // ── Firebase direct fallback: candidateMatches empty after all local search paths.
+    // Query Firebase directly using arrayContains on productTitleArray to catch products
+    // beyond the 2000-document catalog limit or not indexed in scoredProducts.
+    const qToken = queryTokens[0] || '';
+    const qIsSingleToken = !isVitaminQuery && !hasQueryDosage && queryTokens.length === 1;
+    if (qIsSingleToken && db) {
+      console.log(`[FIREBASE-DIRECT] candidateMatches empty, querying Firebase for token='${qToken}'...`);
+      try {
+        const [pmSnap, ppSnap] = await Promise.all([
+          db.collection('products-market').where('productTitleArray', 'array-contains', qToken).limit(20).get(),
+          db.collection('providers-products').where('productTitleArray', 'array-contains', qToken).limit(20).get(),
+        ]);
+        const firebaseDirectMatches = [...pmSnap.docs, ...ppSnap.docs].map((d) => d.data());
+        console.log(`[FIREBASE-DIRECT] products-market=${pmSnap.size} providers-products=${ppSnap.size}`);
+        if (firebaseDirectMatches.length > 0) {
+          const directScored = firebaseDirectMatches
+            .map((doc) => {
+              const s = buildCatalogSignal(doc);
+              const m = scoreSignal(s);
+              return {
+                ...m,
+                productTitleFull: doc.productTitleFull || doc.title || '',
+                productText: doc.productText || '',
+                title: doc.title || '',
+                priceUsd: doc.priceUsd ?? 0,
+                priceBs: doc.priceBs ?? 0,
+                feeRate: doc.feeRate ?? 0,
+                feeAmountUsd: doc.feeAmountUsd ?? 0,
+              };
+            })
+            .sort((a, b) => b.score - a.score);
+          console.log(`[FIREBASE-DIRECT] scored ${directScored.length} products, top title='${directScored[0]?.productTitleFull}' score=${directScored[0]?.score}`);
+          candidateMatches = directScored;
+        }
+      } catch (e) {
+        console.error(`[FIREBASE-DIRECT] error: ${e.message}`);
+      }
+    }
+  }
+
+  if (!candidateMatches.length) {
+    console.log(`🧪 [FINAL-RETURN] candidateMatches empty after all paths (including Firebase fallback), returning no results`);
     return { query, queryTokens, exchangeRate, matches: [] };
   }
 
