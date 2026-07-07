@@ -4800,6 +4800,11 @@ function extractStrictConsultationMedicineQuery(text) {
   const tokens = tokenize(extracted).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   if (!tokens.length) return '';
 
+  // Reject pure generic selection tokens — they should go to selection handler, not medicine search
+  if (/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(extracted.trim())) {
+    return '';
+  }
+
   if (/^vitamina\b/i.test(extracted)) return extracted;
   return tokens[0] || extracted;
 }
