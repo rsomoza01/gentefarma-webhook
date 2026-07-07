@@ -1316,7 +1316,7 @@ async function routeMessage(phone, text, session, context = {}) {
   // This blocks single generic words like "esta", "hay", "dispone" etc. from triggering
   // a medicine search when the user is actually asking a location/info question.
   const WEAK_QUERY_TOKENS = new Set(['dispone','sabe','hacer','hay','esta','son','es','esta','ests','stat','disponible']);
-  let isViableDirectQuery = Boolean(directMedicineQuery && directMedicineQuery.trim().length >= 5);
+  let isViableDirectQuery = Boolean(directMedicineQuery && directMedicineQuery.trim().length >= 5 && !isSelectionPhrase(normalized));
   if (isViableDirectQuery) {
     const dqTokens = tokenize(directMedicineQuery).filter(t => t.length > 1);
     if (dqTokens.length < 2) isViableDirectQuery = false;
