@@ -1560,9 +1560,19 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (session.mode === 'awaiting_choice') {
     const selectionIntent = selectionCandidate || isSelectionIntent(normalized);
-    const results = resolveSelectionResults(session);
+    let results = resolveSelectionResults(session);
     if (selectionCandidate) {
-      const selected = results[selectionCandidate.option - 1];
+      // Si results está vacío, intentar restaurar del último snapshot del catálogo
+      if (!results || !results.length) {
+        const snapshot = getLatestCatalogSnapshot(session);
+        if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
+          results = snapshot.options;
+          session.pendingSelectionResults = results;
+          session.mode = 'awaiting_choice';
+          touchSession(session);
+        }
+      }
+      const selected = results ? results[selectionCandidate.option - 1] : null;
       if (!selected) {
         return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
       }
@@ -1655,7 +1665,17 @@ async function routeMessage(phone, text, session, context = {}) {
 
     const parsed = parseSelectionCommand(normalized);
     if (parsed) {
-      const results = session.pendingSelectionResults || [];
+      let results = session.pendingSelectionResults || [];
+      // Si pendingSelectionResults está vacío, intentar restaurar del último snapshot del catálogo
+      if (!results.length) {
+        const snapshot = getLatestCatalogSnapshot(session);
+        if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
+          results = snapshot.options;
+          session.pendingSelectionResults = results;
+          session.mode = 'awaiting_choice';
+          touchSession(session);
+        }
+      }
       const selected = results[parsed.option - 1];
       if (!selected) {
         return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
@@ -1684,7 +1704,17 @@ async function routeMessage(phone, text, session, context = {}) {
 
     const parsed = parseSelectionCommand(normalized);
     if (parsed) {
-      const results = session.pendingSelectionResults || [];
+      let results = session.pendingSelectionResults || [];
+      // Si pendingSelectionResults está vacío, intentar restaurar del último snapshot del catálogo
+      if (!results.length) {
+        const snapshot = getLatestCatalogSnapshot(session);
+        if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
+          results = snapshot.options;
+          session.pendingSelectionResults = results;
+          session.mode = 'awaiting_choice_global';
+          touchSession(session);
+        }
+      }
       const selected = results[parsed.option - 1];
       if (!selected) {
         return `⚠️ La opción global *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
@@ -1705,6 +1735,25 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   if (session.mode === 'awaiting_product_name') {
+    // Si hay un selectionCandidate válido, intentar restaurar del snapshot antes de buscar como medicine
+    const parsed = parseSelectionCommand(normalized);
+    if (parsed && isSelectionPhrase(normalized)) {
+      const snapshot = getLatestCatalogSnapshot(session);
+      if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
+        session.pendingSelectionResults = snapshot.options;
+        session.mode = 'awaiting_choice_global';
+        touchSession(session);
+        // Re-route al bloque awaiting_choice_global
+        const selected = snapshot.options[parsed.option - 1];
+        if (!selected) {
+          return `⚠️ La opción global *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+        }
+        addItemToCart(session, selected, parsed.quantity);
+        touchSession(session);
+        clearSelectionState(session);
+        return formatSelectionSavedMessage(selected, parsed.quantity, session);
+      }
+    }
     return await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
   }
 
