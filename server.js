@@ -4299,6 +4299,9 @@ function extractRecipeMedicineLines(value) {
     if (/\b(belen|belén|arcia|patient|paciente|nombre|apellido|ano nac|año nac|dr\.|dra\.|doctor|doctora|unidad|gastroenterologia|gastroenterología)\b/i.test(normalized)) return;
     // Skip lines that look like user query fragments (contain user query verbs)
     if (userQueryVerbPatterns.some((p) => p.test(normalized))) return;
+    // Reject single-word generic selection tokens (caja, opcion, unidad, etc.)
+    // These are not medicine names and should not trigger a catalog search.
+    if (normalized.split(/\s+/).length === 1 && /^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?|unidad(?:es)?)$/i.test(normalized)) return;
     candidates.push(candidate);
   };
 
