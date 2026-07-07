@@ -1624,7 +1624,7 @@ async function routeMessage(phone, text, session, context = {}) {
   const medicineSearchIntent = Boolean(
     directMedicineQuery ||
     medicineRequests.length > 0 ||
-    (!isSelectionPhrase(normalized) && /(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|dosis|presentacion|presentación)/.test(normalized)) ||
+    (!isSelectionPhrase(normalized) && /\b(?:\d+(?:\.\d+)?\s*(?:mg|mcg|g|gr|ml|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|dosis|presentacion|presentación))\b/i.test(normalized)) ||
     (!isSelectionPhrase(normalized) && /\b(tienes?|tiene|hay|busco|busca|quiero|necesito|precio|costo|disponible|disponibilidad|medicamento|medicamentos|producto|productos)\b/.test(normalized))
   );
 
