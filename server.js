@@ -1218,15 +1218,27 @@ async function routeMessage(phone, text, session, context = {}) {
   // If session has pending selection results (from a prior catalog), handle it
   // immediately so it NEVER enters extractMedicineQuery / searchAndBuildCatalogResponse.
   if (isSelectionPhrase(normalized)) {
-    const effectiveResults = resolveSelectionResults(session);
-    if (Array.isArray(effectiveResults) && effectiveResults.length > 0) {
-      console.log('🛡️ [ULTRA-GUARD] Selection phrase detected — routing directly to parseSelectionCommand');
+    // Use the LATEST catalog snapshot (not resolveSelectionResults which can return
+    // the extracted query text as a fallback — that gives us ["1 caja de la opcion 2"]
+    // instead of the actual catalog options).
+    const snapshot = getLatestCatalogSnapshot(session);
+    const hasCatalogOptions = Array.isArray(snapshot?.options) && snapshot.options.length > 0;
+    if (hasCatalogOptions) {
+      console.log('🛡️ [ULTRA-GUARD] Selection phrase + catalog snapshot found — processing directly');
       const parsed = parseSelectionCommand(normalized);
       if (parsed) {
-        session.pendingSelectionResults = effectiveResults;
+        session.pendingSelectionResults = snapshot.options;
         session.mode = 'awaiting_choice';
         touchSession(session);
-        // fall through to selection processing below
+        // Process selection immediately — do NOT fall through to extractMedicineQuery
+        const selected = snapshot.options[parsed.option - 1];
+        if (!selected) {
+          return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
+        }
+        addItemToCart(session, selected, parsed.quantity);
+        touchSession(session);
+        clearSelectionState(session);
+        return formatSelectionSavedMessage(selected, parsed.quantity, session);
       } else {
         return `✏️ No entendí la selección. Escribe *número de opción + cantidad*, por ejemplo: *1* o *2 x 2*.`;
       }
