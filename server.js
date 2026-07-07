@@ -1328,7 +1328,12 @@ async function routeMessage(phone, text, session, context = {}) {
     clearSelectionState(session);
     // Pass strictConsultationQuery as preExtractedMedicines so it lands in candidateMedicines
     // and avoids the multi-medicine block that uses strictConsultationMode threshold (0.80)
-    const preExt = (strictConsultationQuery && strictConsultationQuery.length > 1) ? [strictConsultationQuery] : [];
+    const preExtRaw = (strictConsultationQuery && strictConsultationQuery.length > 1) ? [strictConsultationQuery] : [];
+    // Filter out generic selection tokens (caja, opcion, unidad, etc.) before they become preExtractedMedicines
+    const preExt = preExtRaw.filter(item => {
+      const n = normalizeText(item);
+      return n.length >= 3 && !/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(n) && !/^\d+$/.test(n);
+    });
     return await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: preExt }, { phone, pushName });
   }
 
