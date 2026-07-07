@@ -1986,6 +1986,12 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   ]).filter((item) => {
     const normalizedItem = normalizeText(item);
     if (normalizedItem.length < 3) return false;
+    // Reject generic single-word selection tokens that are not medicine names
+    if (/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(normalizedItem)) return false;
+    if (/^(?:seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|mostrar|mostra|muestra)$/i.test(normalizedItem)) return false;
+    if (/^(?:listo|resumen)$/i.test(normalizedItem)) return false;
+    if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
+    if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3"
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
     if (/\b(paciente)\b/i.test(normalizedItem)) return false;
@@ -2061,6 +2067,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   }
 
   session.lastSearch = result;
+  session.pendingSelectionResults = result.matches;
   session.mode = 'idle';
   touchSession(session);
   rememberCatalogSnapshot(session, result.matches, result.query || singleQuery, buildSearchDiagnosticMessage(result, singleQuery));
@@ -3340,6 +3347,8 @@ function extractMedicineRequestsFromSegments(text) {
     const cleaned = normalizeText(piece);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    // Reject pure numbers (e.g. "3") — not medicine names
+    if (/^\d+$/.test(cleaned)) continue;
     if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned)) continue;
 
     const query = extractMedicineQuery(piece) || cleaned;
