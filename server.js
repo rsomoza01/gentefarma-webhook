@@ -1213,6 +1213,25 @@ function extractMediaDescriptor(payload) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
+  // ── ULTRA-EARLY-SELECTION-GUARD ────────────────────────────────────────
+  // Before ANY extraction, detect if the message is purely a selection phrase.
+  // If session has pending selection results (from a prior catalog), handle it
+  // immediately so it NEVER enters extractMedicineQuery / searchAndBuildCatalogResponse.
+  if (isSelectionPhrase(normalized)) {
+    const effectiveResults = resolveSelectionResults(session);
+    if (Array.isArray(effectiveResults) && effectiveResults.length > 0) {
+      console.log('🛡️ [ULTRA-GUARD] Selection phrase detected — routing directly to parseSelectionCommand');
+      const parsed = parseSelectionCommand(normalized);
+      if (parsed) {
+        session.pendingSelectionResults = effectiveResults;
+        session.mode = 'awaiting_choice';
+        touchSession(session);
+        // fall through to selection processing below
+      } else {
+        return `✏️ No entendí la selección. Escribe *número de opción + cantidad*, por ejemplo: *1* o *2 x 2*.`;
+      }
+    }
+  }
   const directMedicineQuery = extractMedicineQuery(text);
   const strictConsultationQuery = extractStrictConsultationMedicineQuery(text);
   const extractedMedicineRequests = extractMedicineRequests(text);
@@ -1673,10 +1692,17 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (session.mode === 'awaiting_choice') {
     const medicineRequests = extractMedicineRequests(text);
+    // ULTRA-GUARD: reject pure selection phrases BEFORE they enter searchAndBuildCatalogResponse.
+    // "caja"/"opcion" are extracted as medicineRequests even though they're selection tokens,
+    // causing false catalog searches. This guard short-circuits that path.
+    const isPureSelection = isSelectionPhrase(normalized) && !medicineRequests.some(m => looksLikeMedicineName(m));
     if (medicineRequests.length > 0 || isProductSearchRequest(normalized)) {
-      clearSelectionState(session);
-      const catalogResult_awc = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
-      if (catalogResult_awc !== null) return catalogResult_awc;
+      // Only clear and search if it's NOT a pure selection phrase
+      if (!isPureSelection) {
+        clearSelectionState(session);
+        const catalogResult_awc = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+        if (catalogResult_awc !== null) return catalogResult_awc;
+      }
     }
 
     const parsed = parseSelectionCommand(normalized);
@@ -1713,10 +1739,13 @@ async function routeMessage(phone, text, session, context = {}) {
 
   if (session.mode === 'awaiting_choice_global') {
     const medicineRequests = extractMedicineRequests(text);
+    const isPureSelection = isSelectionPhrase(normalized) && !medicineRequests.some(m => looksLikeMedicineName(m));
     if (medicineRequests.length > 0 || isProductSearchRequest(normalized)) {
-      clearSelectionState(session);
-      const catalogResult_awcg = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
-      if (catalogResult_awcg !== null) return catalogResult_awcg;
+      if (!isPureSelection) {
+        clearSelectionState(session);
+        const catalogResult_awcg = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+        if (catalogResult_awcg !== null) return catalogResult_awcg;
+      }
     }
 
     const parsed = parseSelectionCommand(normalized);
