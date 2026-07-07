@@ -1385,7 +1385,9 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   const medicineRequests = extractMedicineRequests(text);
-  const hasSelectionResults = Array.isArray(session.pendingSelectionResults) && session.pendingSelectionResults.length > 0;
+  // Also restore from catalogHistory snapshot when pendingSelectionResults is empty
+  const effectiveSelectionResults = resolveSelectionResults(session);
+  const hasSelectionResults = Array.isArray(effectiveSelectionResults) && effectiveSelectionResults.length > 0;
   const selectionCandidate = hasOcrText ? null : parseSelectionCommand(normalized);
   const isSelectionMessage = Boolean(selectionCandidate) || isSelectionPhrase(normalized);
   const hasMedicineSearchSignal = Boolean(isMedicineSignal && !isSelectionMessage);
@@ -1437,7 +1439,7 @@ async function routeMessage(phone, text, session, context = {}) {
     return await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
   }
 
-  if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global' || hasSelectionResults)) {
+  if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global')) {
     clearSelectionState(session);
     return await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText }, { phone, pushName });
   }
@@ -4713,7 +4715,8 @@ function extractMedicineQuery(text) {
     'disponible', 'disponibles', 'disponibilidad',
     'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
     'es', 'soy', 'son', 'está', 'están',
-    'quiero', 'quisiera', 'necesito', 'busco', 'busque'
+    'quiero', 'quisiera', 'necesito', 'busco', 'busque',
+    'caja', 'cajas', 'unidad', 'unidades', 'opcion', 'opciones'
   ]);
   const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier'];
   function isWeakOpener(token) {
