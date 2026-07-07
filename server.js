@@ -143,6 +143,7 @@ async function appendConsultationToSheet({ products, exists, phone, userName }) 
 // ----------------------------------------------------
 const sessions = new Map();
 const processedInboundMessages = new Map();
+const globalCatalogByPhone = new Map(); // phone -> { options, timestamp } — survives session reloads
 let botEnabled = true;
 const ADMIN_NUMBERS = ['584128840350', '584128009482'];
 const INBOUND_MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -343,10 +344,19 @@ function isPreviousCatalogRequest(value) {
 }
 
 function getLatestCatalogSnapshot(session) {
+  // First try session catalogHistory (may be empty due to serverless statelessness)
   const history = Array.isArray(session.catalogHistory) ? session.catalogHistory : [];
   for (let i = history.length - 1; i >= 0; i--) {
     const snapshot = history[i];
     if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length) return snapshot;
+  }
+  // Fallback: check global catalog store (persists across session reloads in serverless)
+  const phone = session?.phone;
+  if (phone && globalCatalogByPhone.has(phone)) {
+    const globalSnap = globalCatalogByPhone.get(phone);
+    if (globalSnap && Array.isArray(globalSnap.options) && globalSnap.options.length > 0) {
+      return globalSnap;
+    }
   }
   return null;
 }
@@ -2145,6 +2155,11 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   session.mode = 'idle';
   touchSession(session);
   rememberCatalogSnapshot(session, result.matches, result.query || singleQuery, buildSearchDiagnosticMessage(result, singleQuery));
+  // Also store in global catalog (survives serverless session reloads)
+  const phone = userInfo?.phone;
+  if (phone && Array.isArray(result.matches) && result.matches.length > 0) {
+    globalCatalogByPhone.set(phone, { options: result.matches, timestamp: Date.now() });
+  }
   appendConsultationToSheet({ products: [singleQuery], exists: 1, phone: userInfo.phone, userName: userInfo.pushName });
 
   const responseText = buildSearchDiagnosticMessage(result, singleQuery);
