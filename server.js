@@ -3144,17 +3144,31 @@ async function searchMedicinesByName(userQuery, options = {}) {
       ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
       : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches)));
 
-  // ── STRICT MODIFIER FILTER ─────────────────────────────────────────────────
-// When query has modifier tokens (forte, flex, plus, etc.), ONLY accept
-// products that contain ALL modifiers. Missing modifier = excluded, not penalised.
-// This runs after scoring so it catches all paths including consultationMode.
-  if (modifierTokens && modifierTokens.length > 0) {
+  // ── STRICT MODIFIER + DOSAGE FILTER ────────────────────────────────────────
+  // When query has modifier tokens (forte, flex, plus, etc.), ONLY accept
+  // products that contain ALL modifiers. Missing modifier = excluded, not penalised.
+  // When query has dosage signatures (50mg, 100mg, etc.), the product MUST contain
+  // that exact dosage. This ensures "losartan potasico 50mg" only returns 50mg products.
+  // This runs after scoring so it catches all paths including consultationMode.
+  if ((modifierTokens && modifierTokens.length > 0) || hasQueryDosage) {
     const beforeCount = finalMatches.length;
     const filteredByModifier = finalMatches.filter((item) => {
       const productText = (item.productTitleFull || '').toLowerCase();
-      return modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+      // Modifier filter: product must contain every modifier token
+      const modifierOk = !modifierTokens || modifierTokens.length === 0 ||
+        modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+      if (!modifierOk) return false;
+      // Dosage filter: if query has dosage signatures, product must contain each one
+      if (hasQueryDosage) {
+        const productDosageSigs = extractDosageSignatures(item.productTitleFull || '');
+        const dosageOk = queryDosageSignatures.every((sig) =>
+          productDosageSigs.some((pSig) => pSig === sig || pSig.replace(/\s+/g, '') === sig.replace(/\s+/g, ''))
+        );
+        if (!dosageOk) return false;
+      }
+      return true;
     });
-    console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} before=${beforeCount} after=${filteredByModifier.length}`);
+    console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} queryDosageSignatures=${JSON.stringify(queryDosageSignatures)} before=${beforeCount} after=${filteredByModifier.length}`);
     if (filteredByModifier.length > 0) {
       finalMatches = filteredByModifier;
     }
