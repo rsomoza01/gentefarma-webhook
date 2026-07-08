@@ -4413,6 +4413,17 @@ function extractRecipeMedicineLines(value) {
   const raw = String(value || '');
   if (!raw) return [];
 
+  // ── FAST PATH: single-line multi-token medicine queries ──────────────────────
+  // If the ENTIRE raw input is a strong multi-token medicine name (e.g.
+  // "atamel forte", "dorixina flex"), return it directly without chunking.
+  // This prevents shortBrandLike / formOrDose filters from discarding valid
+  // product names that happen to be two words with lowercase first letter.
+  const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
+  if (fastTokens.length >= 2 && fastTokens.every((t) => /^[a-záéíóúñ]{3,}/i.test(t))) {
+    console.log('🧪 [EXTRACT-RECIPE] raw value=%s → FAST PATH (full multi-token input)', raw.slice(0, 200));
+    return [raw.trim()];
+  }
+
   const chunks = raw
     .split(/\r?\n+|[•·●\u2022]+|(?:\s+[-–—]\s+)/g)
     .map((line) => line.trim())
