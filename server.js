@@ -2140,13 +2140,28 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
 
   const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text.trim();
   console.log(`🧪 [SINGLE-QUERY] candidateMedicines[0]='${candidateMedicines[0]}' extractMedicineQuery='${extractMedicineQuery(text)}' singleQuery='${singleQuery}'`);
+  // Extract dosage signatures from ORIGINAL text (before extractMedicineQuery strips them)
+  const originalDosagePattern = /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|gr|ml|cc|ui|iu)\b/gi;
+  const originalNormalized = (text || '').toLowerCase();
+  const queryDosageSignatures = [];
+  let m;
+  while ((m = originalDosagePattern.exec(originalNormalized))) {
+    const amount = String(m[1]).replace(',', '.');
+    const unit = String(m[2]).replace(/mL/i, 'ml').toLowerCase();
+    queryDosageSignatures.push(`${amount}${unit}`);
+  }
+  originalDosagePattern.lastIndex = 0;
+  if (queryDosageSignatures.length > 0) {
+    console.log(`🧪 [ORIG-DOSAGE] text='${text}' dosageSignatures=${JSON.stringify(queryDosageSignatures)}`);
+  }
   const result = await searchMedicinesByName(singleQuery, {
     products: await fetchCatalogProducts(2000),
     exchangeRate: await getBcvRate(),
     strictListMode: !ocrOnly,
     recipeMode,
     strictConsultationMode: consultationMode,
-    forceExactConsultationToken: consultationMode && !recipeMode
+    forceExactConsultationToken: consultationMode && !recipeMode,
+    queryDosageSignatures: queryDosageSignatures.length > 0 ? queryDosageSignatures : null
   });
 
   if (!result || !result.matches.length) {
@@ -2186,6 +2201,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
   if (!queryTokens.length) return null;
 
   const consultationMode = Boolean(options.strictConsultationMode);
+  // Dosage signatures passed from original text (before extractMedicineQuery strips them)
+  const passedDosageSigs = options.queryDosageSignatures || [];
+  const hasPassedDosage = passedDosageSigs.length > 0;
+  if (hasPassedDosage) {
+    console.log(`🧪 [PASSED-DOSAGE] query='${query}' passedDosageSigs=${JSON.stringify(passedDosageSigs)}`);
+  }
 
   const exchangeRate = options.exchangeRate ?? await getBcvRate();
   const products = options.products ?? await fetchCatalogProducts(2000);
@@ -3148,9 +3169,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
   // When query has modifier tokens (forte, flex, plus, etc.), ONLY accept
   // products that contain ALL modifiers. Missing modifier = excluded, not penalised.
   // When query has dosage signatures (50mg, 100mg, etc.), the product MUST contain
-  // that exact dosage. This ensures "losartan potasico 50mg" only returns 50mg products.
+  // that exact dosage. Uses passedDosageSigs (from original text, not stripped query).
+  // This ensures "losartan potasico 50mg" only returns 50mg products.
   // This runs after scoring so it catches all paths including consultationMode.
-  if ((modifierTokens && modifierTokens.length > 0) || hasQueryDosage) {
+  if ((modifierTokens && modifierTokens.length > 0) || hasPassedDosage) {
     const beforeCount = finalMatches.length;
     const filteredByModifier = finalMatches.filter((item) => {
       const productText = (item.productTitleFull || '').toLowerCase();
@@ -3158,17 +3180,17 @@ async function searchMedicinesByName(userQuery, options = {}) {
       const modifierOk = !modifierTokens || modifierTokens.length === 0 ||
         modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
       if (!modifierOk) return false;
-      // Dosage filter: if query has dosage signatures, product must contain each one
-      if (hasQueryDosage) {
+      // Dosage filter: if query has dosage signatures (passed from original text), product must contain each one
+      if (hasPassedDosage) {
         const productDosageSigs = extractDosageSignatures(item.productTitleFull || '');
-        const dosageOk = queryDosageSignatures.every((sig) =>
+        const dosageOk = passedDosageSigs.every((sig) =>
           productDosageSigs.some((pSig) => pSig === sig || pSig.replace(/\s+/g, '') === sig.replace(/\s+/g, ''))
         );
         if (!dosageOk) return false;
       }
       return true;
     });
-    console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} queryDosageSignatures=${JSON.stringify(queryDosageSignatures)} before=${beforeCount} after=${filteredByModifier.length}`);
+    console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${filteredByModifier.length}`);
     if (filteredByModifier.length > 0) {
       finalMatches = filteredByModifier;
     }
