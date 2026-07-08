@@ -1484,7 +1484,8 @@ async function routeMessage(phone, text, session, context = {}) {
       rawIsPureDosage,
       searchQuery
     });
-    const catalogResult_ocr = await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true }, { phone, pushName });
+    const allRecipeMedicinesList = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(allRecipeMedicines || rawOcr) : [];
+    const catalogResult_ocr = await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true, preExtractedMedicines: allRecipeMedicinesList }, { phone, pushName });
     if (catalogResult_ocr !== null) return catalogResult_ocr;
   }
 
@@ -3203,6 +3204,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     query,
     queryTokens,
     exchangeRate,
+    groupTitle: query,
     matches: finalMatches.map((item) => ({
       title: item.title,
       basePriceUsd: item.priceUsd,
