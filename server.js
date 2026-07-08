@@ -4833,56 +4833,55 @@ function extractMedicineQuery(text) {
     return '';
   }
 
-  // Strip dosage FIRST so it doesn't pollute verb-pattern capture
+  // Dosage strip: remove "100 mg", "gotas", etc. from candidate AFTER verb extraction
   const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
-  const cleanedDosage = normalizeText(text).replace(dosageStrip, ' ').replace(/\s+/g, ' ').trim();
 
   const verbList = [
     'por\\sfavor','me\\spuedes\\sayudar\\scon','me\\sayudas\\scon','necesito','busco','busque','buscame','buscando','quiero',
-    'quisiera','me\\sinteresa','me\\sinteresan','(?<!\w)tienes\b','(?<!\w)tiene\b','(?<!\w)tienen\b','(?<!\w)hay\b',
-    'disponibilidad(?:\sde)?','informar(?:\ssobre)?','informe(?:\ssobre)?','consultar(?:\ssobre)?',
-    'consulta(?:\ssobre)?','informame(?:\ssobre)?','informarme(?:\ssobre)?','precio(?:\sde)?','conoces','(?<!\w)vendes?(?!\w)',
-    'dónde\s(?:puedo\s)?comprar','donde\s(?:puedo\s)?comprar','dónde\scomprar','donde\scomprar',
-    'dónde\s(?:puedo\s)?conseguir','donde\s(?:puedo\s)?conseguir','dónde\sconseguir','donde\sconseguir',
-    'dónde\sconsigo','donde\sconsigo','dónde\sencuentro','donde\sencuentro',
-    '(?<!\w)cuesta\b'  // FIX: removed trailing \s+ — "me cuesta X" has no space after `cuesta`,
-    // so the original pattern `(?<!\w)cuesta\b\s+(.+?)$` could never match.
+    'quisiera','me\\sinteresa','me\\sinteresan','(?<!\\w)tienes\\b','(?<!\\w)tiene\\b','(?<!\\w)tienen\\b','(?<!\\w)hay\\b',
+    'disponibilidad(?:\\sde)?','informar(?:\\ssobre)?','informe(?:\\ssobre)?','consultar(?:\\ssobre)?',
+    'consulta(?:\\ssobre)?','informame(?:\\ssobre)?','informarme(?:\\ssobre)?','precio(?:\\sde)?','conoces','(?<!\\w)vendes?(?!\\w)',
+    'dónde\\s(?:puedo\\s)?comprar','donde\\s(?:puedo\\s)?comprar','dónde\\scomprar','donde\\scomprar',
+    'dónde\\s(?:puedo\\s)?conseguir','donde\\s(?:puedo\\s)?conseguir','dónde\\sconseguir','donde\\sconseguir',
+    'dónde\\sconsigo','donde\\sconsigo','dónde\\sencuentro','donde\\sencuentro',
+    '(?<!\\w)cuesta\\b'
   ];
-
-  // Remove 'por favor' from the middle BEFORE verb matching so it doesn't confuse the greedy .+
-  const cleanedNoFavor = cleanedDosage.replace(/\bpor\s+favor\b/gi, ' ').replace(/\s+/g, ' ').trim();
 
   // Pattern 2a: "de X [unit]" where unit follows the number → strip X unit
   // e.g. "de 75 mg de Paracetamol" → strip "75 mg", keep "Paracetamol"
   const unitList = 'mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?';
   const P2A = new RegExp(`^(?:de|del|para|con)\\s+(\\d+(?:[.,]\\d+)?)\\s+(${unitList})\\b(?:\\s+|$)(.+)$`, 'i');
   // Pattern 2b: "de X" where X is a bare number followed by another word → DON'T strip
-  // The bare number belongs to the current medicine. This pattern is intentionally
-  // stricter so it does NOT consume the next medicine name.
-  // FIXED: only capture the bare number; the cleanup replace handles " de NUMERO" suffix.
   const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)(?:\s+|$)/i;
 
-  // NOTE: (.+) is GREEDY (not .+?) so it captures the FULL query after the verb.
-  // This preserves multi-token queries like "cotrimazol en gotas para el oido".
+  // NOTE: (.+) is GREEDY so it captures the FULL query after the verb.
   const verbListJoined = verbList.join('|');
-  console.log('🧪 [DIAG-EMQ] verbListJoined_len=%d verbListJoined_sample=%s', verbListJoined.length, verbListJoined.slice(0, 200));
   const verbRe = new RegExp(`(?:^|\\s)(?:${verbListJoined})\\s+(.+)$`, 'i');
-  const verbReStr = verbRe.toString();
-  // Print full regex to see if 'custa' is actually inside it
-  console.log('🧪 [DIAG-EMQ] IN="%s" verbRe_len=%d verbRe_test=%s verbRe=%s', _dbg_input, verbReStr.length, verbRe.test(cleanedNoFavor), verbReStr);
-  console.log('🧪 [DIAG-EMQ] verbRe_cuesta_in_regex=%s', verbReStr.includes('cuesta'));
-  console.log('🧪 [DIAG-EMQ] direct_cuesta_test=%s', /\bcu[ée]sta\b/i.test('me cuesta cotrimazol'));
-  const custaRe = /(?<!\w)cu[ée]sta\b/i;
-  console.log('🧪 [DIAG-EMQ] custaRe_match="%s"', JSON.stringify('en cuanto me cuesta cotrimazol'.match(custaRe)));
-  let candidate = cleanedNoFavor;
-  for (const pattern of [verbRe, P2A, P2B]) {
-    const match = cleanedNoFavor.match(pattern);
-    if (match?.[1]) {
-      console.log('🧪 [DIAG-EMQ] IN="%s" pattern="%s" matched="%s" => candidate="%s"', _dbg_input, pattern.toString().slice(0, 40), match[0], match[1]);
-      candidate = normalizeText(match[1]);
-      break;
+  console.log('🧪 [DIAG-EMQ] verbRe=%s', verbRe.toString().slice(0, 80));
+
+  // FIX: Run verbRe on the ORIGINAL cleaned text (before dosageStrip) so that
+  // "cotrimazol en gotas para el oido" is captured intact. Previously the
+  // dosageStrip removed "gotas" first, leaving the verbRe to capture a broken
+  // string that downstream filters rejected, returning "".
+  let candidate = cleaned;
+  const verbMatch = cleaned.match(verbRe);
+  if (verbMatch?.[1]) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" verbMatch captured="%s"', _dbg_input, verbMatch[1]);
+    candidate = normalizeText(verbMatch[1]);
+  } else {
+    // No verb matched — try P2A / P2B on the original text
+    for (const pattern of [P2A, P2B]) {
+      const match = cleaned.match(pattern);
+      if (match?.[1]) {
+        console.log('🧪 [DIAG-EMQ] IN="%s" pattern="%s" matched="%s" => candidate="%s"', _dbg_input, pattern.toString().slice(0, 40), match[0], match[1]);
+        candidate = normalizeText(match[1]);
+        break;
+      }
     }
   }
+
+  // Strip dosage from the extracted candidate (not from the original text before verb matching)
+  candidate = candidate.replace(dosageStrip, ' ').replace(/\s+/g, ' ').trim();
 
   candidate = candidate
     .replace(/^por\s+favor\s*/i, '')
