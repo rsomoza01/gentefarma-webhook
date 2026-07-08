@@ -4880,7 +4880,17 @@ function extractMedicineQuery(text) {
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
   const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
   console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "%s" (cleanedTokens=%s firstStrong=%s)', _dbg_input, cleaned, firstStrongToken || '', JSON.stringify(cleanedTokens), firstStrongToken || 'none');
+  // If multiple non-dose tokens remain, return the FULL normalized candidate
+  // to preserve multi-token product names (e.g. "atamel forte", "dorixina flex").
+  // The single-token case also returns the candidate (may be multi-word).
   if (firstStrongToken) {
+    // Only use firstStrongToken alone if it is the ONLY non-weak token
+    const otherStrongTokens = cleanedTokens.filter((t) => t !== firstStrongToken && !isWeakOpener(t));
+    if (otherStrongTokens.length > 0) {
+      // Multiple strong tokens → return full normalized query to preserve all tokens
+      console.log('🧪 [DIAG-EMQ] IN="%s" => returning FULL candidate="%s" (cleanedTokens=%s)', _dbg_input, candidate, JSON.stringify(cleanedTokens));
+      return candidate;
+    }
     console.log('🧪 [DIAG-EMQ] IN="%s" => returning firstStrongToken="%s" (cleanedTokens=%s)', _dbg_input, firstStrongToken, JSON.stringify(cleanedTokens));
     return firstStrongToken;
   }
