@@ -4862,13 +4862,11 @@ function extractMedicineQuery(text) {
   // FIXED: only capture the bare number; the cleanup replace handles " de NUMERO" suffix.
   const P2B = /^(?:de|del)\s+(\d+(?:[.,]\d+)?)(?:\s+|$)/i;
 
-  // NOTE: (.+?) is NON-GREEDY so it stops at the first dosage-form boundary,
-  // allowing the MED_FORM_TOKENS filter downstream to clean trailing forms correctly
-  // (e.g. "cotrimazol en gotas para el oido" → captured as "cotrimazol en gotas para el oido",
-  // then filtered to "cotrimazol").
+  // NOTE: (.+) is GREEDY (not .+?) so it captures the FULL query after the verb.
+  // This preserves multi-token queries like "cotrimazol en gotas para el oido".
   const verbListJoined = verbList.join('|');
   console.log('🧪 [DIAG-EMQ] verbListJoined_len=%d verbListJoined_sample=%s', verbListJoined.length, verbListJoined.slice(0, 200));
-  const verbRe = new RegExp(`(?:^|\\s)(?:${verbListJoined})\\s+(.+?)$`, 'i');
+  const verbRe = new RegExp(`(?:^|\\s)(?:${verbListJoined})\\s+(.+)$`, 'i');
   const verbReStr = verbRe.toString();
   // Print full regex to see if 'custa' is actually inside it
   console.log('🧪 [DIAG-EMQ] IN="%s" verbRe_len=%d verbRe_test=%s verbRe=%s', _dbg_input, verbReStr.length, verbRe.test(cleanedNoFavor), verbReStr);
