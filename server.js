@@ -1436,7 +1436,7 @@ async function routeMessage(phone, text, session, context = {}) {
   // Also restore from catalogHistory snapshot when pendingSelectionResults is empty
   const effectiveSelectionResults = resolveSelectionResults(session);
   const hasSelectionResults = Array.isArray(effectiveSelectionResults) && effectiveSelectionResults.length > 0;
-  const selectionCandidate = hasOcrText ? null : parseSelectionCommand(normalized);
+  const selectionCandidate = parseSelectionCommand(normalized);
   const isSelectionMessage = Boolean(selectionCandidate) || isSelectionPhrase(normalized);
   const hasMedicineSearchSignal = Boolean(isMedicineSignal && !isSelectionMessage);
 
@@ -1729,14 +1729,17 @@ async function routeMessage(phone, text, session, context = {}) {
 
     const parsed = parseSelectionCommand(normalized);
     if (parsed) {
-      let results = session.pendingSelectionResults || [];
-      // Si pendingSelectionResults está vacío, intentar restaurar del último snapshot del catálogo
+      // Use resolveSelectionResults which checks session.pendingSelectionResults FIRST,
+      // then falls back to globalCatalogByPhone via getLatestCatalogSnapshot.
+      let results = resolveSelectionResults(session);
+      // Also support pure numeric selection ("1", "2") even when pendingSelectionResults
+      // was not populated — restore from global catalog if needed.
       if (!results.length) {
         const snapshot = getLatestCatalogSnapshot(session);
         if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
           results = snapshot.options;
           session.pendingSelectionResults = results;
-          session.mode = 'awaiting_choice';
+          session.mode = 'awaiting_choice_global';
           touchSession(session);
         }
       }
