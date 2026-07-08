@@ -2382,6 +2382,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   function scoreSignal(signal) {
     let score = 0;
+    // DEBUG: confirm modifierTokens is accessible — only log when modifiers exist and product has 'atamel'
+    if (modifierTokens && modifierTokens.length > 0 && signal.productTitleFull.toLowerCase().includes('atamel')) {
+      console.log(`🧪 [SCORE-SIGNAL] modifierTokens=${JSON.stringify(modifierTokens)} product='${signal.productTitleFull}' score=${score}`);
+    }
 
     const tokenHitsTitle = primaryTokens.filter((token) => signal.titleTokens.includes(token)).length;
     const tokenHitsArray = primaryTokens.filter((token) => signal.arrayTokens.includes(token)).length;
