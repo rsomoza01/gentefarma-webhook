@@ -3378,6 +3378,8 @@ function extractMedicineRequests(text) {
     const cleaned = normalizeText(segment);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    // Skip pure dosage segments (no medicine name): "40 MG", "25 MG", etc.
+    if (/^\s*\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i.test(cleaned)) continue;
     if (!/(\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)|(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina))/.test(cleaned) && cleaned.length < 6) continue;
     const query = extractMedicineQuery(segment) || segment;
     if (!query) continue;
@@ -3389,12 +3391,41 @@ function extractMedicineRequests(text) {
 }
 
 function splitMedicineSegments(text) {
-  // Only split on explicit list markers: bullets, newlines, or dashes that precede whitespace (list dashes).
-  // Do NOT split on em/en dashes (U+2014/U+2013) embedded in product names like "MG — hidroten"
-  return String(text)
+  // Split on explicit list markers: bullets, newlines, or dashes that precede whitespace.
+  // Also split on dosage boundaries within each line: "40 MG LEPRIT 25 MG" → ["40 MG LEPRIT", "25 MG"]
+  const unitList = 'mg|mcg|g|gr|ml|mL|ui|iu';
+  const dosageBoundaryRe = new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s+(${unitList})\\b(?=\\s+[A-ZÁÉÍÓÚÑ])`, 'gi');
+
+  const lines = String(text)
     .split(/\n+|[•·●]+|(?:^|\s)-(?=\s|$)/g)
     .map((part) => part.trim())
     .filter(Boolean);
+
+  const result = [];
+  for (const line of lines) {
+    if (!line) continue;
+    const nmLine = normalizeText(line);
+    // Count dosage boundaries in this line
+    const matches = [...nmLine.matchAll(/\b(\d+(?:[.,]\d+)?)\s+(mg|mcg|g|gr|ml|mL|ui|iu)\b/gi)];
+    if (matches.length <= 1) {
+      result.push(line);
+    } else {
+      // Split on each dosage boundary: the lookahead (?=\s+[A-Z]) ensures we split
+      // AFTER the unit when followed by a new capitalized name token.
+      let lastIdx = 0;
+      for (const m of matches) {
+        const boundaryEnd = m.index + m[0].length;
+        if (boundaryEnd > lastIdx) {
+          const segment = line.slice(lastIdx, boundaryEnd).trim();
+          if (segment) result.push(segment);
+          lastIdx = boundaryEnd;
+        }
+      }
+      const rest = line.slice(lastIdx).trim();
+      if (rest) result.push(rest);
+    }
+  }
+  return result;
 }
 
 function splitSingleLineMedicineList(text) {
@@ -4483,10 +4514,66 @@ function extractRecipeMedicineLines(value) {
     return [raw.trim()];
   }
 
-  const chunks = raw
-    .split(/\r?\n+|[•·●\u2022]+|(?:\s+[-–—]\s+)/g)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  // ── PRESCRIPTION-MULTI: split by newlines first, then refine each line ─────────
+  // For prescription OCR, each line is a separate medicine. Split by newlines,
+  // then use dosage-boundary detection to further split lines that contain
+  // multiple medicines without explicit newlines (common in low-quality OCR).
+  const LINE_SPLIT_RE = /\r?\n+|[•·●\u2022]+|(?:\s+[-–—]\s+)/g;
+  let rawLines = raw.split(LINE_SPLIT_RE).map((l) => l.trim()).filter(Boolean);
+
+  // ── DOSAGE-BOUNDARY SPLIT: split a line on dosage transitions ─────────────────
+  // Strategy: pair each dosage "N UNIT" with the medicine name that precedes it.
+  // e.g. "EVIGAX CAP MODERAN SUSP MILAX POLVO DAFLON 500 MG"
+  //   → pair(0, "evigax cap modernan susp milax polvo daflon", "500 mg")
+  //   → pair(0, "evigax cap modernan susp milax polvo", "daflon", "500 mg") ← wait
+  // Actually simpler: for each dosage, the medicine name is the text BEFORE the dosage
+  // up to the PREVIOUS dosage (or start of line).
+  // e.g. "A B C 500 MG D E 300 MG" → ["A B C 500 MG", "D E 300 MG"]
+  const unitListRe = /(\d+(?:[.,]\d+)?)\s+(mg|mcg|g|gr|ml|mL|ui|iu)\b/gi;
+
+  const refinedLines = [];
+  for (const line of rawLines) {
+    const nmLine = normalizeText(line);
+    if (!nmLine) continue;
+
+    // Find all dosage positions in this line
+    const dosages = [];
+    let dm;
+    const unitReLocal = new RegExp('(\\d+(?:[.,]\\d+)?)\\s+(mg|mcg|g|gr|ml|mL|ui|iu)\\b', 'gi');
+    while ((dm = unitReLocal.exec(nmLine)) !== null) {
+      dosages.push({ start: dm.index, end: dm.index + dm[0].length, text: dm[0] });
+    }
+
+    if (dosages.length === 0) {
+      // No dosage found — line might be "EVIGAX CAP" (form only) — keep as-is
+      refinedLines.push(line);
+    } else if (dosages.length === 1) {
+      // Single dosage — keep the whole line (it's a single medicine)
+      refinedLines.push(line);
+    } else {
+      // Multiple dosages — pair each dosage with the medicine name before it.
+      // Segment i = text BEFORE dosage_i (from prev_end or 0) + " " + dosage_i
+      let prevEnd = 0;
+      for (let i = 0; i < dosages.length; i++) {
+        const d = dosages[i];
+        const segmentText = line.slice(prevEnd, d.start).trim() + (d.text ? ' ' + d.text : '');
+        if (segmentText.trim()) refinedLines.push(segmentText.trim());
+        prevEnd = d.end;
+      }
+      // Anything remaining after the last dosage is part of the last medicine
+      const remainder = line.slice(prevEnd).trim();
+      if (remainder) {
+        // Append to the last pushed segment or push as new medicine
+        if (refinedLines.length > 0 && !dosages[dosages.length - 1].text.includes(remainder)) {
+          refinedLines[refinedLines.length - 1] += ' ' + remainder;
+        } else if (remainder) {
+          refinedLines.push(remainder);
+        }
+      }
+    }
+  }
+
+  const chunks = refinedLines;
 
   const metaPatterns = [
     /^(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro)\b/i,
