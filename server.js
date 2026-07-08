@@ -2033,6 +2033,8 @@ function shouldSendInstagramReel(value) {
 // Catalog search
 // ----------------------------------------------------
 async function searchAndBuildCatalogResponse(text, session, options = {}, userInfo = {}) {
+  // Log only when text looks TRUNCATED (possible chunking bug)
+  // DISABLED after root cause found in extractStrictConsultationMedicineQuery
   if (!db) {
     return '⚠️ No tengo conexión al catálogo en este momento. Intenta de nuevo más tarde.';
   }
@@ -2383,9 +2385,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
   function scoreSignal(signal) {
     let score = 0;
     // DEBUG: confirm modifierTokens is accessible — only log when modifiers exist and product has 'atamel'
-    if (modifierTokens && modifierTokens.length > 0 && signal.productTitleFull.toLowerCase().includes('atamel')) {
+    // DISABLED after root cause found
+    /* if (modifierTokens && modifierTokens.length > 0 && signal.productTitleFull.toLowerCase().includes('atamel')) {
       console.log(`🧪 [SCORE-SIGNAL] modifierTokens=${JSON.stringify(modifierTokens)} product='${signal.productTitleFull}' score=${score}`);
-    }
+    } */
 
     const tokenHitsTitle = primaryTokens.filter((token) => signal.titleTokens.includes(token)).length;
     const tokenHitsArray = primaryTokens.filter((token) => signal.arrayTokens.includes(token)).length;
@@ -4962,7 +4965,10 @@ function extractStrictConsultationMedicineQuery(text) {
   }
 
   if (/^vitamina\b/i.test(extracted)) return extracted;
-  return tokens[0] || extracted;
+  // Always return the FULL extracted query to preserve multi-token product names
+  // like "atamel forte", "dorixina flex". The previous `tokens[0]` truncated to the
+  // first token, breaking modifier-based filtering downstream.
+  return extracted;
 }
 
 // Process safety logs
