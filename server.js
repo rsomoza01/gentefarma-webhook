@@ -3422,7 +3422,12 @@ function splitMedicineSegments(text) {
         }
       }
       const rest = line.slice(lastIdx).trim();
-      if (rest) result.push(rest);
+      if (rest && result.length > 0) {
+        // Append remaining text to the last segment (it belongs to the previous medicine)
+        result[result.length - 1] += ' ' + rest;
+      } else if (rest) {
+        result.push(rest);
+      }
     }
   }
   return result;
@@ -4561,14 +4566,14 @@ function extractRecipeMedicineLines(value) {
         prevEnd = d.end;
       }
       // Anything remaining after the last dosage is part of the last medicine
+      // (e.g. "DAFLON 500 MG BARGONIL CREMA" → last medicine is "DAFLON 500 MG",
+      // "BARGONIL CREMA" is remaining text that should be appended to last segment)
       const remainder = line.slice(prevEnd).trim();
-      if (remainder) {
-        // Append to the last pushed segment or push as new medicine
-        if (refinedLines.length > 0 && !dosages[dosages.length - 1].text.includes(remainder)) {
-          refinedLines[refinedLines.length - 1] += ' ' + remainder;
-        } else if (remainder) {
-          refinedLines.push(remainder);
-        }
+      if (remainder && refinedLines.length > 0) {
+        // Append remainder to the last segment (it belongs to the previous medicine)
+        refinedLines[refinedLines.length - 1] += ' ' + remainder;
+      } else if (remainder) {
+        refinedLines.push(remainder);
       }
     }
   }
