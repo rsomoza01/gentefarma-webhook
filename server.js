@@ -2207,8 +2207,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const matchTokens = tokenize(matchQuery).filter((t) => !STOPWORDS.has(t) && t.length > 1);
   if (!matchTokens.length) return { query, queryTokens, exchangeRate, matches: [] };
 
-  const isDosageToken = (token) => /^(\d+(?:[.,]\d+)?)$/.test(token) || /^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(token);
-  const focusTokens = matchTokens.filter((token) => !isDosageToken(token));
+  const isDosageToken = (token) => /^(\d+(?:[.,]\d+)?)$/.test(token) || /^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?)$/.test(token);
+  // Note: "retard"|"retadar"|"retador"|"retardar"|"retardado"|"retardada" are dosage forms but
+  // we check them separately with exact match to avoid "forte" matching "tard" inside it.
+  const isRetardForm = (token) => /^(?:retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(token);
+  const focusTokens = matchTokens.filter((token) => !isDosageToken(token) && !isRetardForm(token));
   const primaryTokens = focusTokens.length ? focusTokens : matchTokens;
   const primaryRoot = primaryTokens.join(' ');
 
@@ -2217,7 +2220,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   // act as mandatory filters: the product MUST contain them.
   // E.g. "atamel forte" → "forte" is a modifier; only ATAMEL FORTE products score.
   const rawTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
-  const isNumberOrDosage = (t) => /^(\d+(?:[.,]\d+)?)$/.test(t) || isDosageToken(t);
+  const isNumberOrDosage = (t) => /^(\d+(?:[.,]\d+)?)$/.test(t) || isDosageToken(t) || isRetardForm(t);
   const modifierTokens = rawTokens.slice(1).filter((t) => {
     if (isNumberOrDosage(t)) return false;
     return MODIFIER_TOKENS.has(t) || t.length <= 4;
