@@ -2211,6 +2211,21 @@ async function searchMedicinesByName(userQuery, options = {}) {
   const focusTokens = matchTokens.filter((token) => !isDosageToken(token));
   const primaryTokens = focusTokens.length ? focusTokens : matchTokens;
   const primaryRoot = primaryTokens.join(' ');
+
+  // ── MODIFIER TOKENS ────────────────────────────────────────────────────────
+  // When query has 2+ tokens, tokens after the first that are NOT dosages
+  // act as mandatory filters: the product MUST contain them.
+  // E.g. "atamel forte" → "forte" is a modifier; only ATAMEL FORTE products score.
+  const rawTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
+  const isNumberOrDosage = (t) => /^(\d+(?:[.,]\d+)?)$/.test(t) || isDosageToken(t);
+  const modifierTokens = rawTokens.slice(1).filter((t) => {
+    if (isNumberOrDosage(t)) return false;
+    return MODIFIER_TOKENS.has(t) || t.length <= 4;
+  });
+  if (modifierTokens.length > 0) {
+    console.log(`🧪 [MODIFIER-TOKENS] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)}`);
+  }
+
   const dosagePattern = /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|gr|ml|cc|ui|iu)\b/gi;
   const extractDosageSignatures = (value) => {
     const normalizedValue = normalizeText(value);
@@ -2452,6 +2467,22 @@ async function searchMedicinesByName(userQuery, options = {}) {
       const candidateHasUnit = /\b(mg|mcg|g|gr|ml|cc|ui|iu)\b/.test(candidateText);
       if (queryHasAmount && queryHasUnit && !(candidateHasAmount && candidateHasUnit)) {
         score -= strictListMode ? 800 : 600;
+      }
+    }
+
+    // ── MODIFIER PENALTY ───────────────────────────────────────────────────
+    // If query has modifier tokens (e.g. "forte", "plus", "flex"), the product
+    // MUST contain ALL of them. Missing any modifier → heavy penalty.
+    // This ensures "atamel forte" only returns ATAMEL FORTE products, not all ATAMEL.
+    if (modifierTokens && modifierTokens.length > 0) {
+      const productAllText = [signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' ').toLowerCase();
+      const missingModifiers = modifierTokens.filter(mod => !productAllText.includes(mod.toLowerCase()));
+      if (missingModifiers.length > 0) {
+        score -= strictListMode ? 950 : 750;
+        console.log(`🧪 [MODIFIER-PENALTY] product='${signal.productTitleFull}' missingModifiers=${JSON.stringify(missingModifiers)} scorePenalty=-${strictListMode ? 950 : 750} newScore=${score}`);
+      } else {
+        // Bonus: product has all modifiers → reward for exact modifier match
+        score += modifierTokens.length * 80;
       }
     }
 
@@ -3998,6 +4029,19 @@ const STOPWORDS = new Set([
   'tienes',
   'tiene',
   'hay'
+]);
+
+// Modifier tokens: adjectives/qualifiers that act as mandatory filters when paired
+// with a product name (2nd+ token in a multi-token query). E.g. "atamel forte" →
+// only products containing "forte". These are NOT dosage forms or stopwords.
+const MODIFIER_TOKENS = new Set([
+  'forte', 'plus', 'flex', 'duo', 'cor', 'bio', 'max', 'ultra', 'neo',
+  'stop', 'gel', 'kids', 'infantil', 'ped', 'adulto', 'crono', 'retard',
+  'noct', 'diario', 'semanal', 'mensual', 'caps', 'film', 'ocular',
+  'nasal', 'oral', 'topico', 'cutaneo', 'endovenoso', 'ev', 'im',
+  'sl', 'sublingual', 'rectal', 'vaginal', 'transdermico', 'patch',
+  'original', 'generico', 'marca', 'premium', 'basic', 'fresh',
+  'classic', 'natural', 'sintetico', 'con', 'sin'
 ]);
 
 function normalizeText(value) {
