@@ -3138,11 +3138,28 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
   }
 
-  const finalMatches = consultationMode
+  let finalMatches = consultationMode
     ? topMatches
     : (recipeMode
       ? (filteredTopMatches.length ? filteredTopMatches : topMatches)
       : (isShortNonDosageQuery ? filteredTopMatches : (filteredTopMatches.length ? filteredTopMatches : topMatches)));
+
+  // ── STRICT MODIFIER FILTER ─────────────────────────────────────────────────
+// When query has modifier tokens (forte, flex, plus, etc.), ONLY accept
+// products that contain ALL modifiers. Missing modifier = excluded, not penalised.
+// This runs after scoring so it catches all paths including consultationMode.
+  if (modifierTokens && modifierTokens.length > 0) {
+    const beforeCount = finalMatches.length;
+    const filteredByModifier = finalMatches.filter((item) => {
+      const productText = (item.productTitleFull || '').toLowerCase();
+      return modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+    });
+    console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} before=${beforeCount} after=${filteredByModifier.length}`);
+    if (filteredByModifier.length > 0) {
+      finalMatches = filteredByModifier;
+    }
+    // If filteredByModifier is empty, keep original (don't suppress all results)
+  }
 
   const top3titles = finalMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
   console.log(`🧪 [SMN-RETURN] query='${query}' finalMatches.length=${finalMatches.length} topMatches.length=${topMatches.length} top3=[${top3titles}] consultationMode=${consultationMode}`);
