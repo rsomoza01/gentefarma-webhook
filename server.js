@@ -2066,7 +2066,14 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   console.log('🧪 [SEARCH-IN] text="%s" preExtracted=%s preExtracted.length=%d', text.substring(0, 80), JSON.stringify(preExtracted), preExtracted.length);
   // Always extract medicine list - even for OCR, we want multi-medicine support.
   // ocrOnly only affects the matching/search behavior, not the extraction.
-  const requestedMedicines = preExtracted.length > 0 ? preExtracted : extractMedicineRequests(text);
+  // FIX: If preExtracted is a single-element array with a space-containing string
+  // (i.e. a concatenated multi-medicine string from routeMessage), split it into
+  // individual tokens so candidateMedicines gets one item per medicine, not one
+  // item per concatenated blob.
+  const normalizedPreExtracted = (preExtracted.length === 1 && typeof preExtracted[0] === 'string' && preExtracted[0].includes(' '))
+    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3)
+    : preExtracted;
+  const requestedMedicines = normalizedPreExtracted.length > 0 ? normalizedPreExtracted : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
