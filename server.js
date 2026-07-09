@@ -3596,7 +3596,23 @@ function extractMedicineRequestsFromSegments(text) {
 
     const query = extractMedicineQuery(piece) || cleaned;
     if (!query) continue;
-    if (!results.includes(query)) results.push(query);
+
+    // FIX: Same issue as extractMedicineRequests — when query is single token but
+    // piece has multiple space-separated tokens, split and validate each.
+    if (query.indexOf(' ') === -1 && cleaned.indexOf(' ') !== -1) {
+      const spaceTokens = cleaned.split(/\s+/).filter((t) => t.length >= 3);
+      for (const token of spaceTokens) {
+        if (results.includes(token)) continue;
+        if (looksLikeMedicineName(token)) {
+          results.push(token);
+        }
+      }
+      if (results.length === 0 || !results.includes(query)) {
+        if (!results.includes(query)) results.push(query);
+      }
+    } else {
+      if (!results.includes(query)) results.push(query);
+    }
   }
 
   return results;
