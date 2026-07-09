@@ -2151,6 +2151,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
       }
     }
     console.log('🧪 [MULTI-AFTER] groups.length=%d missingMedicines=%s', groups.length, JSON.stringify(missingMedicines));
+    // Per-medicine result log so we can see exactly which searches succeed/fail
+    console.log('🧪 [MULTI-LOOP-SUMMARY] totalCandidates=%d groups=%d missing=%d', candidateMedicines.length, groups.length, missingMedicines.length);
 
     if (groups.length > 0 || missingMedicines.length > 0) {
       const flattenedOptions = flattenCatalogResults(groups);
@@ -3648,16 +3650,12 @@ function dedupeStrings(values) {
   if (!Array.isArray(values)) return [];
   // Normalize all values first
   const normalized = values.map((v) => normalizeText(v)).filter(Boolean);
-  // Remove exact duplicates
+  // Remove exact duplicates only — do NOT remove items that are substrings of product names.
+  // E.g. "bumetin" must NOT be removed just because "bumetin retard 300mg" exists in catalog.
+  // Substring deduplication breaks multi-medicine search when catalog products contain
+  // medicine names as prefixes (common with dosage modifiers like RETARD, FORTE, etc.).
   const unique = [...new Set(normalized)];
-  // Remove candidates that are substring subsets of other candidates — keep shortest (most specific)
-  const result = [];
-  for (const item of unique) {
-    // Skip if any existing result is a proper substring of this item (item is a superset)
-    const isSuperset = result.some((existing) => existing.length < item.length && item.includes(existing));
-    if (!isSuperset) result.push(item);
-  }
-  return result;
+  return unique;
 }
 
 function looksLikeListToken(token) {
