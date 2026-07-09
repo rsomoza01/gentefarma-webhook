@@ -5076,7 +5076,8 @@ function looksLikeMedicineName(value) {
     'tengo', 'tienes', 'tiene', 'tenemos', 'tienen', 'hacer', 'hace', 'haces', 'hacen',
     'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer']);
   const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()));
-  const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 5 && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0]);
+  // Also accept 4-char medicine names (e.g. "esoz", "fatr", "ferrz")
+  const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4 && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0]);
 
   return hasDosageOrForm || hasUsefulMultiTokenPhrase || hasStrongSingleToken;
 }
