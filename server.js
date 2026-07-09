@@ -3386,7 +3386,26 @@ function extractMedicineRequests(text) {
     const query = extractMedicineQuery(segment) || segment;
     if (!query) continue;
 
-    if (!results.includes(query)) results.push(query);
+    // FIX: When extractMedicineQuery returns a SINGLE token but the original
+    // segment has multiple space-separated tokens (e.g. "bumetin retadar evigax
+    // cap moderan susp milax polvo daflon bargonil crema"), the single-token
+    // result loses all other valid medicine names. Try splitting by spaces and
+    // validating each token individually.
+    if (query.indexOf(' ') === -1 && cleaned.indexOf(' ') !== -1) {
+      const spaceTokens = cleaned.split(/\s+/).filter((t) => t.length >= 3);
+      for (const token of spaceTokens) {
+        if (results.includes(token)) continue;
+        if (looksLikeMedicineName(token)) {
+          results.push(token);
+        }
+      }
+      // If space-token splitting produced nothing, keep the original query result
+      if (results.length === 0 || !results.includes(query)) {
+        if (!results.includes(query)) results.push(query);
+      }
+    } else {
+      if (!results.includes(query)) results.push(query);
+    }
   }
 
   return results;
@@ -4536,46 +4555,179 @@ function extractRecipeMedicineLines(value) {
   // Actually simpler: for each dosage, the medicine name is the text BEFORE the dosage
   // up to the PREVIOUS dosage (or start of line).
   // e.g. "A B C 500 MG D E 300 MG" → ["A B C 500 MG", "D E 300 MG"]
-  const unitListRe = /(\d+(?:[.,]\d+)?)\s+(mg|mcg|g|gr|ml|mL|ui|iu)\b/gi;
+  const unitListRe = /(\d+(?:[.,]\d+)?)\s*(?:m\s*g|mcg|g|gr|m\s*l|mL|ui|iu)\b/gi;
 
   const refinedLines = [];
   for (const line of rawLines) {
     const nmLine = normalizeText(line);
     if (!nmLine) continue;
 
-    // Find all dosage positions in this line
+    // ── PRE-PROCESS DOSAGE OCR ARTIFACTS ─────────────────────────────────────
+    // OCR commonly produces "MGM" instead of "MG" and "MLL" instead of "ML"
+    // due to letter doubling. Normalize these before dosage matching.
+    // Apply same normalization to raw `line` to keep positions in sync with nmLine.
+    const lineFixed = line
+      .replace(/\bMGM\b/g, 'MG')
+      .replace(/\bMGL\b/g, 'ML')
+      .replace(/\bMLL\b/g, 'ML');
+    const nmLineFixed = nmLine
+      .replace(/\bmg\b/gi, 'MG')  // standardize "mg" → "MG"
+      .replace(/\bmgm\b/gi, 'MG') // "mgm" → "MG" (OCR artifact)
+      .replace(/\bmgl\b/gi, 'ML') // "mgl" → "ML"
+      .replace(/\bmll\b/gi, 'ML'); // "mll" → "ML"
+
+    // Find all dosage positions in this line (using fixed normalized text for matching)
     const dosages = [];
     let dm;
-    const unitReLocal = new RegExp('(\\d+(?:[.,]\\d+)?)\\s+(mg|mcg|g|gr|ml|mL|ui|iu)\\b', 'gi');
-    while ((dm = unitReLocal.exec(nmLine)) !== null) {
+    const unitReLocal = new RegExp('(\\d+(?:[.,]\\d+)?)\\s*(?:m\\s*g|mcg|g|gr|m\\s*l|mL|ui|iu)\\b', 'gi');
+    while ((dm = unitReLocal.exec(nmLineFixed)) !== null) {
       dosages.push({ start: dm.index, end: dm.index + dm[0].length, text: dm[0] });
     }
 
     if (dosages.length === 0) {
       // No dosage found — line might be "EVIGAX CAP" (form only) — keep as-is
-      refinedLines.push(line);
+      refinedLines.push(lineFixed);
     } else if (dosages.length === 1) {
       // Single dosage — keep the whole line (it's a single medicine)
-      refinedLines.push(line);
+      refinedLines.push(lineFixed);
     } else {
       // Multiple dosages — pair each dosage with the medicine name before it.
       // Segment i = text BEFORE dosage_i (from prev_end or 0) + " " + dosage_i
       let prevEnd = 0;
       for (let i = 0; i < dosages.length; i++) {
         const d = dosages[i];
-        const segmentText = line.slice(prevEnd, d.start).trim() + (d.text ? ' ' + d.text : '');
+        const segmentText = lineFixed.slice(prevEnd, d.start).trim() + (d.text ? ' ' + d.text : '');
         if (segmentText.trim()) refinedLines.push(segmentText.trim());
         prevEnd = d.end;
       }
       // Anything remaining after the last dosage is part of the last medicine
       // (e.g. "DAFLON 500 MG BARGONIL CREMA" → last medicine is "DAFLON 500 MG",
       // "BARGONIL CREMA" is remaining text that should be appended to last segment)
-      const remainder = line.slice(prevEnd).trim();
-      if (remainder && refinedLines.length > 0) {
-        // Append remainder to the last segment (it belongs to the previous medicine)
-        refinedLines[refinedLines.length - 1] += ' ' + remainder;
-      } else if (remainder) {
-        refinedLines.push(remainder);
+      const remainder = lineFixed.slice(prevEnd).trim();
+      if (remainder) {
+        // ── SINGLE-LINE MULTI-MEDICINE SPLIT ──────────────────────────────────
+        // When a single-line OCR has no newlines but contains multiple medicines
+        // separated by dosage form keywords (CAP, SUSP, POLVO, etc.) followed by
+        // another capitalized medicine name, split the remainder at those boundaries.
+        // E.g. "EVIGAX CAP MODERAN SUSP MILAX POLVO DAFLON 500 MG BARGONIL CREMA"
+        //   → ["EVIGAX CAP", "MODERAN SUSP", "MILAX POLVO", "DAFLON 500 MG", "BARGONIL CREMA"]
+        const FORM_KW_RE = /\b(CAP(?:S(?:US|pen|PA)?|ULOS?|ULAS?)?|SUSP(?:EN(?:SION)?)?|POLVO(?:S)?|CREMA(?:TOS?)?|GEL(?:S)?|UNG(?:UENTO)?(?:S)?|SOBRES?|AMPOLLAS?|TABLETAS?|CAPSULAS?|JARABE|GOTAS|RETAD|RETARD)\b/gi;
+        // Find all form-keyword matches with their positions and what follows them
+        const formMatches = [];
+        let m;
+        FORM_KW_RE.lastIndex = 0;
+        while ((m = FORM_KW_RE.exec(remainder)) !== null) {
+          const afterStart = m.index + m[0].length;
+          const afterText = remainder.slice(afterStart);
+          formMatches.push({
+            keyword: m[1],
+            end: afterStart,
+            followedByUpper: /^\s+[A-ZÁÉÍÓÚÑ]/.test(afterText),
+            followedByEnd: !afterText.trim()
+          });
+        }
+        if (formMatches.length > 0) {
+          // Use form keywords as split points.
+          // For each form keyword followed by uppercase (new medicine boundary),
+          // the medicine name = text from segment_start to keyword_start, last 1-2 words
+          const splitSegments = [];
+          let segStart = 0;
+          for (const fm of formMatches) {
+            if (fm.followedByUpper || fm.followedByEnd) {
+              // Extract medicine name: text from segStart to fm.start (before keyword's leading space)
+              const textBefore = remainder.slice(segStart, fm.start).trimEnd();
+              const words = textBefore.split(/\s+/);
+              // Last 1-2 words = medicine name (handles "BUMETIN RETARD" as 2 words)
+              const medName = words.slice(-2).join(' ');
+              if (medName) splitSegments.push(medName + ' ' + fm.keyword);
+              // Next medicine starts after the keyword's TRAILING space (not leading space)
+              // fm.end = position right after keyword; the trailing space is one char after
+              // unless keyword is at end of string
+              const trailingSpace = (fm.end < remainder.length && remainder[fm.end] === ' ') ? 1 : 0;
+              segStart = fm.end + trailingSpace;
+            }
+            // If not followed by uppercase/end, this keyword belongs to current medicine — skip
+          }
+          // Final segment: from segStart to end (may contain dosage or another medicine)
+          const finalText = remainder.slice(segStart).trimStart();
+          if (finalText) {
+            // Check for form keywords in finalText (e.g. "BARGONIL CREMA")
+            const innerForms = [];
+            let im;
+            FORM_KW_RE.lastIndex = 0;
+            while ((im = FORM_KW_RE.exec(finalText)) !== null) {
+              innerForms.push({ keyword: im[1], start: im.index, end: im.index + im[0].length });
+            }
+            if (innerForms.length > 0) {
+              // finalText has form keywords — split it
+              // Handle orphan dosage before first form keyword: "DAFLON 500 MG BARGONIL CREMA"
+              // → first form keyword "CREMA" at some pos
+              // → text before = "DAFLON 500 MG BARGONIL"
+              // → check if it ends with a dosage (e.g. "500 MG")
+              const firstForm = innerForms[0];
+              const textBeforeFirst = finalText.slice(0, firstForm.start).trimEnd();
+              // Check for orphan dosage in textBeforeFirst
+              const orpDosRe = /(\d+(?:[.,]\d+)?)\s+(mg|mcg|g|gr|ml|mL|ui|iu)\b[^a-zA-Z]*$/i;
+              const orpMatch = orpDosRe.exec(textBeforeFirst);
+              if (orpMatch) {
+                // Orphan dosage: split at the last dosage, push "DAFLON 500 MG" first
+                const dosEndInText = textBeforeFirst.indexOf(orpMatch[0]);
+                const medBeforeDos = textBeforeFirst.slice(0, dosEndInText).trimEnd();
+                if (medBeforeDos) splitSegments.push(medBeforeDos);
+                splitSegments.push(orpMatch[0].trim());
+              } else {
+                // No orphan dosage — use last 1-2 words as medicine name
+                const words = textBeforeFirst.split(/\s+/);
+                const medName = words.slice(-2).join(' ');
+                if (medName) splitSegments.push(medName + ' ' + firstForm.keyword);
+              }
+              // Remaining form keywords + what follows
+              let iStart = firstForm.end;
+              // Find trailing space after first form keyword
+              const iTrailingSpace = (iStart < finalText.length && finalText[iStart] === ' ') ? 1 : 0;
+              iStart += iTrailingSpace;
+              for (let i = 1; i < innerForms.length; i++) {
+                const ifm = innerForms[i];
+                const textBefore = finalText.slice(iStart, ifm.start).trimEnd();
+                const words2 = textBefore.split(/\s+/);
+                const medName2 = words2.slice(-2).join(' ');
+                if (medName2) splitSegments.push(medName2 + ' ' + ifm.keyword);
+                const ifmTrailingSpace = (ifm.end < finalText.length && finalText[ifm.end] === ' ') ? 1 : 0;
+                iStart = ifm.end + ifmTrailingSpace;
+              }
+              const lastBit = finalText.slice(iStart).trim();
+              if (lastBit) splitSegments.push(lastBit);
+            } else {
+              // No form keywords in finalText — check for orphan dosage
+              const dosRe = /(\d+(?:[.,]\d+)?)\s+(mg|mcg|g|gr|ml|mL|ui|iu)\b/i;
+              const dosMatch = dosRe.exec(finalText);
+              if (dosMatch) {
+                // finalText = "DAFLON 500 MG" → push as-is
+                splitSegments.push(finalText);
+              } else {
+                // No dosage — it's a single medicine name, push as-is
+                splitSegments.push(finalText);
+              }
+            }
+          }
+          if (splitSegments.length > 1) {
+            // Push all split segments as separate medicines
+            for (const seg of splitSegments) {
+              const segTrim = seg.trim();
+              if (segTrim) refinedLines.push(segTrim);
+            }
+          } else if (refinedLines.length > 0) {
+            // No split happened — fall back to appending to last segment
+            refinedLines[refinedLines.length - 1] += ' ' + remainder;
+          } else {
+            refinedLines.push(remainder);
+          }
+        } else if (refinedLines.length > 0) {
+          // No form keywords found — fall back to appending
+          refinedLines[refinedLines.length - 1] += ' ' + remainder;
+        } else {
+          refinedLines.push(remainder);
+        }
       }
     }
   }
