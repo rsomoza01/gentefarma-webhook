@@ -5248,8 +5248,9 @@ function extractMedicineQuery(text) {
     // Scan the candidate for the last occurrence of this number so we can
     // re-combine it with the medicine name before it.
     const lastIdx = candidate.lastIndexOf(numStr);
+    let beforeNum = '';
     if (lastIdx > 0) {
-      const beforeNum = candidate.slice(0, lastIdx).trim();
+      beforeNum = candidate.slice(0, lastIdx).trim();
       if (beforeNum && !/^(?:de|del|para|con|sobre|la|el|las|los|una|unos|que|y|por|sin|no|si|un|une)$/i.test(beforeNum)) {
         const combined2 = `${beforeNum} ${numStr}`.trim();
         if (combined2.length >= 2) return combined2;
