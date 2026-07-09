@@ -2063,6 +2063,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const consultationMode = Boolean(options.strictConsultationMode);
   const forceExactConsultationToken = Boolean(options.forceExactConsultationToken);
   const preExtracted = Array.isArray(options.preExtractedMedicines) ? options.preExtractedMedicines : [];
+  console.log('🧪 [SEARCH-IN] text="%s" preExtracted=%s preExtracted.length=%d', text.substring(0, 80), JSON.stringify(preExtracted), preExtracted.length);
   // Always extract medicine list - even for OCR, we want multi-medicine support.
   // ocrOnly only affects the matching/search behavior, not the extraction.
   const requestedMedicines = preExtracted.length > 0 ? preExtracted : extractMedicineRequests(text);
@@ -2111,6 +2112,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
         strictConsultationMode: consultationMode,
         forceExactConsultationToken: consultationMode && !recipeMode
       });
+      console.log('🧪 [MEDICINE-RESULT] query="%s" matches=%d groupTitle="%s"',
+        medicineQuery, result?.matches?.length || 0, result?.groupTitle || '');
       if (result && result.matches && result.matches.length) {
         groups.push(result);
       } else {
@@ -2121,6 +2124,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
         }
       }
     }
+    console.log('🧪 [MULTI-AFTER] groups.length=%d missingMedicines=%s', groups.length, JSON.stringify(missingMedicines));
 
     if (groups.length > 0 || missingMedicines.length > 0) {
       const flattenedOptions = flattenCatalogResults(groups);
