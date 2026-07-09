@@ -2077,6 +2077,23 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
+  // Known pharmaceutical dosage forms — never search for these as standalone medicines.
+  // They appear in concatenated input like "EVIGAX CAP" or "MILAX POLVO" and should
+  // be merged with their preceding medicine name, not searched independently.
+  const DOSAGE_FORMS = new Set([
+    'cap','caps','capsula','capsulas','capsulasblandas','capsule','capsules',
+    'susp','suspen','suspension','solucion','sol',
+    'crema','cremas','gel','pomada','ungüento','unguento','ung',
+    'polvo','polvos','polv',
+    'jarabe','jar',
+    'gotas','gota',
+    'ampolla','ampollas','amp',
+    'sobre','sobres','sb',
+    'inhalador','aerosol','patch','parches','parche',
+    'ovulo','ovulos','ov',
+    'tableta','tabletas','tab','tabs',
+    'inyectable','inyect',
+  ]);
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
@@ -2084,6 +2101,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   ]).filter((item) => {
     const normalizedItem = normalizeText(item);
     if (normalizedItem.length < 3) return false;
+    // Reject dosage form tokens searched as standalone medicines
+    if (DOSAGE_FORMS.has(normalizedItem)) return false;
     // Reject generic single-word selection tokens that are not medicine names
     if (/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(normalizedItem)) return false;
     if (/^(?:seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|mostrar|mostra|muestra)$/i.test(normalizedItem)) return false;
