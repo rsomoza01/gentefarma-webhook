@@ -3386,25 +3386,21 @@ function extractMedicineRequests(text) {
     const query = extractMedicineQuery(segment) || segment;
     if (!query) continue;
 
-    // FIX: When extractMedicineQuery returns a SINGLE token but the original
-    // segment has multiple space-separated tokens (e.g. "bumetin retadar evigax
-    // cap moderan susp milax polvo daflon bargonil crema"), the single-token
-    // result loses all other valid medicine names. Try splitting by spaces and
-    // validating each token individually.
-    if (query.indexOf(' ') === -1 && cleaned.indexOf(' ') !== -1) {
-      const spaceTokens = cleaned.split(/\s+/).filter((t) => t.length >= 3);
-      for (const token of spaceTokens) {
-        if (results.includes(token)) continue;
-        if (looksLikeMedicineName(token)) {
-          results.push(token);
-        }
+    // Always split by spaces and validate each token. This handles both:
+    // (a) single-token query + multi-token cleaned → space-token fallback (was already here)
+    // (b) multi-token query (e.g. "bumetin retadar evigax...") → now split and validated too
+    const spaceTokens = cleaned.split(/\s+/).filter((t) => t.length >= 3);
+    let tokensAdded = 0;
+    for (const token of spaceTokens) {
+      if (results.includes(token)) continue;
+      if (looksLikeMedicineName(token)) {
+        results.push(token);
+        tokensAdded += 1;
       }
-      // If space-token splitting produced nothing, keep the original query result
-      if (results.length === 0 || !results.includes(query)) {
-        if (!results.includes(query)) results.push(query);
-      }
-    } else {
-      if (!results.includes(query)) results.push(query);
+    }
+    // Only fall back to the original query if space-token split added nothing
+    if (tokensAdded === 0 && !results.includes(query)) {
+      results.push(query);
     }
   }
 
