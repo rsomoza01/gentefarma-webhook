@@ -2127,6 +2127,11 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
     if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3"
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
+    // ── REJECT concatenated multi-medicine OCR strings (7+ tokens with spaces) ──
+    // These are never valid single-medicine search queries — they create duplicate
+    // search groups like "ESOZ LEPRIT BUMETIN RETADAR EVIGAX CAP MODERAN SUSP"
+    const itemTokens = normalizedItem.split(/\s+/).filter(Boolean);
+    if (itemTokens.length >= 7) return false;
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
     if (/\b(paciente)\b/i.test(normalizedItem)) return false;
     if (/\b(nombre)\b/i.test(normalizedItem)) return false;
@@ -4607,15 +4612,24 @@ function extractRecipeMedicineLines(value) {
   const raw = String(value || '');
   if (!raw) return [];
 
-  // ── FAST PATH: single-line multi-token medicine queries ──────────────────────
-  // If the ENTIRE raw input is a strong multi-token medicine name (e.g.
-  // "atamel forte", "dorixina flex"), return it directly without chunking.
-  // This prevents shortBrandLike / formOrDose filters from discarding valid
-  // product names that happen to be two words with lowercase first letter.
+  // ── FAST PATH: DISABLED — returning the full multi-token string as a single
+  // item causes it to appear as a search group, duplicating results from individual
+  // tokens. Multi-medicine OCR lines MUST be split into individual tokens.
+  // const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
+  // if (fastTokens.length >= 2 && fastTokens.every((t) => /^[a-záéíóúñ]{3,}/i.test(t))) {
+  //   console.log('🧪 [EXTRACT-RECIPE] raw value=%s → FAST PATH (full multi-token input)', raw.slice(0, 200));
+  //   return [raw.trim()];
+  // }
+
+  // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
-  if (fastTokens.length >= 2 && fastTokens.every((t) => /^[a-záéíóúñ]{3,}/i.test(t))) {
-    console.log('🧪 [EXTRACT-RECIPE] raw value=%s → FAST PATH (full multi-token input)', raw.slice(0, 200));
-    return [raw.trim()];
+  if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
+    // Single-line multi-token input: split into individual tokens
+    // Filter out dosage forms (CAP, SUSP, etc.) and known non-medicine tokens
+    const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
+    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
+    console.log('🧪 [EXTRACT-RECIPE] raw value=%s → SPLIT into tokens=%s', raw.slice(0, 200), JSON.stringify(splitTokens));
+    return splitTokens;
   }
 
   // ── PRESCRIPTION-MULTI: split by newlines first, then refine each line ─────────
