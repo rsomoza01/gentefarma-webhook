@@ -5140,10 +5140,13 @@ function looksLikeMedicineName(value) {
     'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas', 'aquel', 'aquella',
     'tengo', 'tienes', 'tiene', 'tenemos', 'tienen', 'hacer', 'hace', 'haces', 'hacen',
     'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer',
-    'feliz', 'viernes', 'buenos', 'buenas']);
+    'feliz', 'viernes', 'buenos', 'buenas', 'dias', 'tardes', 'noches']);
   const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()));
   // Also accept 4-char medicine names (e.g. "esoz", "fatr", "ferrz")
-  const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4 && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0]);
+  // Reject single generic tokens even if 4+ chars (feliz/viernes/dias/buenos/buenas/etc.)
+  const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4
+    && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0])
+    && !GENERIC_TOKENS.has(tokens[0].toLowerCase());
 
   return hasDosageOrForm || hasUsefulMultiTokenPhrase || hasStrongSingleToken;
 }
