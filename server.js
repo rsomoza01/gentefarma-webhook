@@ -2226,7 +2226,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   const strictListMode = Boolean(options.strictListMode);
   const recipeMode = Boolean(options.recipeMode);
-  const strictReferenceThreshold = recipeMode ? 0.96 : (strictListMode ? 0.93 : 0.88);
+  // strictReferenceThreshold: for multi-token queries keep 0.93 to avoid noise.
+  // For single-token medicine names (e.g. "bumetin", "leprit"), lower to 0.80
+  // so "bumetin" can match "bumetin retard 300mg" (JW~0.80) without penalizing -500.
+  const _singleTokenQuery = queryTokens.length === 1 && queryTokens[0].length >= 4;
+  const strictReferenceThreshold = recipeMode ? 0.96 : (strictListMode ? (_singleTokenQuery ? 0.80 : 0.93) : 0.88);
 
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
@@ -3431,7 +3435,11 @@ function extractMedicineRequests(text) {
       }
     }
     // Only fall back to the original query if space-token split added nothing
-    if (tokensAdded === 0 && !results.includes(query)) {
+    // AND the query is short enough that it won't pollute multi-medicine results.
+    // Long concatenated strings (many tokens) are NOT added — they create spurious
+    // search groups like "ESOZ LEPRIT BUMETIN..." with bad fuzzy matches.
+    const queryTokensCount = cleaned.split(/\s+/).length;
+    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6) {
       results.push(query);
     }
   }
@@ -3635,7 +3643,9 @@ function extractMedicineRequestsFromSegments(text) {
           results.push(token);
         }
       }
-      if (results.length === 0 || !results.includes(query)) {
+      // Only add fallback if fewer than 7 tokens (don't pollute with long concat strings)
+      const fallbackTokensCount = cleaned.split(/\s+/).length;
+      if ((results.length === 0 || !results.includes(query)) && fallbackTokensCount <= 6) {
         if (!results.includes(query)) results.push(query);
       }
     } else {
