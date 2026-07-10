@@ -2094,10 +2094,27 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     'tableta','tabletas','tab','tabs',
     'inyectable','inyect',
   ]);
+  // Flatten each recipe line so that multi-medicine OCR strings like
+  // "ESOZ LEPRIT BUMETIN RETADAR EVIGAX CAP MODERAN SUSP" get split into
+  // individual medicine names instead of extracting only the first token.
+  const flattenedLines = [];
+  for (const line of recipeLineMedicines) {
+    const spaceTokens = String(line || '').split(/\s+/).filter((t) => t.length >= 3);
+    if (spaceTokens.length > 1) {
+      // Multi-token line: split and add each token as a separate line
+      for (const token of spaceTokens) {
+        if (!flattenedLines.includes(token)) flattenedLines.push(token);
+      }
+    } else {
+      // Single-token line: keep as-is
+      if (!flattenedLines.includes(line)) flattenedLines.push(line);
+    }
+  }
+
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
-    ...recipeLineMedicines
+    ...flattenedLines
   ]).filter((item) => {
     const normalizedItem = normalizeText(item);
     if (normalizedItem.length < 3) return false;
@@ -2159,7 +2176,12 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
       session.lastSearch = groups[0] || null;
       session.pendingSelectionResults = flattenedOptions.length ? flattenedOptions : null;
       session.mode = flattenedOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
-      rememberCatalogSnapshot(session, flattenedOptions, candidateMedicines.join(' • '), buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines));
+      // Only save a catalog snapshot when there are actual selectable options.
+      // Saving when flattenedOptions is empty (all medicines unavailable) would persist
+      // combined multi-medicine OCR strings as selectable options in future sessions.
+      if (flattenedOptions.length > 0) {
+        rememberCatalogSnapshot(session, flattenedOptions, candidateMedicines.join(' • '), buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines));
+      }
       touchSession(session);
       const logProducts1 = candidateMedicines.length > 0 ? candidateMedicines : flattenedOptions.map(o => o.productName || o.name || singleQuery);
       appendConsultationToSheet({ products: logProducts1, exists: 1, phone: userInfo.phone, userName: userInfo.pushName });
