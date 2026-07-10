@@ -3438,6 +3438,8 @@ function extractMedicineRequests(text) {
     const cleaned = normalizeText(segment);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    // Reject greeting/time false positives like "feliz viernes" before they become medicine candidates
+    if (/\b(feliz\s+viernes|feliz\s+dias|buenos\s+dias)\b/i.test(cleaned)) continue;
     // Skip pure dosage segments (no medicine name): "40 MG", "25 MG", etc.
     if (/^\s*\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i.test(cleaned)) continue;
     if (!/(\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)|(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina))/.test(cleaned) && cleaned.length < 6) continue;
@@ -5137,7 +5139,8 @@ function looksLikeMedicineName(value) {
     'ahora', 'antes', 'después', 'cuando', 'donde', 'dónde', 'como', 'cómo', 'pero', 'porque',
     'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas', 'aquel', 'aquella',
     'tengo', 'tienes', 'tiene', 'tenemos', 'tienen', 'hacer', 'hace', 'haces', 'hacen',
-    'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer']);
+    'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer',
+    'feliz', 'viernes', 'buenos', 'buenas']);
   const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()));
   // Also accept 4-char medicine names (e.g. "esoz", "fatr", "ferrz")
   const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4 && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0]);
