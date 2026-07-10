@@ -2783,10 +2783,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
         tokenSimilarity(recipeToken, candidateToken) >= 0.96
       ));
 
-      return exactTokenMatch && (
-        item.fullFocusMatch ||
-        item.exactHit ||
-        item.phraseHit ||
+      // For single-token queries (e.g. "leprit" matching "LEPRIT 25 MG"), an exact
+      // token match is sufficient — don't require fullFocusMatch/exactHit on top.
+      return exactTokenMatch || (
+        item.fullFocusMatch || item.exactHit || item.phraseHit ||
         (item.referenceSimilarity ?? 0) >= strictReferenceThreshold
       );
     });
@@ -3678,10 +3678,14 @@ function looksLikeListToken(token) {
 
 function flattenCatalogResults(results) {
   const flattened = [];
+  const seenTitles = new Set(); // dedup across all groups
   for (const group of Array.isArray(results) ? results : []) {
     const groupQuery = String(group?.query || '').trim();
     const groupLabel = String(group?.groupTitle || group?.title || groupQuery || 'Medicamento').trim();
     for (const item of group?.matches || []) {
+      const normTitle = normalizeText(item.title || '');
+      if (seenTitles.has(normTitle)) continue; // skip duplicate product titles
+      seenTitles.add(normTitle);
       flattened.push({
         groupQuery,
         groupTitle: groupLabel,
@@ -5027,9 +5031,12 @@ function isLikelyRecipeMedicineCandidate(value) {
   const normalized = normalizeText(raw);
   if (!normalized) return false;
 
+  // Reject dosage-form OCR artifacts that look like medicines but are actually dosage forms.
+  // "retadar" is a common OCR error for "retard" (Bumetin Retard / Bumetin Retadar).
+  if (/\b(retad|retard)\b/i.test(normalized)) return false;
   if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return false;
   if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return false;
-  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|nombre|apellidos?|apellido|ano nac|año nac|fecha|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return false;
+  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|stadium|ano nac|año nac|datum|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return false;
 
   return Boolean(extractPrimaryRecipeMedicineQuery(raw));
 }
