@@ -5219,7 +5219,11 @@ function extractMedicineQuery(text) {
     .replace(/^por\s+favor\s*/i, '')
     // Strip hola first (before the general greeting strip so it doesn't hide buenas noches)
     .replace(/^hola\b[\s,.-]*/i, '')
-    .replace(/^(?:por\s+favor\s+)?(?:hola|buenas\s+noches|buenas\s+tardes|buenos\s+días|buen\s+(?:dia|día|tarde|noche)|saludos)\b[\s,.-]*/i, '')
+    .replace(/^(?:por\s+favor\s+)?(?:hola|buenas\s+noches|buenas\s+tardes|buenos\s+d[ií]as|buen\s+(?:dia|d[ií]a|tarde|noche)|saludos)\b[\s,.-]*/i, '')
+    // Also strip trailing courtesy phrases like "feliz viernes", "feliz dia", "feliz semana"
+    .replace(/\b(?:feliz\s+(?:viernes|lunes|martes|m[ií]ercoles|jueves|s[aá]bado|domingo|dia|d[ií]a|semana|año|navidad|cumpleaños|cumple))\b.*$/i, '')
+    // If ONLY greeting/courtesy tokens remain, clear the candidate entirely
+    .replace(/^(?:buenos\s+d[ií]as?|buenas\s+(?:noches|tardes)|buen\s+(?:dia|d[ií]a|tarde|noche)|feliz)\b[\s,.-]*$/i, '')
     .replace(/^(?:donde\s+puedo\s+comprar|dónde\s+puedo\s+comprar|donde\s+comprar|dónde\s+comprar|donde\s+consigo|dónde\s+consigo|donde\s+encuentro|dónde\s+encuentro)\s+/i, '')
     .replace(/^(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|hay\s+disponible|disponibilidad(?:\s+de)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|saber(?:\s+el)?(?:\s+precio)?(?:\s+de)?|cuanto\s+cuesta|cuánto\s+cuesta|conoces|vendes|venden)\s+/i, '')
     .replace(/^(?:comprar|conseguir|buscar|necesitar|querer|pedir|obtener|hallar|hallarme|buscame|buscame|buscarnos?|encuentra[rm]?)\s+/i, '')
