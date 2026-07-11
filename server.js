@@ -1382,6 +1382,96 @@ async function classifyIntentWithLLM(text, sessionContext) {
 }
 
 // Map LLM intent to routeMessage handler
+// ── LLM Medicines Dedup ──────────────────────────────────────────────
+// The LLM may extract BOTH "evigax cap" AND "evigax", or "moderan susp"
+// AND "moderan", causing duplicate catalog groups. This function:
+// 1. Rejects standalone dosage forms (retard, cap, susp, crema, etc.)
+// 2. Removes shorter strings that are prefixes of longer strings
+//    (if "evigax cap" exists, "evigax" is redundant)
+// 3. Dedupes exact matches
+function dedupLLMMedicines(medicines) {
+  if (!Array.isArray(medicines) || medicines.length === 0) return [];
+
+  const LLM_DOSAGE_FORMS = new Set([
+    'cap','caps','capsula','capsulas','capsule','capsules',
+    'susp','suspen','suspension','solucion','sol',
+    'crema','cremas','gel','pomada','unguento','ung',
+    'polvo','polvos','polv',
+    'jarabe','jar','gotas','gota',
+    'ampolla','ampollas','amp','sobre','sobres','sb',
+    'retard','retad','retadar','retardo','retardado','retardada',
+    'forte','regular',
+    'tableta','tabletas','tab','tabs',
+    'inyectable','inyect',
+  ]);
+
+  // Step 1: normalize and filter out dosage forms / too-short items
+  const normalized = medicines
+    .map(m => String(m || '').trim())
+    .filter(m => m.length >= 2)
+    .map(m => {
+      const lower = m.toLowerCase();
+      return { original: m, lower, tokens: lower.split(/\s+/) };
+    })
+    .filter(item => {
+      // Reject if the ENTIRE string is a single dosage form
+      if (item.tokens.length === 1 && LLM_DOSAGE_FORMS.has(item.tokens[0])) {
+        console.log('🧠 [LLM-DEDUP] Rejected dosage form: "%s"', item.original);
+        return false;
+      }
+      // Reject pure numbers
+      if (/^\d+(?:[.,]\d+)?$/.test(item.lower)) {
+        console.log('🧠 [LLM-DEDUP] Rejected pure number: "%s"', item.original);
+        return false;
+      }
+      return true;
+    });
+
+  // Step 2: prefix-subset dedup — if "evigax" is a prefix-subset of "evigax cap",
+  // keep only "evigax cap" (the more specific one). Same for "bumetin" vs "bumetin retard".
+  // We sort by specificity (longer first) so the more specific items survive.
+  const sorted = [...normalized].sort((a, b) => b.tokens.length - a.tokens.length);
+  const kept = [];
+  const keptLowers = new Set();
+
+  for (const item of sorted) {
+    // Check if any already-kept item starts with this item's name as a prefix
+    const firstToken = item.tokens[0];
+    let isSubset = false;
+
+    for (const existing of kept) {
+      // If the existing item's first token matches AND has all tokens of this item
+      // e.g. "evigax cap" already kept → "evigax" is a subset
+      const existingFirstToken = existing.tokens[0];
+      if (existingFirstToken === firstToken) {
+        // Check: is this item's tokens a subset of the existing item's tokens?
+        const thisTokensSet = new Set(item.tokens);
+        const existingTokensSet = new Set(existing.tokens);
+        let allPresent = true;
+        for (const t of thisTokensSet) {
+          if (!existingTokensSet.has(t)) { allPresent = false; break; }
+        }
+        if (allPresent) {
+          isSubset = true;
+          console.log('🧠 [LLM-DEDUP] Subset dedup: "%s" is subset of "%s" — removing',
+            item.original, existing.original);
+          break;
+        }
+      }
+    }
+
+    if (!isSubset && !keptLowers.has(item.lower)) {
+      kept.push(item);
+      keptLowers.add(item.lower);
+    }
+  }
+
+  const result = kept.map(i => i.original);
+  console.log('🧠 [LLM-DEDUP] Input=%s → Output=%s',
+    JSON.stringify(medicines), JSON.stringify(result));
+  return result;
+}
+
 async function handleLLMIntent(llmResult, phone, text, session, context) {
   if (!llmResult || llmResult.confidence < LLM_INTENT_CONFIDENCE_THRESHOLD) {
     console.log('🧠 [LLM-INTENT] Low confidence (%.2f < %.2f) — using regex fallback',
@@ -1396,16 +1486,18 @@ async function handleLLMIntent(llmResult, phone, text, session, context) {
   switch (intent) {
     case 'medicine_search': {
       // LLM extracted medicines — search directly in Firebase
+      // Dedup first: remove dosage forms, prefix-subsets, and exact dupes
+      const dedupedMedicines = dedupLLMMedicines(medicines);
       clearSelectionState(session);
-      const searchQuery = medicines.length > 0 ? medicines.join(' ') : text;
-      console.log('🧠 [LLM-INTENT] Medicine search — medicines=%s query=%s',
-        JSON.stringify(medicines), searchQuery);
+      const searchQuery = dedupedMedicines.length > 0 ? dedupedMedicines.join(' ') : text;
+      console.log('🧠 [LLM-INTENT] Medicine search — medicines=%s deduped=%s query=%s',
+        JSON.stringify(medicines), JSON.stringify(dedupedMedicines), searchQuery);
       return await searchAndBuildCatalogResponse(
         searchQuery, session,
         {
           hasOcrText: Boolean(context?.hasOcrText),
           strictConsultationMode: true,
-          preExtractedMedicines: medicines
+          preExtractedMedicines: dedupedMedicines
         },
         { phone, pushName }
       );
