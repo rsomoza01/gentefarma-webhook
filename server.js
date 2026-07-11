@@ -4120,8 +4120,10 @@ function flattenCatalogResults(results) {
     const groupLabel = String(group?.groupTitle || group?.title || groupQuery || 'Medicamento').trim();
     for (const item of group?.matches || []) {
       const normTitle = normalizeText(item.title || '');
-      const productId = item.productId || item.id;
-      // Skip if we've already seen this product (by id or by exact normalized title)
+      const productId = item.doc?.id;
+      // Skip if we've already seen this product (by doc.id Firebase document ID,
+      // or by exact normalized title — handles same product returned via
+      // different search queries like "evigax cap" vs "evigax")
       const titleKey = normTitle;
       const idKey = String(productId || '');
       if (seenTitles.has(titleKey)) {
