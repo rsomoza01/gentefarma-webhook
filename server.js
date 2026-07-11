@@ -4110,14 +4110,30 @@ function looksLikeListToken(token) {
 
 function flattenCatalogResults(results) {
   const flattened = [];
-  const seenTitles = new Set(); // dedup across all groups
+  // Deduplicate by normalized title (same product from different searches).
+  // Also deduplicate by productId when available (same Firebase document ID =
+  // guaranteed same product even if laboratory/sizing in title differs).
+  const seenTitles = new Set();
+  const seenProductIds = new Set();
   for (const group of Array.isArray(results) ? results : []) {
     const groupQuery = String(group?.query || '').trim();
     const groupLabel = String(group?.groupTitle || group?.title || groupQuery || 'Medicamento').trim();
     for (const item of group?.matches || []) {
       const normTitle = normalizeText(item.title || '');
-      if (seenTitles.has(normTitle)) continue; // skip duplicate product titles
-      seenTitles.add(normTitle);
+      const productId = item.productId || item.id;
+      // Skip if we've already seen this product (by id or by exact normalized title)
+      const titleKey = normTitle;
+      const idKey = String(productId || '');
+      if (seenTitles.has(titleKey)) {
+        console.log('🧹 [FLATTEN-DEDUP] Skipped duplicate title="%s" id="%s"', item.title || '', idKey);
+        continue;
+      }
+      if (idKey && seenProductIds.has(idKey)) {
+        console.log('🧹 [FLATTEN-DEDUP] Skipped duplicate productId="%s" title="%s"', idKey, item.title || '');
+        continue;
+      }
+      seenTitles.add(titleKey);
+      if (idKey) seenProductIds.add(idKey);
       flattened.push({
         groupQuery,
         groupTitle: groupLabel,
