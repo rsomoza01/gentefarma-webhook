@@ -2586,9 +2586,18 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     console.log('🧪 [MULTI-AFTER] groups.length=%d missingMedicines=%s', groups.length, JSON.stringify(missingMedicines));
     // Per-medicine result log so we can see exactly which searches succeed/fail
     console.log('🧪 [MULTI-LOOP-SUMMARY] totalCandidates=%d groups=%d missing=%d', dedupedCandidates.length, groups.length, missingMedicines.length);
+    // Detailed group log: which groups were collected and their doc.id
+    for (const g of groups) {
+      const matchIds = (g.matches || []).map(m => m.doc?.id || 'NO-ID').join(',');
+      console.log('🧪 [GROUP] groupTitle="%s" matches=%d doc.ids=[%s]', g.groupTitle || g.query || '?', g.matches?.length || 0, matchIds);
+    }
 
     if (groups.length > 0 || missingMedicines.length > 0) {
       const flattenedOptions = flattenCatalogResults(groups);
+      console.log('🧪 [FLATTEN] flattenedOptions.length=%d', flattenedOptions.length);
+      for (const opt of flattenedOptions) {
+        console.log('🧪 [FLAT-ITEM] title="%s" doc.id="%s" groupTitle="%s"', opt.title || '', opt.doc?.id || 'NO-ID', opt.groupTitle || '');
+      }
       session.lastSearch = groups[0] || null;
       session.pendingSelectionResults = flattenedOptions.length ? flattenedOptions : null;
       session.mode = flattenedOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
