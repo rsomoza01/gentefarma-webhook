@@ -1382,13 +1382,32 @@ async function classifyIntentWithLLM(text, sessionContext) {
 }
 
 // Map LLM intent to routeMessage handler
-// ── LLM Medicines Dedup ──────────────────────────────────────────────
-// The LLM may extract BOTH "evigax cap" AND "evigax", or "moderan susp"
-// AND "moderan", causing duplicate catalog groups. This function:
-// 1. Rejects standalone dosage forms (retard, cap, susp, crema, etc.)
-// 2. Removes shorter strings that are prefixes of longer strings
-//    (if "evigax cap" exists, "evigax" is redundant)
-// 3. Dedupes exact matches
+// ── SMART SUBSET DEDUP ─────────────────────────────────────────────────
+// Remove ONLY dosage-form fragments, NOT valid medicine base names.
+// "bumetin" → REMOVE (it's a dosage form fragment of "bumetin retard")
+// "esoz"    → KEEP   (it's a real medicine, not a dosage form fragment)
+// Strategy: extract medicine roots (strip dosage tokens/numbers from each item),
+// then check if rootA ⊆ rootB and rootA != rootB.
+// Dosage tokens to strip: numbers, mg/mcg/g/ml units, forms like cap/susp/crema/etc.
+function getMedicineRoot(raw) {
+  const tokens = String(raw || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const DOSAGE_TOKENS = new Set([
+    'mg','mcg','g','gr','ml','cc','ui','iu',
+    'cap','caps','capsula','capsulas','capsule','capsules',
+    'susp','suspen','suspension','sol','solucion',
+    'crema','cremas','gel','pomada','unguento','ung',
+    'polvo','polvos','jarabe','jar','gotas','gota',
+    'ampolla','ampollas','amp','sobre','sobres','sb',
+    'retard','retad','retadar','retardo','retardado','retardada',
+    'forte','regular',
+    'tableta','tabletas','tab','tabs',
+    'inyectable','inyect',
+  ]);
+  const isDose = t => /^(\d+(?:[.,]\d+)?)$/.test(t) || DOSAGE_TOKENS.has(t);
+  const rootTokens = tokens.filter(t => !isDose(t) && t.length > 1);
+  return rootTokens.join(' ');
+}
+
 function dedupLLMMedicines(medicines) {
   if (!Array.isArray(medicines) || medicines.length === 0) return [];
 
@@ -1427,36 +1446,35 @@ function dedupLLMMedicines(medicines) {
       return true;
     });
 
-  // Step 2: prefix-subset dedup — if "evigax" is a prefix-subset of "evigax cap",
-  // keep only "evigax cap" (the more specific one). Same for "bumetin" vs "bumetin retard".
-  // We sort by specificity (longer first) so the more specific items survive.
+  // Step 2: SMART SUBSET DEDUP using medicine roots
+  // For each pair (shorter, longer), extract roots (strip dosage tokens/numbers).
+  // Remove the shorter item ONLY if: rootShorter ⊆ rootLonger AND rootShorter != rootLonger.
+  // This means "bumetin" (root="bumetin") is subset of "bumetin retard" (root="bumetin retard")
+  // → REMOVE "bumetin". But "esoz" (root="esoz") is NOT a subset of "esoz" (root="esoz")
+  // → KEEP "esoz".
+  const roots = new Map();
+  for (const item of normalized) {
+    roots.set(item.lower, getMedicineRoot(item.lower));
+  }
+
   const sorted = [...normalized].sort((a, b) => b.tokens.length - a.tokens.length);
   const kept = [];
   const keptLowers = new Set();
 
   for (const item of sorted) {
-    // Check if any already-kept item starts with this item's name as a prefix
-    const firstToken = item.tokens[0];
+    const rootItem = roots.get(item.lower) || '';
     let isSubset = false;
 
     for (const existing of kept) {
-      // If the existing item's first token matches AND has all tokens of this item
-      // e.g. "evigax cap" already kept → "evigax" is a subset
-      const existingFirstToken = existing.tokens[0];
-      if (existingFirstToken === firstToken) {
-        // Check: is this item's tokens a subset of the existing item's tokens?
-        const thisTokensSet = new Set(item.tokens);
-        const existingTokensSet = new Set(existing.tokens);
-        let allPresent = true;
-        for (const t of thisTokensSet) {
-          if (!existingTokensSet.has(t)) { allPresent = false; break; }
-        }
-        if (allPresent) {
-          isSubset = true;
-          console.log('🧠 [LLM-DEDUP] Subset dedup: "%s" is subset of "%s" — removing',
-            item.original, existing.original);
-          break;
-        }
+      const rootExisting = roots.get(existing.lower) || '';
+      // Skip if either root is empty (all-dosage string)
+      if (!rootItem || !rootExisting) continue;
+      // Only dedup if roots are different AND rootItem ⊆ rootExisting
+      if (rootItem !== rootExisting && rootExisting.startsWith(rootItem + ' ')) {
+        isSubset = true;
+        console.log('🧠 [LLM-DEDUP] Root-subset dedup: "%s" (root="%s") is subset of "%s" (root="%s") — removing',
+          item.original, rootItem, existing.original, rootExisting);
+        break;
       }
     }
 
@@ -2512,13 +2530,19 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   console.log('🧪 [CANDIDATE-MEDICINES] ocrOnly=%s preExtracted=%s requestedMedicines=%s fallbackMedicines=%s recipeLineMedicines=%s candidateMedicines=%s',
     ocrOnly, JSON.stringify(preExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(recipeLineMedicines), JSON.stringify(candidateMedicines));
 
-  // ── PREFIX-SUBSET DEDUP ──────────────────────────────────────────────
-  // Remove shorter medicine names that are prefix-subsets of longer ones.
-  // e.g. if both "evigax cap" and "evigax" exist, keep only "evigax cap"
-  // (they'd return the same Firebase products, creating duplicate groups)
+  // ── SMART SUBSET DEDUP ──────────────────────────────────────────────
+  // Remove medicine fragments (shorter names that are subsets of longer ones)
+  // while keeping valid medicine names. Uses root-based comparison (strips
+  // dosage tokens) so "bumetin" gets removed when "bumetin retard" exists,
+  // but "esoz" is kept even when "esoz 40 mg" also exists.
+  const rawCandidates = [...candidateMedicines];
   const dedupedCandidates = dedupLLMMedicines(candidateMedicines);
-  if (dedupedCandidates.length !== candidateMedicines.length) {
-    console.log('🧹 [PREFIX-DEDUP] %s → %s', JSON.stringify(candidateMedicines), JSON.stringify(dedupedCandidates));
+  if (dedupedCandidates.length !== rawCandidates.length) {
+    const removed = rawCandidates.filter(c => !dedupedCandidates.includes(c));
+    console.log('🧹 [PREFIX-DEDUP] REMOVED=%s | RAW=%s | DEDUPED=%s',
+      JSON.stringify(removed), JSON.stringify(rawCandidates), JSON.stringify(dedupedCandidates));
+  } else {
+    console.log('🧹 [PREFIX-DEDUP] No change — count=%d', dedupedCandidates.length);
   }
 
     if (dedupedCandidates.length > 1) {
