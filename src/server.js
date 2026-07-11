@@ -20,6 +20,12 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const OCR_PROVIDER = process.env.OCR_PROVIDER || (OPENAI_API_KEY ? 'openai' : 'none');
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
+
+// ── LLM Intent Router ──────────────────────────────────────────────────
+const LLM_INTENT_MODEL = process.env.LLM_INTENT_MODEL || 'gpt-4o-mini';
+const LLM_INTENT_ENABLED = process.env.LLM_INTENT_ENABLED !== 'false'; // true by default
+const LLM_INTENT_TIMEOUT_MS = Number(process.env.LLM_INTENT_TIMEOUT_MS || 3000);
+const LLM_INTENT_CONFIDENCE_THRESHOLD = Number(process.env.LLM_INTENT_CONFIDENCE_THRESHOLD || 0.70);
 const OPENAI_VISION_PROMPT = process.env.OPENAI_VISION_PROMPT || `Eres un asistente de farmacia. De esta imagen, extrae TODOS los nombres de medicamentos que aparezcan.
 
 Pueden ser de dos tipos:
@@ -1219,6 +1225,253 @@ function extractMediaDescriptor(payload) {
 }
 
 // ----------------------------------------------------
+// LLM Intent Router — Fase 1 del agente inteligente
+// ----------------------------------------------------
+// Clasifica el mensaje del usuario usando un LLM en vez de regex.
+// Retorna: { intent, medicines, confidence, raw } o null si falla.
+// El sistema regex original se usa como fallback automático.
+const LLM_INTENT_SYSTEM_PROMPT = `Eres el clasificador de intenciones de un bot de farmacia en WhatsApp (Gentefarma).
+
+Tu ÚNICA tarea es clasificar el mensaje del usuario y extraer medicamentos si los hay.
+
+INTENTES POSIBLES:
+- "medicine_search": el usuario busca uno o más medicamentos (por nombre, dosis, o descripción)
+- "location": pregunta dónde está la farmacia / dirección / local físico
+- "hours": pregunta horario de atención
+- "payment": pregunta formas de pago
+- "delivery": pregunta precio/costo de envío
+- "how_to_order": pregunta cómo hacer un pedido
+- "app": pregunta sobre la aplicación de Gentefarma
+- "greeting": saludo simple sin consulta médica (hola, buenos días, etc.)
+- "thanks": agradecimiento sin consulta (gracias, muchas gracias)
+- "order_sent": notificación de que ya envió el pedido
+- "human": pide hablar con una persona / colaborador
+- "summary": pide ver el resumen del pedido (LISTO, resumen)
+- "selection": está seleccionando una opción del catálogo (ej: "1", "opcion 2", "2 x 3")
+- "confirmation": confirmación simple sin consulta (ok, está bien, perfecto, sí, no)
+- "info": pide información general sobre Gentefarma
+- "unknown": no encaja en ninguna categoría
+
+REGLAS CRÍTICAS:
+- Si el mensaje contiene NOMBRES DE MEDICAMENTOS (aunque tenga saludo), el intent es "medicine_search"
+- "retadar" y "retad" son errores OCR de "retard" — normalízalo a "retard" en medicines[]
+- "potasico", "sodico", "clorhidrato" son sales farmacéuticas — inclúyelas como parte del nombre
+- Formas farmacéuticas como "cap", "susp", "crema", "polvo", "gotas" son parte del nombre del medicamento
+- Los saludos CON medicamentos (ej: "hola, busco losartan") → intent: "medicine_search", medicines: ["losartan"]
+- Los saludos SIN medicamentos (ej: "hola buenos días") → intent: "greeting"
+- Si el usuario escribe solo números o "opcion X" → intent: "selection"
+- No inventes medicamentos que no están en el texto
+
+RESPONDE SOLO en este formato JSON (sin markdown, sin backticks):
+{"intent":"...","medicines":["..."],"confidence":0.95}
+
+Ejemplos:
+- "busco losartan potasico 50mg" → {"intent":"medicine_search","medicines":["losartan potasico 50mg"],"confidence":0.98}
+- "hola buenos días feliz viernes" → {"intent":"greeting","medicines":[],"confidence":0.95}
+- "donde están ubicados" → {"intent":"location","medicines":[],"confidence":0.99}
+- "hola, tienes daflon 500mg" → {"intent":"medicine_search","medicines":["daflon 500mg"],"confidence":0.97}
+- "1 x 2" → {"intent":"selection","medicines":[],"confidence":0.90}
+- "ok está bien" → {"intent":"confirmation","medicines":[],"confidence":0.90}
+- "bumetin retadar evigax moderan" → {"intent":"medicine_search","medicines":["bumetin retard","evigax","moderan"],"confidence":0.88}`;
+
+async function classifyIntentWithLLM(text, sessionContext) {
+  // Skip if disabled or no API key
+  if (!LLM_INTENT_ENABLED || !OPENAI_API_KEY) return null;
+
+  // Skip very short messages (likely selections or noise) — let regex handle those
+  const trimmed = (text || '').trim();
+  if (trimmed.length < 3) return null;
+
+  // Skip pure numeric selections — those are handled by parseSelectionCommand
+  if (/^\d+(\s*[x×]\s*\d+)?$/.test(trimmed)) return null;
+
+  try {
+    const isOpenRouter = /openrouter\.ai/i.test(OPENAI_BASE_URL);
+    const sessionHint = sessionContext?.mode ? `\n\nContexto de sesión: el usuario está en modo "${sessionContext.mode}" (estaba seleccionando opciones del catálogo).` : '';
+    const userPrompt = `${trimmed}${sessionHint}`;
+
+    const payload = {
+      model: LLM_INTENT_MODEL,
+      messages: [
+        { role: 'system', content: LLM_INTENT_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0,
+      max_tokens: 200,
+      response_format: { type: 'json_object' }
+    };
+
+    const response = await axios.post(
+      `${OPENAI_BASE_URL.replace(/\/$/, '')}/chat/completions`,
+      payload,
+      {
+        timeout: LLM_INTENT_TIMEOUT_MS,
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+          ...(isOpenRouter ? {
+            'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://gentefarma.app',
+            'X-Title': process.env.OPENROUTER_APP_NAME || 'Gentefarma Intent Router'
+          } : {})
+        }
+      }
+    );
+
+    const raw = String(response?.data?.choices?.[0]?.message?.content || '').trim();
+
+    // Strip markdown code fences if present (some models wrap JSON in ```json ... ```)
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+
+    // Parse JSON response
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (parseErr) {
+      // Try to extract JSON from the response if it contains extra text
+      const jsonMatch = cleaned.match(/\{[^{}]*"intent"[^{}]*\}/);
+      if (jsonMatch) {
+        try { parsed = JSON.parse(jsonMatch[0]); } catch (_) { return null; }
+      } else {
+        console.log('🧠 [LLM-INTENT] JSON parse failed, raw:', raw.slice(0, 200));
+        return null;
+      }
+    }
+
+    // Validate required fields
+    if (!parsed.intent || typeof parsed.confidence !== 'number') {
+      console.log('🧠 [LLM-INTENT] Invalid response structure:', JSON.stringify(parsed).slice(0, 200));
+      return null;
+    }
+
+    // Validate intent is one of the allowed values
+    const VALID_INTENTS = new Set([
+      'medicine_search', 'location', 'hours', 'payment', 'delivery',
+      'how_to_order', 'app', 'greeting', 'thanks', 'order_sent',
+      'human', 'summary', 'selection', 'confirmation', 'info', 'unknown'
+    ]);
+    if (!VALID_INTENTS.has(parsed.intent)) {
+      console.log('🧠 [LLM-INTENT] Unknown intent:', parsed.intent);
+      return null;
+    }
+
+    // Validate medicines array
+    const medicines = Array.isArray(parsed.medicines)
+      ? parsed.medicines.filter(m => typeof m === 'string' && m.trim().length >= 2)
+      : [];
+
+    const result = {
+      intent: parsed.intent,
+      medicines,
+      confidence: Math.min(1, Math.max(0, parsed.confidence)),
+      raw: cleaned
+    };
+
+    console.log('🧠 [LLM-INTENT] text="%s" => intent=%s medicines=%s confidence=%.2f',
+      trimmed.slice(0, 60), result.intent, JSON.stringify(result.medicines), result.confidence);
+
+    return result;
+  } catch (err) {
+    // Timeout, network error, rate limit, etc. — fall through to regex
+    const isTimeout = err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT';
+    const status = err.response?.status;
+    console.log('🧠 [LLM-INTENT] %s: %s', isTimeout ? 'TIMEOUT' : 'ERROR',
+      (err.message || String(err)).slice(0, 120));
+    if (status === 429) console.log('🧠 [LLM-INTENT] Rate limited — falling back to regex');
+    return null;
+  }
+}
+
+// Map LLM intent to routeMessage handler
+async function handleLLMIntent(llmResult, phone, text, session, context) {
+  if (!llmResult || llmResult.confidence < LLM_INTENT_CONFIDENCE_THRESHOLD) {
+    console.log('🧠 [LLM-INTENT] Low confidence (%.2f < %.2f) — using regex fallback',
+      llmResult?.confidence || 0, LLM_INTENT_CONFIDENCE_THRESHOLD);
+    return null; // signal: use regex pipeline
+  }
+
+  const { intent, medicines } = llmResult;
+  const normalized = normalizeText(text);
+  const pushName = context?.pushName || '';
+
+  switch (intent) {
+    case 'medicine_search': {
+      // LLM extracted medicines — search directly in Firebase
+      clearSelectionState(session);
+      const searchQuery = medicines.length > 0 ? medicines.join(' ') : text;
+      console.log('🧠 [LLM-INTENT] Medicine search — medicines=%s query=%s',
+        JSON.stringify(medicines), searchQuery);
+      return await searchAndBuildCatalogResponse(
+        searchQuery, session,
+        {
+          hasOcrText: Boolean(context?.hasOcrText),
+          strictConsultationMode: true,
+          preExtractedMedicines: medicines
+        },
+        { phone, pushName }
+      );
+    }
+
+    case 'location':
+      clearSelectionState(session);
+      return buildLocationMessage();
+
+    case 'hours':
+      clearSelectionState(session);
+      return buildHorarioMessage();
+
+    case 'payment':
+      clearSelectionState(session);
+      return buildPagoMessage();
+
+    case 'delivery':
+      clearSelectionState(session);
+      return buildDeliveryPriceMessage();
+
+    case 'how_to_order':
+      clearSelectionState(session);
+      return buildHowToOrderMessage();
+
+    case 'app':
+      clearSelectionState(session);
+      return buildAppMessage();
+
+    case 'greeting':
+      clearSelectionState(session);
+      return buildMenuMessage();
+
+    case 'thanks':
+      return 'Con gusto. Estoy aquí para ayudarte cuando necesites buscar otro medicamento.';
+
+    case 'order_sent':
+      return buildOrderSentMessage();
+
+    case 'human':
+      enableHumanHandoff(session);
+      return buildHumanAgentMessage();
+
+    case 'summary':
+      return buildSelectedProductsSummary(session);
+
+    case 'selection':
+      // Let the existing selection pipeline handle it (parseSelectionCommand etc.)
+      return null;
+
+    case 'confirmation':
+      return buildDefaultFallbackMessage(session);
+
+    case 'info':
+      clearSelectionState(session);
+      return buildMoreInfoMessage();
+
+    case 'unknown':
+      return null; // fall through to regex pipeline
+
+    default:
+      return null; // fall through to regex pipeline
+  }
+}
+
+// ----------------------------------------------------
 // Conversation router
 // ----------------------------------------------------
 async function routeMessage(phone, text, session, context = {}) {
@@ -1254,6 +1507,31 @@ async function routeMessage(phone, text, session, context = {}) {
       }
     }
   }
+
+  // ── LLM INTENT ROUTER ──────────────────────────────────────────────────
+  // Phase 1 of the intelligent agent: use LLM to classify intent BEFORE regex.
+  // If the LLM returns a high-confidence classification, handle it directly.
+  // Otherwise, fall through to the regex pipeline (the existing system).
+  // This runs AFTER the ULTRA-GUARD (selection handling) but BEFORE extractMedicineQuery.
+  if (LLM_INTENT_ENABLED && OPENAI_API_KEY) {
+    try {
+      const llmResult = await classifyIntentWithLLM(text, { mode: session.mode });
+      if (llmResult) {
+        const llmResponse = await handleLLMIntent(llmResult, phone, text, session, context);
+        if (llmResponse !== null) {
+          console.log('🧠 [LLM-INTENT] Handled by LLM: intent=%s confidence=%.2f',
+            llmResult.intent, llmResult.confidence);
+          return llmResponse;
+        }
+        // llmResponse === null means LLM wants to fall through (selection, unknown, etc.)
+        console.log('🧠 [LLM-INTENT] LLM returned null — falling through to regex pipeline');
+      }
+    } catch (llmErr) {
+      // Never let LLM errors crash the bot — always fallback to regex
+      console.log('🧠 [LLM-INTENT] Exception — falling through to regex:', llmErr.message?.slice(0, 100));
+    }
+  }
+
   const directMedicineQuery = extractMedicineQuery(text);
   const strictConsultationQuery = extractStrictConsultationMedicineQuery(text);
   const extractedMedicineRequests = extractMedicineRequests(text);
