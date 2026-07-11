@@ -2512,16 +2512,25 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   console.log('🧪 [CANDIDATE-MEDICINES] ocrOnly=%s preExtracted=%s requestedMedicines=%s fallbackMedicines=%s recipeLineMedicines=%s candidateMedicines=%s',
     ocrOnly, JSON.stringify(preExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(recipeLineMedicines), JSON.stringify(candidateMedicines));
 
-    if (candidateMedicines.length > 1) {
+  // ── PREFIX-SUBSET DEDUP ──────────────────────────────────────────────
+  // Remove shorter medicine names that are prefix-subsets of longer ones.
+  // e.g. if both "evigax cap" and "evigax" exist, keep only "evigax cap"
+  // (they'd return the same Firebase products, creating duplicate groups)
+  const dedupedCandidates = dedupLLMMedicines(candidateMedicines);
+  if (dedupedCandidates.length !== candidateMedicines.length) {
+    console.log('🧹 [PREFIX-DEDUP] %s → %s', JSON.stringify(candidateMedicines), JSON.stringify(dedupedCandidates));
+  }
+
+    if (dedupedCandidates.length > 1) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCatalogProducts(2000);
     const groups = [];
     const missingMedicines = [];
     const missingMedicineSet = new Set();
 
-    console.log('🧪 [MULTI-MEDICINE] candidateMedicines=%s (count=%d)', JSON.stringify(candidateMedicines), candidateMedicines.length);
+    console.log('🧪 [MULTI-MEDICINE] dedupedCandidates=%s (count=%d)', JSON.stringify(dedupedCandidates), dedupedCandidates.length);
 
-    for (const medicineQuery of candidateMedicines) {
+    for (const medicineQuery of dedupedCandidates) {
       const result = await searchMedicinesByName(medicineQuery, {
         products,
         exchangeRate,
@@ -2544,7 +2553,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     }
     console.log('🧪 [MULTI-AFTER] groups.length=%d missingMedicines=%s', groups.length, JSON.stringify(missingMedicines));
     // Per-medicine result log so we can see exactly which searches succeed/fail
-    console.log('🧪 [MULTI-LOOP-SUMMARY] totalCandidates=%d groups=%d missing=%d', candidateMedicines.length, groups.length, missingMedicines.length);
+    console.log('🧪 [MULTI-LOOP-SUMMARY] totalCandidates=%d groups=%d missing=%d', dedupedCandidates.length, groups.length, missingMedicines.length);
 
     if (groups.length > 0 || missingMedicines.length > 0) {
       const flattenedOptions = flattenCatalogResults(groups);
@@ -2555,21 +2564,21 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
       // Saving when flattenedOptions is empty (all medicines unavailable) would persist
       // combined multi-medicine OCR strings as selectable options in future sessions.
       if (flattenedOptions.length > 0) {
-        rememberCatalogSnapshot(session, flattenedOptions, candidateMedicines.join(' • '), buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines));
+        rememberCatalogSnapshot(session, flattenedOptions, dedupedCandidates.join(' • '), buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines));
       }
       touchSession(session);
-      const logProducts1 = candidateMedicines.length > 0 ? candidateMedicines : flattenedOptions.map(o => o.productName || o.name || singleQuery);
+      const logProducts1 = dedupedCandidates.length > 0 ? dedupedCandidates : flattenedOptions.map(o => o.productName || o.name || singleQuery);
       appendConsultationToSheet({ products: logProducts1, exists: 1, phone: userInfo.phone, userName: userInfo.pushName });
       return buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines);
     }
 
     session.mode = 'awaiting_product_name';
-    appendConsultationToSheet({ products: candidateMedicines, exists: 0, phone: userInfo.phone, userName: userInfo.pushName });
+    appendConsultationToSheet({ products: dedupedCandidates, exists: 0, phone: userInfo.phone, userName: userInfo.pushName });
     return buildNoMatchListMessage();
   }
 
-  const singleQuery = candidateMedicines[0] || extractMedicineQuery(text) || text.trim();
-  console.log(`🧪 [SINGLE-QUERY] candidateMedicines[0]='${candidateMedicines[0]}' extractMedicineQuery='${extractMedicineQuery(text)}' singleQuery='${singleQuery}'`);
+  const singleQuery = dedupedCandidates[0] || extractMedicineQuery(text) || text.trim();
+  console.log(`🧪 [SINGLE-QUERY] dedupedCandidates[0]='${dedupedCandidates[0]}' extractMedicineQuery='${extractMedicineQuery(text)}' singleQuery='${singleQuery}'`);
   // Extract dosage signatures from ORIGINAL text (before extractMedicineQuery strips them)
   const originalDosagePattern = /\b(\d+(?:[.,]\d+)?)\s*(mg|mcg|g|gr|ml|cc|ui|iu)\b/gi;
   const originalNormalized = (text || '').toLowerCase();
