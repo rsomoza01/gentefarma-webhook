@@ -1509,20 +1509,21 @@ async function handleLLMIntent(llmResult, phone, text, session, context) {
   const pushName = context?.pushName || '';
 
   switch (intent) {
-    case 'medicine_search': {
+  case 'medicine_search': {
       // LLM extracted medicines — search directly in Firebase
       // Dedup first: remove dosage forms, prefix-subsets, and exact dupes
-      const dedupedMedicines = dedupLLMMedicines(medicines);
+      console.log('🧠 [LLM-MEDICINES] raw medicines from LLM: %s', JSON.stringify(medicines));
+      const preExtractedMedicines = dedupLLMMedicines(medicines || []);
       clearSelectionState(session);
-      const searchQuery = dedupedMedicines.length > 0 ? dedupedMedicines.join(' ') : text;
+      const searchQuery = preExtractedMedicines.length > 0 ? preExtractedMedicines.join(' ') : text;
       console.log('🧠 [LLM-INTENT] Medicine search — medicines=%s deduped=%s query=%s',
-        JSON.stringify(medicines), JSON.stringify(dedupedMedicines), searchQuery);
+        JSON.stringify(medicines), JSON.stringify(preExtractedMedicines), searchQuery);
       return await searchAndBuildCatalogResponse(
         searchQuery, session,
         {
           hasOcrText: Boolean(context?.hasOcrText),
           strictConsultationMode: true,
-          preExtractedMedicines: dedupedMedicines
+          preExtractedMedicines
         },
         { phone, pushName }
       );
