@@ -1469,11 +1469,18 @@ function dedupLLMMedicines(medicines) {
       const rootExisting = roots.get(existing.lower) || '';
       // Skip if either root is empty (all-dosage string)
       if (!rootItem || !rootExisting) continue;
-      // Only dedup if roots are different AND rootItem ⊆ rootExisting
-      if (rootItem !== rootExisting && rootExisting.startsWith(rootItem + ' ')) {
+      // Two dedup cases:
+      // 1. Same root (e.g. "evigax" root="evigax" vs "evigax cap" root="evigax"):
+      //    remove the shorter since it's the same medicine without dosage form.
+      // 2. rootItem is a proper word-boundary prefix of rootExisting (e.g.
+      //    "bumetin" root="bumetin" vs "bumetin retard" root="bumetin retard"):
+      //    remove the shorter since the longer is a more specific form of it.
+      const sameRoot = (rootItem === rootExisting);
+      const isPrefix = rootExisting.startsWith(rootItem + ' ');
+      if (sameRoot || isPrefix) {
         isSubset = true;
-        console.log('🧠 [LLM-DEDUP] Root-subset dedup: "%s" (root="%s") is subset of "%s" (root="%s") — removing',
-          item.original, rootItem, existing.original, rootExisting);
+        console.log('🧠 [LLM-DEDUP] %s (root="%s") removed as subset of "%s" (root="%s", sameRoot=%s)',
+          item.original, rootItem, existing.original, rootExisting, sameRoot);
         break;
       }
     }
@@ -3791,14 +3798,25 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
       continue;
     }
     if (normalizedGroups.has(key)) {
-      // Merge matches into existing group, deduplicating by title
+      // Merge matches into existing group, deduplicating by doc.id (Firebase product ID)
+      // and by normalized title. This handles cases where different query strings
+      // (e.g. "EVIGAX" vs "EVIGAX CAP") map to the same normalized medicine name
+      // but return slightly different product sets from Firebase.
       const existing = normalizedGroups.get(key);
+      const existingDocIds = new Set(existing.matches.map((m) => m.doc?.id).filter(Boolean));
       const existingTitles = new Set(existing.matches.map((m) => normalizeText(m.title || '')));
       for (const match of result.matches || []) {
+        const docId = match.doc?.id;
         const matchTitle = normalizeText(match.title || '');
+        // Skip if already seen by doc.id (same Firebase product from different searches)
+        if (docId && existingDocIds.has(docId)) {
+          console.log('🧹 [MULTI-DEDUP] Skipped duplicate doc.id="%s" title="%s" key="%s"', docId, match.title || '', key);
+          continue;
+        }
         if (!existingTitles.has(matchTitle)) {
           existing.matches.push(match);
           existingTitles.add(matchTitle);
+          if (docId) existingDocIds.add(docId);
         }
       }
     } else {
