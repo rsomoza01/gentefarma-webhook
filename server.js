@@ -3788,9 +3788,24 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
     // If this group's normalized name is a substring of the query (meaning the query
     // is more specific), don't create a separate group — it would be a subset duplicate.
     // E.g. query="DORIXINA FLEX", normalized="DORIXINA" → skip; query="DORIXINA", same → keep.
+    // HOWEVER: if the remainder after the normalized title is PURE DOSAGE (e.g. "40 MG",
+    // "300 MG"), then this is the SAME medicine with dosage info, NOT a different product —
+    // do NOT skip. Only skip when remainder is a real modifier like "FLEX", "FORTE", "DUO".
     const rawQueryUpper = String(result.query || '').toUpperCase();
-    const isSubsetOfQuery = rawQueryUpper.length > normalizedTitle.length &&
-      rawQueryUpper.includes(normalizedTitle);
+    const isSubsetOfQuery = (() => {
+      if (rawQueryUpper.length <= normalizedTitle.length || !rawQueryUpper.includes(normalizedTitle)) {
+        return false;
+      }
+      // Extract what comes after the normalized title in the query
+      const remainder = rawQueryUpper.startsWith(normalizedTitle + ' ')
+        ? rawQueryUpper.slice(normalizedTitle.length + 1)
+        : '';
+      // Pure dosage remainder: "40 MG", "300 MG", "10,5 ML", "DE 40 MG" → same medicine, don't skip
+      if (/^\d+(?:[.,]\d+)?\s*(MG|MCG|G|GR|ML|CC|UI|IU)\s*$/i.test(remainder)) return false;
+      if (/^DE\s+\d+(?:[.,]\d+)?\s*(MG|MCG|G|GR|ML|CC|UI|IU)\s*$/i.test(remainder)) return false;
+      // Otherwise it's a real modifier (FLEX, FORTE, DUO…) → skip
+      return true;
+    })();
     if (isSubsetOfQuery) {
       // Merge matches directly into the superstring group if it exists
       const superstringKey = normalizedGroups.has(key) ? key : null;
