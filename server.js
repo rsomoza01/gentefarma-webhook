@@ -5089,9 +5089,11 @@ function extractRecipeMedicineLines(value) {
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
   if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
     // Single-line multi-token input: split into individual tokens
-    // Filter out dosage forms (CAP, SUSP, etc.) and known non-medicine tokens
+    // Filter out dosage forms (CAP, SUSP, etc.), salt forms (CLORHIDRATO, SULFATO, etc.),
+    // and pure numeric tokens — they are not standalone medicines
     const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
-    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
+    const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
+    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !SALT_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
     console.log('🧪 [EXTRACT-RECIPE] raw value=%s → SPLIT into tokens=%s', raw.slice(0, 200), JSON.stringify(splitTokens));
     return splitTokens;
   }
