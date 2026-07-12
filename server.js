@@ -3202,6 +3202,25 @@ async function searchMedicinesByName(userQuery, options = {}) {
     console.log(`[CONSULTATION-GATE] SKIPPED: consultationMode=${consultationMode} primaryTokens.length=${primaryTokens.length}`);
   }
 
+  // Salt-only query guard for OCR (consultation mode):
+  // When the user sends an OCR image like "FEXOFENADINA CLORHIDRATO 120 MG", the LLM may
+  // extract "CLORHIDRATO" as a separate query. Searching for "CLORHIDRATO" alone returns
+  // dozens of unrelated products (METFORMINA CLORHIDRATO, BUPIVACAINA CLORHIDRATO, etc.)
+  // which is clearly wrong. Salt forms (clorhidrato, sulfato, etc.) are NOT medicines
+  // by themselves — they are the active ingredient's salt. In OCR mode, we search by the
+  // commercial name, not the active ingredient. So "CLORHIDRATO" alone → skip.
+  if (consultationMode && primaryTokens.length > 0) {
+    const saltOnlyRe = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
+    const dosageTokenRe = /^(?:\d+(?:[.,]\d+)?\s*(?:m\s*g|mcg|g|gr|m\s*l|mL|ui|iu|ml)|[xyz]\s*\d+|\d+%|m\s*g$|m\s*l$|mcg$|g$|gr$|ui$|iu$|\d+(?:[.,]\d+)?\s*(?:tab|cap|comp|sobres?|amp|vial|gotas?|ml|gr|mg|g)$)$/i;
+    const rawQueryUpper = query.toUpperCase();
+    const tokensAfterDosage = queryTokens.filter(t => !dosageTokenRe.test(t));
+    const isPureSaltForm = tokensAfterDosage.length === 1 && saltOnlyRe.test(tokensAfterDosage[0]);
+    if (isPureSaltForm) {
+      console.log(`🧪 [SALT-FORM-GUARD] query="${query}" is pure salt form (no medicine name) — returning empty in OCR mode`);
+      return { query, queryTokens, exchangeRate, matches: [] };
+    }
+  }
+
   let candidateMatches = [];
 
   if (isVitaminQuery) {
