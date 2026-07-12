@@ -5086,13 +5086,13 @@ function extractRecipeMedicineLines(value) {
   // }
 
   // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
+  const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
+  const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
   if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
     // Single-line multi-token input: split into individual tokens
     // Filter out dosage forms (CAP, SUSP, etc.), salt forms (CLORHIDRATO, SULFATO, etc.),
     // and pure numeric tokens — they are not standalone medicines
-    const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
-    const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
     const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !SALT_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
     console.log('🧪 [EXTRACT-RECIPE] raw value=%s → SPLIT into tokens=%s', raw.slice(0, 200), JSON.stringify(splitTokens));
     return splitTokens;
@@ -5143,8 +5143,14 @@ function extractRecipeMedicineLines(value) {
     }
 
     if (dosages.length === 0) {
-      // No dosage found — line might be "EVIGAX CAP" (form only) — keep as-is
-      refinedLines.push(lineFixed);
+      // No dosage found — line might be "EVIGAX CAP" (form only) — keep as-is.
+      // BUT: skip lines that are purely a salt form (e.g. "CLORHIDRATO") — they are
+      // not standalone medicines. Also skip lines where every token is a salt form.
+      const lineWords = lineFixed.split(/\s+/);
+      const allSaltForm = lineWords.length > 0 && lineWords.every(w => SALT_FORMS_RE.test(w));
+      if (!allSaltForm) {
+        refinedLines.push(lineFixed);
+      }
     } else if (dosages.length === 1) {
       // Single dosage — keep the whole line (it's a single medicine)
       refinedLines.push(lineFixed);
