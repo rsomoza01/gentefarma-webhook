@@ -3408,6 +3408,18 @@ async function searchMedicinesByName(userQuery, options = {}) {
     } else {
       console.log(`[DEGRADED-DAFLON] NOT FOUND in scoredProducts (checked tokenSet for 'daflon')`);
     }
+    // Diagnostic: find FEXORAT and FEXOFENADINA entries in scoredProducts
+    const fexoratIdx = scoredProducts.findIndex((item) => item.tokenSet && (item.tokenSet.has('fexorat') || (item.productTitleFull && /fexorat/i.test(item.productTitleFull))));
+    const fexofenadinaStandaloneIdx = scoredProducts.findIndex((item) => item.tokenSet && (item.tokenSet.has('fexofenadina') && !item.tokenSet.has('fexorat') && !item.tokenSet.has('rinolast') && !item.tokenSet.has('suspension') && (item.productTitleFull && /^(?!.*\().*fexofenadina\s*180\s*mg/i.test(item.productTitleFull))));
+    console.log(`[DIAG-FEXORAT] fexoratIdx=${fexoratIdx} fexofenadinaStandaloneIdx=${fexofenadinaStandaloneIdx}`);
+    if (fexoratIdx >= 0) {
+      const fexoratItem = scoredProducts[fexoratIdx];
+      console.log(`[DIAG-FEXORAT] rank=${fexoratIdx} title='${fexoratItem.productTitleFull}' score=${fexoratItem.score ?? 'N/A'} refSim=${fexoratItem.referenceSimilarity ?? 'N/A'} tokenSet=${JSON.stringify([...fexoratItem.tokenSet].slice(0, 10))}`);
+    }
+    if (fexofenadinaStandaloneIdx >= 0) {
+      const fsItem = scoredProducts[fexofenadinaStandaloneIdx];
+      console.log(`[DIAG-FEXORAT] fexofenadinaStandalone rank=${fexofenadinaStandaloneIdx} title='${fsItem.productTitleFull}' score=${fsItem.score ?? 'N/A'} refSim=${fsItem.referenceSimilarity ?? 'N/A'} tokenSet=${JSON.stringify([...fsItem.tokenSet].slice(0, 10))}`);
+    }
     const degradedMatches = scoredProducts.filter((item) => {
       const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
       if (!candidateCore) return false;
