@@ -3469,14 +3469,16 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
     }
 
-  if (!candidateMatches.length) {
-    // ── Firebase direct fallback: candidateMatches empty after all local search paths.
-    // Query Firebase directly using arrayContains on productTitleArray to catch products
-    // beyond the 2000-document catalog limit or not indexed in scoredProducts.
-    const qToken = queryTokens[0] || '';
-    const qIsSingleToken = !isVitaminQuery && !hasQueryDosage && queryTokens.length === 1;
-    if (qIsSingleToken && db) {
-      console.log(`[FIREBASE-DIRECT] candidateMatches empty, querying Firebase for token='${qToken}'...`);
+  // ── Firebase direct fallback: cuando los candidatos del catálogo local (primeros 2000 docs)
+  // son escasos (< 3) o ausentes, consultar Firebase directamente para capturar productos
+  // más allá del documento 2000 usando arrayContains sobre productTitleArray.
+  if (candidateMatches.length < 3 && db) {
+    // Buscar el primer token que NO sea sal farmacéutica ni dosage para la query directa.
+    // En "fexofenadina clorhidrato 120 mg", el token útil es "fexofenadina".
+    const saltFormTokens = new Set(['clorhidrato','cloruro','sulfato','fosfato','acetato','tartrato','malato','bromuro','ioduro','nitrato','besilato','succinato','fumarato','malonato','tiocianato','glucosamina','lisina','ornitina']);
+    const qToken = (queryTokens.find((t) => !saltFormTokens.has(t) && !/^\d+$/.test(t) && t.length >= 4) || queryTokens[0] || '');
+    if (qToken.length >= 4) {
+      console.log(`[FIREBASE-DIRECT] candidateMatches=${candidateMatches.length} (< 3), querying Firebase arrayContains for token='${qToken}'...`);
       try {
         const [pmSnap, ppSnap] = await Promise.all([
           db.collection('products-market').where('productTitleArray', 'array-contains', qToken).limit(20).get(),
@@ -3502,7 +3504,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
             })
             .sort((a, b) => b.score - a.score);
           console.log(`[FIREBASE-DIRECT] scored ${directScored.length} products, top title='${directScored[0]?.productTitleFull}' score=${directScored[0]?.score}`);
-          candidateMatches = directScored;
+          // Append new candidates, avoiding duplicates with existing ones
+          const existingIds = new Set(candidateMatches.map((c) => c.productTitleFull));
+          const newCandidates = directScored.filter((c) => !existingIds.has(c.productTitleFull));
+          candidateMatches = [...candidateMatches, ...newCandidates];
         }
       } catch (e) {
         console.error(`[FIREBASE-DIRECT] error: ${e.message}`);
