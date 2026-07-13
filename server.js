@@ -3493,9 +3493,9 @@ async function searchMedicinesByName(userQuery, options = {}) {
               const m = scoreSignal(s);
               return {
                 ...m,
-                productTitleFull: doc.productTitleFull || doc.title || '',
+                productTitleFull: doc.productTitleFull || doc.ProductTitle || doc.title || '',
                 productText: doc.productText || '',
-                title: doc.title || '',
+                title: doc.title || doc.ProductTitle || doc.productTitleFull || '',
                 priceUsd: doc.priceUsd ?? 0,
                 priceBs: doc.priceBs ?? 0,
                 feeRate: doc.feeRate ?? 0,
