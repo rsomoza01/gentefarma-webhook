@@ -3494,11 +3494,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
               const basePriceUsd = getPrice(doc);
               const basePriceBs = getPriceBs(doc, exchangeRate);
               const pricing = applySalesPricing(basePriceUsd, exchangeRate);
+              const shortLabel = buildShortProductLabel(doc);
               return {
                 ...m,
-                productTitleFull: doc.productTitleFull || doc.ProductTitle || doc.title || '',
+                productTitleFull: normalizeText(doc?.ProductTitle || shortLabel),
                 productText: doc.productText || '',
-                title: doc.title || doc.ProductTitle || doc.productTitleFull || '',
+                title: shortLabel,
+                doc,
                 basePriceUsd,
                 basePriceBs,
                 priceUsd: pricing.displayUsd,
@@ -4207,26 +4209,29 @@ function flattenCatalogResults(results) {
   // guaranteed same product even if laboratory/sizing in title differs).
   const seenTitles = new Set();
   const seenProductIds = new Set();
+  const seenProductTitleFull = new Set();
   for (const group of Array.isArray(results) ? results : []) {
     const groupQuery = String(group?.query || '').trim();
     const groupLabel = String(group?.groupTitle || group?.title || groupQuery || 'Medicamento').trim();
     for (const item of group?.matches || []) {
       const normTitle = normalizeText(item.title || '');
+      const normPTF = normalizeText(item.productTitleFull || '');
       const productId = item.doc?.id;
       // Skip if we've already seen this product (by doc.id Firebase document ID,
       // or by exact normalized title — handles same product returned via
-      // different search queries like "evigax cap" vs "evigax")
-      const titleKey = normTitle;
+      // different search queries like "evigax cap" vs "evigax").
+      // Also dedup by productTitleFull as fallback when title is empty.
+      const titleKey = normTitle || normPTF;
       const idKey = String(productId || '');
-      if (seenTitles.has(titleKey)) {
-        console.log('🧹 [FLATTEN-DEDUP] Skipped duplicate title="%s" id="%s"', item.title || '', idKey);
+      if (titleKey && seenTitles.has(titleKey)) {
+        console.log('🧹 [FLATTEN-DEDUP] Skipped duplicate title="%s" ptf="%s" id="%s"', item.title || '', item.productTitleFull || '', idKey);
         continue;
       }
       if (idKey && seenProductIds.has(idKey)) {
         console.log('🧹 [FLATTEN-DEDUP] Skipped duplicate productId="%s" title="%s"', idKey, item.title || '');
         continue;
       }
-      seenTitles.add(titleKey);
+      if (titleKey) seenTitles.add(titleKey);
       if (idKey) seenProductIds.add(idKey);
       flattened.push({
         groupQuery,
