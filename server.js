@@ -3181,6 +3181,14 @@ async function searchMedicinesByName(userQuery, options = {}) {
         || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
         || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
       ) return true;
+      // 1a) Substring-in-token for brand-name tokens: when "FEXOFENADINA" query token is embedded
+      // inside a brand token like "FEXORAT", the exact token check fails. Catch it here.
+      // Only for q.length>=4 to avoid short-token false positives.
+      if (q.length >= 4) {
+        for (const t of item.tokenSet) {
+          if (t.length >= 4 && t.includes(q)) return true;
+        }
+      }
       // 2) Fallback fuzzy: algún token del producto se parece ≥92% al query
       for (const t of item.tokenSet) {
         if (tokenSimilarity(q, t) >= 0.92) return true;
