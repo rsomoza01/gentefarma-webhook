@@ -2648,11 +2648,40 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
     if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3"
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
-    // ── REJECT concatenated multi-medicine OCR strings (7+ tokens with spaces) ──
+    // ── REJECT concatenated multi-medicine OCR strings (4+ tokens with spaces) ──
     // These are never valid single-medicine search queries — they create duplicate
-    // search groups like "ESOZ LEPRIT BUMETIN RETADAR EVIGAX CAP MODERAN SUSP"
+    // search groups like "SIMETICONA DOBET GOTAS HIDROTEN"
     const itemTokens = normalizedItem.split(/\s+/).filter(Boolean);
     if (itemTokens.length >= 7) return false;
+    // For 4-6 token strings: detect if it is a corrupted OCR merge of 2+ distinct
+    // medicines that are ALSO present as standalone candidates in the same list.
+    // Count how many distinct standalone medicine names appear inside this string.
+    // If 2+ matches → reject it as a concatenated fragment.
+    if (itemTokens.length >= 4) {
+      const otherCandidates = candidateMedicines.filter(c => {
+        const cn = normalizeText(c);
+        return cn.length >= 3 && cn !== normalizedItem && !DOSAGE_FORMS.has(cn);
+      });
+      let containedCount = 0;
+      for (const other of otherCandidates) {
+        const otherNorm = normalizeText(other);
+        // Strip dosage suffixes to get just the medicine name for comparison
+        const otherNormRaw = normalizeText(other);
+        const otherNormBase = otherNormRaw
+          .replace(/\s*\d+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\b.*$/i, '')
+          .replace(/\s*de\s+\d+\s*(?:mg|mcg|g|gr|ml|cc|ui|iu)\b.*$/i, '')
+          .trim();
+        // Check if this medicine (without dosage) appears in itemTokens
+        if (itemTokens.includes(otherNormBase) || itemTokens.some(t => otherNormBase.startsWith(t + ' ') || t.startsWith(otherNormBase + ' '))) {
+          containedCount++;
+          if (containedCount >= 2) break;
+        }
+      }
+      if (containedCount >= 2) {
+        console.log('🧹 [CONCAT-REJECT] Rejected concatenated fragment: "%s" (matched %d other medicines)', item, containedCount);
+        return false;
+      }
+    }
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
     if (/\b(paciente)\b/i.test(normalizedItem)) return false;
     if (/\b(nombre)\b/i.test(normalizedItem)) return false;
