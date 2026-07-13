@@ -2646,6 +2646,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (/^(?:seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|mostrar|mostra|muestra)$/i.test(normalizedItem)) return false;
     if (/^(?:listo|resumen)$/i.test(normalizedItem)) return false;
     if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
+    if (/^(?:por|favor)$/i.test(normalizedItem)) return false;
     if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3"
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     // ── REJECT concatenated multi-medicine OCR strings (4+ tokens with spaces) ──
