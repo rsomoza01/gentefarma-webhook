@@ -145,11 +145,24 @@ async function appendConsultationToSheet({ products, exists, phone, userName }) 
 }
 
 // ----------------------------------------------------
+// City coordinates (hardcoded for Venezuela main cities)
+// Used for geolocation-based pharmacy filtering
+// ----------------------------------------------------
+const CITY_COORDS = {
+  'ciudad bolivar': { lat: 8.1292, lng: -63.5409 },
+  'caracas':        { lat: 10.4806, lng: -66.9036 },
+  'caja seca':      { lat: 10.4628, lng: -68.7613 },
+};
+
+const DEFAULT_RADIO_KM = 5; // km radius for pharmacy search
+
+// ----------------------------------------------------
 // Session memory
 // ----------------------------------------------------
 const sessions = new Map();
 const processedInboundMessages = new Map();
 const globalCatalogByPhone = new Map(); // phone -> { options, timestamp } — survives session reloads
+let providersCache = []; // cached providers with location for geolocation filtering
 let botEnabled = true;
 const ADMIN_NUMBERS = ['584128840350', '584128009482'];
 const INBOUND_MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -255,7 +268,10 @@ function getSession(phone) {
       pendingSelectionResults: null,
       catalogHistory: [],
       selectedProducts: [],
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      userCity: null,     // ciudad del usuario ej: "ciudad bolivar"
+      userCoords: null,   // { lat, lng } del usuario
+      pendingCityRetry: null, // { text, options, context } — para reintentar tras detectar ciudad
     });
   }
   return sessions.get(phone);
@@ -1626,6 +1642,40 @@ async function routeMessage(phone, text, session, context = {}) {
     }
   }
 
+  // ── CITY GATE ─────────────────────────────────────────────────────────
+  // If user has not set their city yet, intercept medicine searches and ask for it.
+  // Store pending query so we retry it after city is detected.
+  if (!session.userCity) {
+    // Check if user is responding to a city question (pendingCityRetry is set)
+    if (session.pendingCityRetry) {
+      const cityInfo = detectCityFromText(text);
+      if (cityInfo) {
+        // City detected — save to session and retry the pending query
+        session.userCity = cityInfo.city;
+        session.userCoords = cityInfo.coords;
+        const pending = session.pendingCityRetry;
+        session.pendingCityRetry = null;
+        touchSession(session);
+        console.log(`[CITY] Detected='${cityInfo.city}' coords=${JSON.stringify(cityInfo.coords)} — retrying pending query`);
+        // Retry the pending medicine query (recursive call with same phone/session)
+        return await routeMessage(phone, pending.text, session, pending.context);
+      } else {
+        // No city detected, ask again
+        return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas* o *Caja Seca*.';
+      }
+    }
+
+    // Not a city response — check if it looks like a medicine search
+    const looksLikeMedicine = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
+    if (looksLikeMedicine) {
+      // Ask user to set their city first
+      session.pendingCityRetry = { text, context };
+      touchSession(session);
+      return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas* o *Caja Seca*.';
+    }
+    // Non-medicine queries (small talk, etc.) pass through without city gate
+  }
+
   // ── LLM INTENT ROUTER ──────────────────────────────────────────────────
   // Phase 1 of the intelligent agent: use LLM to classify intent BEFORE regex.
   // If the LLM returns a high-confidence classification, handle it directly.
@@ -2299,11 +2349,22 @@ function buildSearchDiagnosticMessage(result, query) {
   ].filter(Boolean);
   lines.push('');
 
+  if (result.geoNoResults) {
+    lines.push('⚠️ No hay farmacias a menos de 5 km de tu zona.');
+    lines.push('Escribe *LISTO* o busca otro medicamento.');
+    return lines.join('\n').trim();
+  }
+
   (result.matches || []).forEach((item, index) => {
     const title = shortenText(item.title || 'Medicamento', 52);
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
     lines.push(`💊 *${index + 1}. ${title}*`);
+    // Show pharmacy name and distance if geolocation data available
+    if (item.providerName) {
+      const distText = item.distancia != null ? ` — a ${item.distancia} km` : '';
+      lines.push(`   🏥 ${item.providerName}${distText}`);
+    }
     lines.push(`   ${usdText}  |  ${bsText}`);
     lines.push('');
   });
@@ -2432,6 +2493,70 @@ function shouldSendInstagramReel(value) {
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
+// ── Geolocation helpers ────────────────────────────────────────────────
+
+async function fetchProviders() {
+  if (providersCache.length > 0) return providersCache;
+  if (!db) return [];
+  try {
+    const snapshot = await db.collection('providers').get();
+    providersCache = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        providerId: data.providerId || doc.id,
+        name: data.name || 'Farmacia sin nombre',
+        ciudad: data.ciudad || '',
+        location: data.location, // Firestore GeoPoint → { latitude, longitude }
+        address: data.address || '',
+        phone: data.phone || '',
+        hours: data.hours || '',
+      };
+    });
+    console.log(`[PROVIDERS] Loaded ${providersCache.length} providers into cache`);
+    return providersCache;
+  } catch (err) {
+    console.error('❌ [PROVIDERS] Error fetching providers:', err.message);
+    return [];
+  }
+}
+
+function haversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) *
+    Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function detectCityFromText(text) {
+  const normalized = normalizeText(text);
+  for (const [cityName, coords] of Object.entries(CITY_COORDS)) {
+    if (normalized.includes(cityName)) {
+      return { city: cityName, coords };
+    }
+  }
+  return null;
+}
+
+function getProviderById(providerId, providersList) {
+  return providersList.find(p => p.providerId === String(providerId)) || null;
+}
+
+function enrichMatchWithProvider(item, userCoords, providersList) {
+  if (!userCoords || !item?.doc?.ProviderId) return item;
+  const provider = getProviderById(item.doc.ProviderId, providersList);
+  if (!provider?.location) return item;
+  const { latitude, longitude } = provider.location;
+  if (latitude == null || longitude == null) return item;
+  const distancia = haversineDistance(userCoords.lat, userCoords.lng, latitude, longitude);
+  return { ...item, provider, distancia };
+}
+
 async function searchAndBuildCatalogResponse(text, session, options = {}, userInfo = {}) {
   // Log only when text looks TRUNCATED (possible chunking bug)
   // DISABLED after root cause found in extractStrictConsultationMedicineQuery
@@ -2569,7 +2694,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
         strictListMode: !ocrOnly,
         recipeMode,
         strictConsultationMode: consultationMode,
-        forceExactConsultationToken: consultationMode && !recipeMode
+        forceExactConsultationToken: consultationMode && !recipeMode,
+        userCoords: session.userCoords,
       });
       console.log('🧪 [MEDICINE-RESULT] query="%s" matches=%d groupTitle="%s"',
         medicineQuery, result?.matches?.length || 0, result?.groupTitle || '');
@@ -2641,7 +2767,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     recipeMode,
     strictConsultationMode: consultationMode,
     forceExactConsultationToken: consultationMode && !recipeMode,
-    queryDosageSignatures: queryDosageSignatures.length > 0 ? queryDosageSignatures : null
+    queryDosageSignatures: queryDosageSignatures.length > 0 ? queryDosageSignatures : null,
+    userCoords: session.userCoords,
   });
 
   if (!result || !result.matches.length) {
@@ -2671,6 +2798,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
   console.log(`🧪 [SEARCH-KICK] userQuery='${userQuery}' strictConsultationMode=${options.strictConsultationMode} preExtractedMedicines=${JSON.stringify(options.preExtractedMedicines)}`);
   if (!db) return null;
 
+const userCoords = options.userCoords || null;
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
 
@@ -3732,14 +3860,58 @@ async function searchMedicinesByName(userQuery, options = {}) {
     // If filteredByModifier is empty, keep original (don't suppress all results)
   }
 
-  const top3titles = finalMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
-  console.log(`🧪 [SMN-RETURN] query='${query}' finalMatches.length=${finalMatches.length} topMatches.length=${topMatches.length} top3=[${top3titles}] consultationMode=${consultationMode}`);
+  // ── GEOLOCATION: Load providers and filter by distance ─────────────────
+  const radioKm = options.radioKm ?? DEFAULT_RADIO_KM;
+  let providersList = [];
+  if (userCoords) {
+    providersList = await fetchProviders();
+    console.log(`[GEO] userCoords=${JSON.stringify(userCoords)} providers=${providersList.length} radio=${radioKm}km`);
+  }
+
+  // ── ENRICH + FILTER + SORT matches ──────────────────────────────────────
+  let geoMatches = finalMatches;
+  if (userCoords && providersList.length > 0) {
+    // Enrich each match with provider info and distance
+    geoMatches = finalMatches
+      .map((item) => enrichMatchWithProvider(item, userCoords, providersList))
+      .filter((item) => {
+        if (item.distancia == null) return true; // keep if no provider found
+        return item.distancia <= radioKm;
+      })
+      .sort((a, b) => {
+        // Primary sort: distance (asc). Items without distance go last.
+        const distA = a.distancia ?? Infinity;
+        const distB = b.distancia ?? Infinity;
+        if (distA !== distB) return distA - distB;
+        // Secondary sort: score (desc) for same distance
+        return (b.score || 0) - (a.score || 0);
+      });
+
+    const filteredOut = finalMatches.length - geoMatches.length;
+    if (filteredOut > 0) {
+      console.log(`[GEO-FILTER] query='${query}' filteredOut=${filteredOut} within=${radioKm}km`);
+    }
+  }
+
+  if (geoMatches.length === 0) {
+    return {
+      query,
+      queryTokens,
+      exchangeRate,
+      groupTitle: query,
+      matches: [],
+      geoNoResults: userCoords ? true : false
+    };
+  }
+
+  const top3titles = geoMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
+  console.log(`🧪 [SMN-RETURN] query='${query}' geoMatches.length=${geoMatches.length} topMatches.length=${topMatches.length} top3=[${top3titles}] consultationMode=${consultationMode}`);
   return {
     query,
     queryTokens,
     exchangeRate,
     groupTitle: query,
-    matches: finalMatches.map((item) => ({
+    matches: geoMatches.map((item) => ({
       title: item.title,
       basePriceUsd: item.priceUsd,
       basePriceBs: item.priceBs,
@@ -3752,7 +3924,11 @@ async function searchMedicinesByName(userQuery, options = {}) {
       phraseHit: item.phraseHit,
       tokenCoverage: item.tokenCoverage,
       exactHit: item.exactHit,
-      focusTitleHit: item.vitaminHit
+      focusTitleHit: item.vitaminHit,
+      // Geolocation data
+      providerName: item.provider?.name || null,
+      providerCiudad: item.provider?.ciudad || null,
+      distancia: item.distancia != null ? Math.round(item.distancia * 10) / 10 : null,
     }))
   };
 }
@@ -3774,6 +3950,10 @@ function buildCatalogResponse(result) {
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
     lines.push(`💊 *${index + 1}. ${title}*`);
+    if (item.providerName) {
+      const distText = item.distancia != null ? ` — a ${item.distancia} km` : '';
+      lines.push(`   🏥 ${item.providerName}${distText}`);
+    }
     lines.push(`   ${usdText}  |  ${bsText}`);
     lines.push('');
   });
@@ -3909,6 +4089,10 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
       const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
       const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
       lines.push(`💊 ${optionNumber}. ${name}`);
+      if (item.providerName) {
+        const distText = item.distancia != null ? ` — a ${item.distancia} km` : '';
+        lines.push(`   🏥 ${item.providerName}${distText}`);
+      }
       lines.push(`   ${usdText}  |  ${bsText}`);
       optionNumber += 1;
     });
