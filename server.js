@@ -4003,10 +4003,17 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
 
   let optionNumber = 1;
   // Normalize groupTitles to avoid duplicates like "SIMETICONA" and "SIMETICONA DE 125 MG"
-  // Group results by normalized medicine name, merging groups that differ only in dosage
+  // Group results by normalized medicine name, merging groups that differ only in dosage.
+  //
+  // IMPORTANT: use result.query (not groupTitle) as the source of truth.
+  // groupTitle is set to query inside searchMedicinesByName and is not further
+  // normalized — but downstream code may have corrupted it (e.g. returning the
+  // full multi-medicine query string instead of the individual medicine name).
+  // result.query is the original medicineQuery passed to searchMedicinesByName
+  // in the multi-medicine loop and is always a single, correct medicine name.
   const normalizedGroups = new Map();
   for (const result of results) {
-    const rawTitle = String(result.groupTitle || result.query || 'MEDICAMENTO').toUpperCase();
+    const rawTitle = String(result.query || result.groupTitle || 'MEDICAMENTO').toUpperCase();
     // Strip dosage suffixes to find the base medicine name
     const normalizedTitle = rawTitle
       .replace(/^(?:TIENES|TIENE|TENER|HAY|DISPONIBLE|DISPONIBLES|DISPONIBILIDAD|POR\s+FAVOR|QUISIERA|QUIERO|NECESITO|BUSCO|BUSCAR|CONSULTAR)\s+/i, '')
