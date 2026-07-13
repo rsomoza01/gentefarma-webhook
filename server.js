@@ -3491,15 +3491,20 @@ async function searchMedicinesByName(userQuery, options = {}) {
             .map((doc) => {
               const s = buildCatalogSignal(doc);
               const m = scoreSignal(s);
+              const basePriceUsd = getPrice(doc);
+              const basePriceBs = getPriceBs(doc, exchangeRate);
+              const pricing = applySalesPricing(basePriceUsd, exchangeRate);
               return {
                 ...m,
                 productTitleFull: doc.productTitleFull || doc.ProductTitle || doc.title || '',
                 productText: doc.productText || '',
                 title: doc.title || doc.ProductTitle || doc.productTitleFull || '',
-                priceUsd: doc.priceUsd ?? 0,
-                priceBs: doc.priceBs ?? 0,
-                feeRate: doc.feeRate ?? 0,
-                feeAmountUsd: doc.feeAmountUsd ?? 0,
+                basePriceUsd,
+                basePriceBs,
+                priceUsd: pricing.displayUsd,
+                priceBs: pricing.displayBs,
+                feeRate: pricing.feeRate,
+                feeAmountUsd: pricing.feeAmountUsd,
               };
             })
             .sort((a, b) => b.score - a.score);
