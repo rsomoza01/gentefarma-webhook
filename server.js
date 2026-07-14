@@ -152,6 +152,7 @@ const CITY_COORDS = {
   'ciudad bolivar': { lat: 8.1292, lng: -63.5409 },
   'caracas':        { lat: 10.4806, lng: -66.9036 },
   'caja seca':      { lat: 10.4628, lng: -68.7613 },
+  'zaraza':         { lat: 9.3500, lng: -67.3500 },
 };
 
 const DEFAULT_RADIO_KM = 5; // km radius for pharmacy search
@@ -1661,7 +1662,7 @@ async function routeMessage(phone, text, session, context = {}) {
         return await routeMessage(phone, pending.text, session, pending.context);
       } else {
         // No city detected, ask again
-        return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas* o *Caja Seca*.';
+        return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
       }
     }
 
@@ -1671,7 +1672,7 @@ async function routeMessage(phone, text, session, context = {}) {
       // Ask user to set their city first
       session.pendingCityRetry = { text, context };
       touchSession(session);
-      return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas* o *Caja Seca*.';
+      return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
     }
     // Non-medicine queries (small talk, etc.) pass through without city gate
   }
