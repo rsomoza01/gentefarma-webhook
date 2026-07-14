@@ -4193,10 +4193,14 @@ function extractMedicineRequests(text) {
     // Always split by spaces and validate each token. This handles both:
     // (a) single-token query + multi-token cleaned → space-token fallback (was already here)
     // (b) multi-token query (e.g. "bumetin retadar evigax...") → now split and validated too
+    const SALT_FORMS = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
     const spaceTokens = cleaned.split(/\s+/).filter((t) => t.length >= 3);
     let tokensAdded = 0;
     for (const token of spaceTokens) {
       if (results.includes(token)) continue;
+      const lower = token.toLowerCase();
+      // Reject pharmaceutical salt forms — they are descriptors, not medicines
+      if (SALT_FORMS.has(lower)) continue;
       if (looksLikeMedicineName(token)) {
         results.push(token);
         tokensAdded += 1;
@@ -4208,7 +4212,13 @@ function extractMedicineRequests(text) {
     // search groups like "ESOZ LEPRIT BUMETIN..." with bad fuzzy matches.
     const queryTokensCount = cleaned.split(/\s+/).length;
     if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6) {
-      results.push(query);
+      // Reject fragments that start with a bare number — e.g. "75 Losartan" from
+      // splitSingleLineMedicineList boundary splitting on dosage numbers.
+      if (/^\d+\s/.test(query)) {
+        console.log('🧹 [EXTRACT-MED] Rejected number-prefixed fragment: "%s"', query);
+      } else {
+        results.push(query);
+      }
     }
   }
 
@@ -5853,16 +5863,18 @@ function extractPrimaryRecipeMedicineQuery(value) {
   const normalized = normalizeText(raw);
   if (!normalized) return '';
 
-  if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return '';
+if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return '';
   if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|stadium|ano nac|año nac|datum|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return '';
 
   const tokens = normalized.split(' ').filter(Boolean);
   if (!tokens.length) return '';
 
-  const MED_FORM_TOKENS = new Set([
+  const MED_FORM_TOKENS=new Set([
     'ampolla', 'ampollas', 'vial', 'viales', 'frasco', 'frascos', 'tableta', 'tabletas', 'capsula', 'capsulas',
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
-    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
+    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass',
+    // Pharmaceutical salt forms — never standalone medicines
+    'potasico', 'potásico', 'sodico', 'sódico', 'clorhidrato', 'maleato', 'besilato', 'sulfato', 'nitrato', 'fosfato', 'acetato', 'diclorhidrato', 'bromuro'
   ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
@@ -6041,21 +6053,25 @@ function extractMedicineQuery(text) {
 
   if (!tokens.length) return '';
 
-  const MED_FORM_TOKENS = new Set([
+const MED_FORM_TOKENS=new Set([
     'ampolla', 'ampollas', 'vial', 'viales', 'frasco', 'frascos', 'tableta', 'tabletas', 'capsula', 'capsulas',
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
-    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
+    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass',
+    // Pharmaceutical salt forms — never standalone medicines
+    'potasico', 'potásico', 'sodico', 'sódico', 'clorhidrato', 'maleato', 'besilato', 'sulfato', 'nitrato', 'fosfato', 'acetato', 'diclorhidrato', 'bromuro'
   ]);
-  const MED_QUERY_WEAK_TOKENS = new Set([
+  const MED_QUERY_WEAK_TOKENS=new Set([
     'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber',
     'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por',
     'disponible', 'disponibles', 'disponibilidad',
     'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
     'es', 'soy', 'son', 'está', 'están',
     'quiero', 'quisiera', 'necesito', 'busco', 'busque',
-    'caja', 'cajas', 'unidad', 'unidades', 'opcion', 'opciones'
+    'caja', 'cajas', 'unidad', 'unidades', 'opcion', 'opciones',
+    // Verbs / conversational fragments that should never be medicine names
+    'disponen', 'disponer', 'tengo', 'tienes', 'tiene', 'hacer', 'hace', 'haces'
   ]);
-  const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier'];
+  const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier', 'dis'];
   function isWeakOpener(token) {
     const lower = token.toLowerCase();
     if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
