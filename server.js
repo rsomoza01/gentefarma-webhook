@@ -1398,6 +1398,48 @@ async function classifyIntentWithLLM(text, sessionContext) {
   }
 }
 
+// ── LLM Medicine Extraction Fallback ─────────────────────────────────────
+// Runs AFTER the regex pipeline fails to extract any medicines.
+// Strategy: regex first → LLM only if regex returns nothing.
+// This keeps LLM calls rare (only for genuinely ambiguous/empty cases),
+// saving latency and API cost while covering edge cases the regex misses.
+async function extractMedicinesWithLLMFallback(text, session) {
+  // Phase 1: regex pipeline (fast, free, handles 90%+ of inputs)
+  const regexMedicines = extractMedicineRequests(text);
+  const regexFallback = extractMedicineRequestsFromSegments(text);
+  const allRegex = [...new Set([...regexMedicines, ...regexFallback])];
+
+  if (allRegex.length > 0) {
+    console.log('🧪 [LLM-FALLBACK] Regex extracted %d medicines: %s — no LLM needed',
+      allRegex.length, JSON.stringify(allRegex));
+    return allRegex;
+  }
+
+  // Phase 2: LLM fallback — only when regex returned nothing
+  console.log('🧪 [LLM-FALLBACK] Regex empty — activating LLM extraction for: "%s"',
+    String(text).slice(0, 80));
+
+  if (!LLM_INTENT_ENABLED || !OPENAI_API_KEY) {
+    console.log('🧪 [LLM-FALLBACK] LLM not enabled — returning empty');
+    return [];
+  }
+
+  try {
+    const llmResult = await classifyIntentWithLLM(text, { mode: session?.mode });
+    if (llmResult && llmResult.intent === 'medicine_search' && llmResult.confidence >= LLM_INTENT_CONFIDENCE_THRESHOLD) {
+      const meds = dedupLLMMedicines(llmResult.medicines || []);
+      console.log('🧠 [LLM-FALLBACK] LLM extracted %d medicines: %s (confidence=%.2f)',
+        meds.length, JSON.stringify(meds), llmResult.confidence);
+      return meds;
+    }
+    console.log('🧪 [LLM-FALLBACK] LLM returned null or low confidence — returning empty');
+    return [];
+  } catch (llmErr) {
+    console.log('🧪 [LLM-FALLBACK] LLM error — returning empty: %s', llmErr.message?.slice(0, 100));
+    return [];
+  }
+}
+
 // Map LLM intent to routeMessage handler
 // ── SMART SUBSET DEDUP ─────────────────────────────────────────────────
 // Remove ONLY dosage-form fragments, NOT valid medicine base names.
@@ -1716,7 +1758,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
   const directMedicineQuery = extractMedicineQuery(text);
   const strictConsultationQuery = extractStrictConsultationMedicineQuery(text);
-  const extractedMedicineRequests = extractMedicineRequests(text);
+  const extractedMedicineRequests = await extractMedicinesWithLLMFallback(text, session);
   const consultationQuery = strictConsultationQuery || directMedicineQuery || extractedMedicineRequests[0] || text;
   const consultationIsMedicine = isMedicineConsultationPhrase(normalized);
   const isMedicineSignal = Boolean(
@@ -2297,9 +2339,9 @@ async function routeMessage(phone, text, session, context = {}) {
     if (catalogResult_awcgelse !== null) return catalogResult_awcgelse;
   }
 
-  const multiMedicineRequests = extractMedicineRequests(text);
+  const multiMedicineRequests = await extractMedicinesWithLLMFallback(text, session);
   if (multiMedicineRequests.length > 1) {
-    const catalogResult_multi = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
+    const catalogResult_multi = await searchAndBuildCatalogResponse(text, session, { preExtractedMedicines: multiMedicineRequests }, { phone, pushName });
     if (catalogResult_multi !== null) return catalogResult_multi;
   }
 
@@ -2653,10 +2695,16 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     }
   }
 
+  // LLM fallback: only activate when all three regex passes returned nothing
+  const llmFallbackMeds = (requestedMedicines.length === 0 && fallbackMedicines.length === 0 && flattenedLines.length === 0)
+    ? await extractMedicinesWithLLMFallback(text, session)
+    : [];
+
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
-    ...flattenedLines
+    ...flattenedLines,
+    ...llmFallbackMeds
   ]).filter((item) => {
     const normalizedItem = normalizeText(item);
     if (normalizedItem.length < 3) return false;
