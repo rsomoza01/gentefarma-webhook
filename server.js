@@ -1643,6 +1643,19 @@ async function routeMessage(phone, text, session, context = {}) {
     }
   }
 
+  // Allow user to change city at any time
+  const normalizedTextForCityChange = normalizeText(text);
+  if (normalizedTextForCityChange.includes('cambiar ciudad') ||
+      normalizedTextForCityChange.includes('cambiar mi ciudad') ||
+      normalizedTextForCityChange.includes('otra ciudad') ||
+      normalizedTextForCityChange.includes('otro ciudad')) {
+    session.userCity = null;
+    session.userCoords = null;
+    session.pendingCityRetry = null;
+    touchSession(session);
+    return 'Entendido. Indícame tu nueva ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
+  }
+
   // ── CITY GATE ─────────────────────────────────────────────────────────
   // If user has not set their city yet, intercept medicine searches and ask for it.
   // Store pending query so we retry it after city is detected.
