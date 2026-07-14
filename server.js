@@ -2188,6 +2188,12 @@ async function routeMessage(phone, text, session, context = {}) {
       }
     }
 
+    // Multi-medicine query: skip selection parsing — dosage numbers like 75/50/30/10
+    // are NOT option numbers; fall through to the multi-medicine pipeline below.
+    if (medicineRequests.length >= 2) {
+      // fall through to multi-medicine pipeline (line ~2294)
+    } else {
+
     const parsed = parseSelectionCommand(normalized);
     if (parsed) {
       // Use resolveSelectionResults which checks session.pendingSelectionResults FIRST,
@@ -2221,6 +2227,7 @@ async function routeMessage(phone, text, session, context = {}) {
     } else {
       return '⚠️ Escribe el número de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
+    } // end else (skip parseSelectionCommand for multi-medicine)
   }
 
   if (session.mode === 'awaiting_choice_global') {
