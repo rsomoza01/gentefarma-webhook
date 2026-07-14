@@ -5895,6 +5895,10 @@ function looksLikeMedicineName(value) {
   if (!text) return false;
   if (isGreetingOrMenu(text) || isThanksMessage(text) || /^(listo|resumen|bot on|bot off|bot status)$/i.test(text)) return false;
 
+  // ── Salt forms are NEVER standalone medicines ──────────────────────────
+  const SALT_FORMS_CHECK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
+  if (SALT_FORMS_CHECK.has(text)) return false;
+
   // ── NO-CONSULTA denylist ──────────────────────────────────────────────
   // Mensajes que claramente no son consultas de medicamentos
   const NON_CONSULTA_PATTERNS = [
@@ -6077,6 +6081,11 @@ const MED_FORM_TOKENS=new Set([
     if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
     return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
   }
+  // Salt forms are NEVER standalone medicines — treat them as weak openers
+  const SALT_FORMS_WEAK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
+  function isSaltForm(token) {
+    return SALT_FORMS_WEAK.has(token.toLowerCase());
+  }
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
   const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
@@ -6091,6 +6100,11 @@ const MED_FORM_TOKENS=new Set([
       // Multiple strong tokens → return full normalized query to preserve all tokens
       console.log('🧪 [DIAG-EMQ] IN="%s" => returning FULL candidate="%s" (cleanedTokens=%s)', _dbg_input, candidate, JSON.stringify(cleanedTokens));
       return candidate;
+    }
+    // Reject salt forms even as single strong token — "potasico" alone is never a medicine
+    if (isSaltForm(firstStrongToken)) {
+      console.log('🧪 [DIAG-EMQ] IN="%s" => rejecting salt form "%s"', _dbg_input, firstStrongToken);
+      return '';
     }
     console.log('🧪 [DIAG-EMQ] IN="%s" => returning firstStrongToken="%s" (cleanedTokens=%s)', _dbg_input, firstStrongToken, JSON.stringify(cleanedTokens));
     return firstStrongToken;
@@ -6133,8 +6147,14 @@ const MED_FORM_TOKENS=new Set([
 
   const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
   if (weakFiltered.length) {
-    console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, weakFiltered[0]);
-    return weakFiltered[0];
+    const firstWeak = weakFiltered[0];
+    // Never return a salt form or a weak opener as fallback result
+    if (isSaltForm(firstWeak) || isWeakOpener(firstWeak)) {
+      console.log('🧪 [DIAG-EMQ] IN="%s" => rejecting weak/salt fallback "%s"', _dbg_input, firstWeak);
+      return '';
+    }
+    console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, firstWeak);
+    return firstWeak;
   }
   console.log('🧪 [DIAG-EMQ] IN="%s" => returning "%s" (weakFiltered=%s)', _dbg_input, weakFiltered[0] || '', JSON.stringify(weakFiltered));
   return weakFiltered[0] || '';
