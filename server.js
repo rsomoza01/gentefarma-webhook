@@ -2578,6 +2578,23 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     console.log('🧹 [PREFIX-DEDUP] No change — count=%d', dedupedCandidates.length);
   }
 
+  // ── ACIDO-SPECIFIC PREFIX CLEANUP ─────────────────────────────────────────
+  // When the LLM extracts ["acido", "ursodesoxicolico"] from "Acido Ursodesoxicolico",
+  // prefix dedup doesn't catch it (neither is a prefix of the other). But searching
+  // "acido" standalone returns 50 wrong products while "ursodesoxicolico" returns 0.
+  // Remove "acido" standalone when another candidate starts with "acido " (prefix phrase).
+  const acidoIdx = dedupedCandidates.findIndex(c => normalizeText(c) === 'acido');
+  if (acidoIdx !== -1) {
+    const hasAcidoPhrase = dedupedCandidates.some(c => {
+      const n = normalizeText(c);
+      return n !== 'acido' && n.startsWith('acido ');
+    });
+    if (hasAcidoPhrase) {
+      const removed = dedupedCandidates.splice(acidoIdx, 1)[0];
+      console.log('🧹 [ACIDO-PREFIX] Removed standalone "acido" (found phrase prefix in candidates)');
+    }
+  }
+
     if (dedupedCandidates.length > 1) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCatalogProducts(2000);
