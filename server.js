@@ -2654,8 +2654,12 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // (i.e. a concatenated multi-medicine string from routeMessage), split it into
   // individual tokens so candidateMedicines gets one item per medicine, not one
   // item per concatenated blob.
+  // FIX: Split and filter each token through looksLikeMedicineName so that
+  // "acido ursodesoxicolico" → ["ursodesoxicolico"] (not ["acido","ursodesoxicolico"]).
+  // Without this, "acido" passes the length>=3 filter but is not a real medicine,
+  // and fires a spurious ACIDO search against Firebase that returns ACIDO FOLICO/etc.
   const normalizedPreExtracted = (preExtracted.length === 1 && typeof preExtracted[0] === 'string' && preExtracted[0].includes(' '))
-    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3)
+    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3 && looksLikeMedicineName(t))
     : preExtracted;
   const requestedMedicines = normalizedPreExtracted.length > 0 ? normalizedPreExtracted : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
