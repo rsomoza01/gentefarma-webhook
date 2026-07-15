@@ -3322,7 +3322,18 @@ async function searchMedicinesByName(userQuery, options = {}) {
       const consultHasValidIds = degradedMatches.some((m) => m.doc?.id);
       console.log(`🧪 [CONSULT-DEGRADED-HAS-ID] hasValidIds=${consultHasValidIds} firstDocId=${degradedMatches[0]?.doc?.id ?? 'UNDEF'} bestRefSim=${consultBestRefSim}`);
       if (degradedMatches.length && consultBestRefSim >= 0.76 && consultHasValidIds) {
-        candidateMatches = degradedMatches;
+        // Specificity gate for multi-token queries in consultation mode
+        const isMultiTokenQuery = alternativeTokens.length >= 2;
+        const significantTokens = alternativeTokens.filter(t => t.length >= 4);
+        if (isMultiTokenQuery && significantTokens.length > 0) {
+          candidateMatches = degradedMatches.filter((m) => {
+            const title = (m.productTitleFull || '').toLowerCase();
+            return significantTokens.some(t => title.includes(t));
+          });
+          if (!candidateMatches.length) return;
+        } else {
+          candidateMatches = degradedMatches;
+        }
       }
     }
 
@@ -3473,7 +3484,23 @@ async function searchMedicinesByName(userQuery, options = {}) {
     const hasValidIds = degradedMatches.some((m) => m.doc?.id);
     console.log(`🧪 [DEGRADED-HAS-ID] hasValidIds=${hasValidIds} firstDocId=${degradedMatches[0]?.doc?.id ?? 'UNDEF'} firstRefSim=${bestRefSim}`);
     if (degradedMatches.length && bestRefSim >= 0.70 && hasValidIds) {
-      candidateMatches = degradedMatches;
+      // Final specificity gate: for multi-token queries, at least one non-generic
+      // token must appear in the candidate. Otherwise "acido X" matches every "acido Y"
+      // when X≠Y and X is not in the product title.
+      // e.g. "acido ursodesoxicolico" → "acido folico" rejected because
+      // "ursodesoxicolico" (specific) is not in "acido folico".
+      const isMultiTokenQuery = alternativeTokens.length >= 2;
+      const significantTokens = alternativeTokens.filter(t => t.length >= 4);
+      if (isMultiTokenQuery && significantTokens.length > 0) {
+        candidateMatches = degradedMatches.filter((m) => {
+          const title = (m.productTitleFull || '').toLowerCase();
+          return significantTokens.some(t => title.includes(t));
+        });
+        console.log(`🧪 [SPECIFICITY-FILTER] multiToken=${isMultiTokenQuery} sigTokens=${JSON.stringify(significantTokens)} before=${degradedMatches.length} after=${candidateMatches.length}`);
+        if (!candidateMatches.length) return;
+      } else {
+        candidateMatches = degradedMatches;
+      }
     }
     // else: candidateMatches stays empty — do NOT use degraded results with refSim < 0.70 or without real Firebase IDs
 
