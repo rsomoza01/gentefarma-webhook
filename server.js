@@ -2493,10 +2493,16 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // Flatten each recipe line so that multi-medicine OCR strings like
   // "ESOZ LEPRIT BUMETIN RETADAR EVIGAX CAP MODERAN SUSP" get split into
   // individual medicine names instead of extracting only the first token.
+  // SPECIAL CASE: lines that start with "acido" (e.g. "Acido Ursodesoxicolico")
+  // are single medicine names — preserve the full phrase without splitting.
   const flattenedLines = [];
   for (const line of recipeLineMedicines) {
-    const spaceTokens = String(line || '').split(/\s+/).filter((t) => t.length >= 3);
-    if (spaceTokens.length > 1) {
+    const lineStr = String(line || '');
+    const spaceTokens = lineStr.split(/\s+/).filter((t) => t.length >= 3);
+    // Keep "acido X" medicine names intact — they are single medicines, not lists
+    if (spaceTokens.length > 1 && spaceTokens[0].toLowerCase() === 'acido') {
+      if (!flattenedLines.includes(lineStr)) flattenedLines.push(lineStr);
+    } else if (spaceTokens.length > 1) {
       // Multi-token line: split and add each token as a separate line
       for (const token of spaceTokens) {
         if (!flattenedLines.includes(token)) flattenedLines.push(token);
