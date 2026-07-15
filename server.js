@@ -2663,6 +2663,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     : preExtracted;
   const requestedMedicines = normalizedPreExtracted.length > 0 ? normalizedPreExtracted : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
+  // TEMP DIAGNOSTIC: log extraction steps
+  console.log('🧪 [FEXOF-DIAG] text="%s" normalizedPreExtracted=%s requestedMedicines=%s fallbackMedicines=%s',
+    String(text).slice(0, 60), JSON.stringify(normalizedPreExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines));
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
   // Known pharmaceutical dosage forms — never search for these as standalone medicines.
@@ -2714,6 +2717,10 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (normalizedItem.length < 3) return false;
     // Reject dosage form tokens searched as standalone medicines
     if (DOSAGE_FORMS.has(normalizedItem)) return false;
+    // TEMP DIAGNOSTIC: log candidate medicines to debug fexofenadina case
+    if (normalizedItem.includes('fexofenadina')) {
+      console.log('🧪 [FEXOF-DIAG] candidateMedicine item="%s" normalized="%s" passed=true', item, normalizedItem);
+    }
     // Reject generic single-word selection tokens that are not medicine names
     if (/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(normalizedItem)) return false;
     if (/^(?:seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|mostrar|mostra|muestra)$/i.test(normalizedItem)) return false;
@@ -2789,6 +2796,10 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     const missingMedicineSet = new Set();
 
     console.log('🧪 [MULTI-MEDICINE] dedupedCandidates=%s (count=%d)', JSON.stringify(dedupedCandidates), dedupedCandidates.length);
+    // TEMP DIAGNOSTIC: log dedupedCandidates for fexofenadina case
+    if (JSON.stringify(dedupedCandidates).includes('fexofenadina')) {
+      console.log('🧪 [FEXOF-DEDUP] dedupedCandidates=%s rawCandidates=%s', JSON.stringify(dedupedCandidates), JSON.stringify(rawCandidates));
+    }
 
     for (const medicineQuery of dedupedCandidates) {
       const result = await searchMedicinesByName(medicineQuery, {
@@ -2873,6 +2884,10 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     queryDosageSignatures: queryDosageSignatures.length > 0 ? queryDosageSignatures : null,
     userCoords: session.userCoords,
   });
+
+  // TEMP DIAGNOSTIC: log result matches to debug missing products
+  console.log('🧪 [FEXOF-DIAG] singleQuery=%s result.matchesCount=%d result.matches[0].title=%s',
+    singleQuery, result?.matches?.length || 0, result?.matches?.[0]?.title || 'N/A');
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
