@@ -3324,7 +3324,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
       if (degradedMatches.length && consultBestRefSim >= 0.76 && consultHasValidIds) {
         // Specificity gate for multi-token queries in consultation mode
         const isMultiTokenQuery = alternativeTokens.length >= 2;
-        const significantTokens = alternativeTokens.filter(t => t.length >= 4);
+        // Significant = non-trivial (>= 6 chars) and not a known generic prefix.
+        // "acido" (5 chars) is too generic — raising threshold to 6 chars
+        // excludes it while keeping specific medicine names like "ursodesoxicolico".
+        const significantTokens = alternativeTokens.filter(t => t.length >= 6);
         if (isMultiTokenQuery && significantTokens.length > 0) {
           candidateMatches = degradedMatches.filter((m) => {
             const title = (m.productTitleFull || '').toLowerCase();
@@ -3490,7 +3493,10 @@ async function searchMedicinesByName(userQuery, options = {}) {
       // e.g. "acido ursodesoxicolico" → "acido folico" rejected because
       // "ursodesoxicolico" (specific) is not in "acido folico".
       const isMultiTokenQuery = alternativeTokens.length >= 2;
-      const significantTokens = alternativeTokens.filter(t => t.length >= 4);
+      // Significant = non-trivial (>= 6 chars) and not a known generic prefix.
+      // "acido" (5 chars) is too generic — raising threshold to 6 chars
+      // excludes it while keeping specific medicine names like "ursodesoxicolico".
+      const significantTokens = alternativeTokens.filter(t => t.length >= 6);
       if (isMultiTokenQuery && significantTokens.length > 0) {
         candidateMatches = degradedMatches.filter((m) => {
           const title = (m.productTitleFull || '').toLowerCase();
