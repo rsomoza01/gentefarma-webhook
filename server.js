@@ -2507,6 +2507,19 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     }
   }
 
+  // ── DENYLIST: pharmaceutical salt forms and dosage units that must NEVER be ──
+  // searched as standalone medicines. These tokens can appear in candidateMedicines
+  // via preExtracted strings, flattenedLines, or fallback paths and must be
+  // rejected here as a last line of defence.
+  const SALT_DENYLIST = new Set([
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato'
+  ]);
+  const DOSAGE_UNIT_DENYLIST = new Set([
+    'mg','ml','mcg','g','gr','cc','ui','iu','ml'
+  ]);
+  const pureNumRe = /^\d+(?:[.,]\d+)?$/;
+
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
@@ -2516,12 +2529,18 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (normalizedItem.length < 3) return false;
     // Reject dosage form tokens searched as standalone medicines
     if (DOSAGE_FORMS.has(normalizedItem)) return false;
+    // Reject pharmaceutical salt forms as standalone medicines
+    if (SALT_DENYLIST.has(normalizedItem)) return false;
+    // Reject dosage unit tokens (e.g. "mg", "ml") that may slip through extraction
+    if (DOSAGE_UNIT_DENYLIST.has(normalizedItem.toLowerCase())) return false;
+    // Reject pure numbers and dosage patterns (e.g. "120", "500mg")
+    if (pureNumRe.test(normalizedItem)) return false;
+    if (/^\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|cc|ui|iu)\b/i.test(normalizedItem)) return false;
     // Reject generic single-word selection tokens that are not medicine names
     if (/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(normalizedItem)) return false;
     if (/^(?:seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|mostrar|mostra|muestra)$/i.test(normalizedItem)) return false;
     if (/^(?:listo|resumen)$/i.test(normalizedItem)) return false;
     if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
-    if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3"
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     // ── REJECT concatenated multi-medicine OCR strings (7+ tokens with spaces) ──
     // These are never valid single-medicine search queries — they create duplicate
