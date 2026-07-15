@@ -3465,10 +3465,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
     // Reject degraded matches with very low reference similarity — they are spurious
     // (e.g., daflon↔sonda with refSim≈0.55 should NOT appear as a catalog result)
     const bestRefSim = degradedMatches.length > 0 ? (degradedMatches[0].referenceSimilarity ?? 0) : 0;
-    if (degradedMatches.length && bestRefSim >= 0.70) {
+    // Only use degraded matches if they have valid Firebase document IDs.
+    // If ALL matches have NO-ID (doc.id missing), they are not real products — reject.
+    const hasValidIds = degradedMatches.some((m) => m.doc?.id);
+    if (degradedMatches.length && bestRefSim >= 0.70 && hasValidIds) {
       candidateMatches = degradedMatches;
     }
-    // else: candidateMatches stays empty — do NOT use degraded results with refSim < 0.70
+    // else: candidateMatches stays empty — do NOT use degraded results with refSim < 0.70 or without real Firebase IDs
 
     }
 

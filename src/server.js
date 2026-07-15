@@ -2493,10 +2493,16 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // Flatten each recipe line so that multi-medicine OCR strings like
   // "ESOZ LEPRIT BUMETIN RETADAR EVIGAX CAP MODERAN SUSP" get split into
   // individual medicine names instead of extracting only the first token.
+  // SPECIAL CASE: lines that start with "acido" (e.g. "Acido Ursodesoxicolico")
+  // are single medicine names — preserve the full phrase without splitting.
   const flattenedLines = [];
   for (const line of recipeLineMedicines) {
-    const spaceTokens = String(line || '').split(/\s+/).filter((t) => t.length >= 3);
-    if (spaceTokens.length > 1) {
+    const lineStr = String(line || '');
+    const spaceTokens = lineStr.split(/\s+/).filter((t) => t.length >= 3);
+    // Keep "acido X" medicine names intact — they are single medicines, not lists
+    if (spaceTokens.length > 1 && spaceTokens[0].toLowerCase() === 'acido') {
+      if (!flattenedLines.includes(lineStr)) flattenedLines.push(lineStr);
+    } else if (spaceTokens.length > 1) {
       // Multi-token line: split and add each token as a separate line
       for (const token of spaceTokens) {
         if (!flattenedLines.includes(token)) flattenedLines.push(token);
@@ -2507,6 +2513,19 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     }
   }
 
+  // ── DENYLIST: pharmaceutical salt forms and dosage units that must NEVER be ──
+  // searched as standalone medicines. These tokens can appear in candidateMedicines
+  // via preExtracted strings, flattenedLines, or fallback paths and must be
+  // rejected here as a last line of defence.
+  const SALT_DENYLIST = new Set([
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato'
+  ]);
+  const DOSAGE_UNIT_DENYLIST = new Set([
+    'mg','ml','mcg','g','gr','cc','ui','iu','ml'
+  ]);
+  const pureNumRe = /^\d+(?:[.,]\d+)?$/;
+
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
@@ -2516,12 +2535,18 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (normalizedItem.length < 3) return false;
     // Reject dosage form tokens searched as standalone medicines
     if (DOSAGE_FORMS.has(normalizedItem)) return false;
+    // Reject pharmaceutical salt forms as standalone medicines
+    if (SALT_DENYLIST.has(normalizedItem)) return false;
+    // Reject dosage unit tokens (e.g. "mg", "ml") that may slip through extraction
+    if (DOSAGE_UNIT_DENYLIST.has(normalizedItem.toLowerCase())) return false;
+    // Reject pure numbers and dosage patterns (e.g. "120", "500mg")
+    if (pureNumRe.test(normalizedItem)) return false;
+    if (/^\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|cc|ui|iu)\b/i.test(normalizedItem)) return false;
     // Reject generic single-word selection tokens that are not medicine names
     if (/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(normalizedItem)) return false;
     if (/^(?:seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|mostrar|mostra|muestra)$/i.test(normalizedItem)) return false;
     if (/^(?:listo|resumen)$/i.test(normalizedItem)) return false;
     if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
-    if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3"
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     // ── REJECT concatenated multi-medicine OCR strings (7+ tokens with spaces) ──
     // These are never valid single-medicine search queries — they create duplicate
@@ -2551,6 +2576,23 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
       JSON.stringify(removed), JSON.stringify(rawCandidates), JSON.stringify(dedupedCandidates));
   } else {
     console.log('🧹 [PREFIX-DEDUP] No change — count=%d', dedupedCandidates.length);
+  }
+
+  // ── ACIDO-SPECIFIC PREFIX CLEANUP ─────────────────────────────────────────
+  // When the LLM extracts ["acido", "ursodesoxicolico"] from "Acido Ursodesoxicolico",
+  // prefix dedup doesn't catch it (neither is a prefix of the other). But searching
+  // "acido" standalone returns 50 wrong products while "ursodesoxicolico" returns 0.
+  // Remove "acido" standalone when another candidate starts with "acido " (prefix phrase).
+  const acidoIdx = dedupedCandidates.findIndex(c => normalizeText(c) === 'acido');
+  if (acidoIdx !== -1) {
+    const hasAcidoPhrase = dedupedCandidates.some(c => {
+      const n = normalizeText(c);
+      return n !== 'acido' && n.startsWith('acido ');
+    });
+    if (hasAcidoPhrase) {
+      const removed = dedupedCandidates.splice(acidoIdx, 1)[0];
+      console.log('🧹 [ACIDO-PREFIX] Removed standalone "acido" (found phrase prefix in candidates)');
+    }
   }
 
     if (dedupedCandidates.length > 1) {
@@ -3423,10 +3465,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
     // Reject degraded matches with very low reference similarity — they are spurious
     // (e.g., daflon↔sonda with refSim≈0.55 should NOT appear as a catalog result)
     const bestRefSim = degradedMatches.length > 0 ? (degradedMatches[0].referenceSimilarity ?? 0) : 0;
-    if (degradedMatches.length && bestRefSim >= 0.70) {
+    // Only use degraded matches if they have valid Firebase document IDs.
+    // If ALL matches have NO-ID (doc.id missing), they are not real products — reject.
+    const hasValidIds = degradedMatches.some((m) => m.doc?.id);
+    if (degradedMatches.length && bestRefSim >= 0.70 && hasValidIds) {
       candidateMatches = degradedMatches;
     }
-    // else: candidateMatches stays empty — do NOT use degraded results with refSim < 0.70
+    // else: candidateMatches stays empty — do NOT use degraded results with refSim < 0.70 or without real Firebase IDs
 
     }
 
@@ -3656,29 +3701,89 @@ async function searchMedicinesByName(userQuery, options = {}) {
   // that exact dosage. Uses passedDosageSigs (from original text, not stripped query).
   // This ensures "losartan potasico 50mg" only returns 50mg products.
   // This runs after scoring so it catches all paths including consultationMode.
+  // ── STRICT MODIFIER + DOSAGE FILTER ────────────────────────────────────────
+  // When query has modifier tokens (forte, flex, plus, etc.), ONLY accept
+  // products that contain ALL modifiers. Missing modifier = excluded, not penalised.
+  // When query has dosage signatures (50mg, 100mg, etc.):
+  //   - In recipeMode: product MUST contain that exact dosage (strict filter).
+  //   - In non-recipe mode: dosage is CONTEXT from the original text, NOT a strict
+  //     requirement. We penalize non-matching scores but keep all candidates so
+  //     the user sees all available variants (e.g. "fexofenadina 120mg" should
+  //     show 120mg, 180mg, and suspension, not just the 120mg product).
   if ((modifierTokens && modifierTokens.length > 0) || hasPassedDosage) {
     const beforeCount = finalMatches.length;
-    const filteredByModifier = finalMatches.filter((item) => {
-      const productText = (item.productTitleFull || '').toLowerCase();
-      // Modifier filter: product must contain every modifier token
-      const modifierOk = !modifierTokens || modifierTokens.length === 0 ||
-        modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
-      if (!modifierOk) return false;
-      // Dosage filter: if query has dosage signatures (passed from original text), product must contain each one
-      if (hasPassedDosage) {
+    if (recipeMode) {
+      // Strict mode: reject products that don't match modifiers or dosage
+      const filteredByModifier = finalMatches.filter((item) => {
+        const productText = (item.productTitleFull || '').toLowerCase();
+        const modifierOk = !modifierTokens || modifierTokens.length === 0 ||
+          modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+        if (!modifierOk) return false;
+        if (hasPassedDosage) {
+          const productDosageSigs = extractDosageSignatures(item.productTitleFull || '');
+          const dosageOk = passedDosageSigs.every((sig) =>
+            productDosageSigs.some((pSig) => pSig === sig || pSig.replace(/\s+/g, '') === sig.replace(/\s+/g, ''))
+          );
+          if (!dosageOk) return false;
+        }
+        return true;
+      });
+      console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${filteredByModifier.length} [STRICT]`);
+      if (filteredByModifier.length > 0) {
+        finalMatches = filteredByModifier;
+      }
+    } else if (hasPassedDosage) {
+      // Non-strict mode: penalize non-matching products but keep all candidates
+      let penaltyCount = 0;
+      finalMatches = finalMatches.map((item) => {
+        const productText = (item.productTitleFull || '').toLowerCase();
+        const modifierOk = !modifierTokens || modifierTokens.length === 0 ||
+          modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+        if (!modifierOk) {
+          item.score -= 400;
+          penaltyCount++;
+          return item;
+        }
         const productDosageSigs = extractDosageSignatures(item.productTitleFull || '');
-        const dosageOk = passedDosageSigs.every((sig) =>
+        const dosageMatch = passedDosageSigs.some((sig) =>
           productDosageSigs.some((pSig) => pSig === sig || pSig.replace(/\s+/g, '') === sig.replace(/\s+/g, ''))
         );
-        if (!dosageOk) return false;
+        if (!dosageMatch) {
+          item.score -= 300;
+          penaltyCount++;
+        }
+        return item;
+      });
+      // Re-sort by updated scores
+      finalMatches.sort((a, b) => {
+        const vitaminA = a.vitaminHit ? 1 : 0;
+        const vitaminB = b.vitaminHit ? 1 : 0;
+        if (vitaminA !== vitaminB) return vitaminB - vitaminA;
+        const exactA = a.exactHit ? 1 : 0;
+        const exactB = b.exactHit ? 1 : 0;
+        if (exactA !== exactB) return exactB - exactA;
+        const phraseA = a.phraseHit ? 1 : 0;
+        const phraseB = b.phraseHit ? 1 : 0;
+        if (phraseA !== phraseB) return phraseB - phraseA;
+        const scoreA = a.score ?? 0;
+        const scoreB = b.score ?? 0;
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+        const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+        return priceA - priceB;
+      });
+      console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${finalMatches.length} penalties=${penaltyCount} [SOFT]`);
+    } else if (modifierTokens && modifierTokens.length > 0) {
+      // No dosage but has modifiers → strict filter
+      const filteredByModifier = finalMatches.filter((item) => {
+        const productText = (item.productTitleFull || '').toLowerCase();
+        return modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+      });
+      console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${filteredByModifier.length} [MODIFIERS-ONLY]`);
+      if (filteredByModifier.length > 0) {
+        finalMatches = filteredByModifier;
       }
-      return true;
-    });
-    console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${filteredByModifier.length}`);
-    if (filteredByModifier.length > 0) {
-      finalMatches = filteredByModifier;
     }
-    // If filteredByModifier is empty, keep original (don't suppress all results)
   }
 
   const top3titles = finalMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
@@ -3870,6 +3975,8 @@ function extractMedicineRequests(text) {
   const segments = explicitSegments.length > 1 ? explicitSegments : splitSingleLineMedicineList(rawText);
   const results = [];
 
+  console.log('🧪 [EXTRACT-MED-REQ] input="%s" segments=%s', rawText.slice(0, 100), JSON.stringify(segments));
+
   for (const segment of segments) {
     const cleaned = normalizeText(segment);
     if (!cleaned) continue;
@@ -3882,6 +3989,8 @@ function extractMedicineRequests(text) {
     const query = extractMedicineQuery(segment) || segment;
     if (!query) continue;
 
+    console.log('🧪 [EXTRACT-MED-REQ] segment="%s" query="%s" queryTokensCount=%d', segment.slice(0, 80), query, cleaned.split(/\s+/).length);
+
     // Always split by spaces and validate each token. This handles both:
     // (a) single-token query + multi-token cleaned → space-token fallback (was already here)
     // (b) multi-token query (e.g. "bumetin retadar evigax...") → now split and validated too
@@ -3889,21 +3998,31 @@ function extractMedicineRequests(text) {
     let tokensAdded = 0;
     for (const token of spaceTokens) {
       if (results.includes(token)) continue;
-      if (looksLikeMedicineName(token)) {
+      const isMed = looksLikeMedicineName(token);
+      console.log('🧪 [EXTRACT-MED-REQ] token="%s" looksLikeMedicineName=%s', token, isMed);
+      if (isMed) {
         results.push(token);
         tokensAdded += 1;
       }
     }
+    // Pharmaceutical salt forms — reject these as standalone medicine queries in the
+    // fallback path. Without this, "fexofenadina clorhidrato" would add "fexofenadina
+    // clorhidrato" as a full query (tokensAdded=0) and the second search group would
+    // be "clorhidrato" from the space-split, creating spurious results.
+    const SALT_FORMS_FALLBACK_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
     // Only fall back to the original query if space-token split added nothing
     // AND the query is short enough that it won't pollute multi-medicine results.
     // Long concatenated strings (many tokens) are NOT added — they create spurious
     // search groups like "ESOZ LEPRIT BUMETIN..." with bad fuzzy matches.
     const queryTokensCount = cleaned.split(/\s+/).length;
-    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6) {
+    const fallbackRejected = SALT_FORMS_FALLBACK_RE.test(query);
+    console.log('🧪 [EXTRACT-MED-REQ] query="%s" tokensAdded=%d queryTokensCount=%d fallbackRejected=%s', query, tokensAdded, queryTokensCount, fallbackRejected);
+    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6 && !fallbackRejected) {
       results.push(query);
     }
   }
 
+  console.log('🧪 [EXTRACT-MED-REQ] => returning %s', JSON.stringify(results));
   return results;
 }
 
@@ -5074,9 +5193,26 @@ function extractRecipeMedicineLines(value) {
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
   if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
     // Single-line multi-token input: split into individual tokens
-    // Filter out dosage forms (CAP, SUSP, etc.) and known non-medicine tokens
+    // Filter out dosage forms (CAP, SUSP, etc.), known non-medicine tokens,
+    // AND pharmaceutical salt forms (clorhidrato, sulfato, etc.) that would
+    // otherwise be treated as standalone medicines (e.g. "FEXOFENADINA CLORHIDRATO"
+    // → ["FEXOFENADINA", "CLORHIDRATO"] with CLORHIDRATO creating a spurious group).
     const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
-    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
+    const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
+
+    // ── SPECIAL CASE: "acido X" medicine names must be preserved as a whole ──
+    // "Acido Ursodesoxicolico" is a single medicine name. Splitting it into
+    // ["Acido", "Ursodesoxicolico"] causes "Acido" to become a standalone candidate
+    // (wrong results) and "Ursodesoxicolico" to be lost. Only preserve when the
+    // second token is NOT a pharmaceutical salt form.
+    const firstTok = fastTokens[0].toLowerCase();
+    const secondTok = fastTokens.length >= 2 ? fastTokens[1].toLowerCase() : '';
+    if (firstTok === 'acido' && !SALT_FORMS_RE.test(secondTok)) {
+      console.log('🧪 [EXTRACT-RECIPE] raw value=%s → PRESERVE (acido-prefixed medicine)', raw.slice(0, 200));
+      return [raw.trim()];
+    }
+
+    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !SALT_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
     console.log('🧪 [EXTRACT-RECIPE] raw value=%s → SPLIT into tokens=%s', raw.slice(0, 200), JSON.stringify(splitTokens));
     return splitTokens;
   }
@@ -5545,8 +5681,13 @@ function extractPrimaryRecipeMedicineQuery(value) {
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
     'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
+  // Pharmaceutical salt forms — reject as standalone medicine names
+  const SALT_TOKENS = new Set([
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato'
+  ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !SALT_TOKENS.has(token) && !isDoseToken(token));
   console.log('🧪 [EXTRACT-PRIMARY] raw="%s" tokens=%s cleanedTokens=%s => returning "%s"', raw, JSON.stringify(tokens), JSON.stringify(cleanedTokens), cleanedTokens[0] || 'NONE');
 
   if (cleanedTokens.length) return cleanedTokens[0];
@@ -5604,12 +5745,19 @@ function looksLikeMedicineName(value) {
     'tengo', 'tienes', 'tiene', 'tenemos', 'tienen', 'hacer', 'hace', 'haces', 'hacen',
     'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer',
     'feliz', 'viernes', 'buenos', 'buenas', 'dias', 'tardes', 'noches']);
-  const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()));
+  // Pharmaceutical salt forms — reject as standalone medicine names
+  const SALT_TOKENS = new Set([
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato'
+  ]);
+  const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()) && !SALT_TOKENS.has(t.toLowerCase()));
   // Also accept 4-char medicine names (e.g. "esoz", "fatr", "ferrz")
   // Reject single generic tokens even if 4+ chars (feliz/viernes/dias/buenos/buenas/etc.)
+  // Also reject pharmaceutical salt forms as single tokens (clorhidrato/sulfato/etc.)
   const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4
     && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0])
-    && !GENERIC_TOKENS.has(tokens[0].toLowerCase());
+    && !GENERIC_TOKENS.has(tokens[0].toLowerCase())
+    && !SALT_TOKENS.has(tokens[0].toLowerCase());
 
   return hasDosageOrForm || hasUsefulMultiTokenPhrase || hasStrongSingleToken;
 }
@@ -5742,8 +5890,14 @@ function extractMedicineQuery(text) {
     if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
     return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
   }
+  // Pharmaceutical salt forms — reject these so they don't become standalone medicine queries
+  // (e.g. "clorhidrato" alone should not be treated as a medicine name)
+  const SALT_FORM_TOKENS = new Set([
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato'
+  ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !SALT_FORM_TOKENS.has(token) && !isDoseToken(token));
   const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
   console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "%s" (cleanedTokens=%s firstStrong=%s)', _dbg_input, cleaned, firstStrongToken || '', JSON.stringify(cleanedTokens), firstStrongToken || 'none');
   // If multiple non-dose tokens remain, return the FULL normalized candidate
@@ -5797,6 +5951,13 @@ function extractMedicineQuery(text) {
   }
 
   const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  // If cleanedTokens is empty after filtering (e.g. input is just "clorhidrato"), return ''
+  // without falling back to dosage patterns or raw tokens. This prevents salt forms
+  // from being treated as standalone medicine queries.
+  if (!cleanedTokens.length) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => "" (cleanedTokens empty after filtering salts/forms)', _dbg_input);
+    return '';
+  }
   if (weakFiltered.length) {
     console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, weakFiltered[0]);
     return weakFiltered[0];
