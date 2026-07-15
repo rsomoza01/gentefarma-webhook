@@ -5947,7 +5947,7 @@ function looksLikeMedicineName(value) {
   if (isGreetingOrMenu(text) || isThanksMessage(text) || /^(listo|resumen|bot on|bot off|bot status)$/i.test(text)) return false;
 
   // ── Salt forms are NEVER standalone medicines ──────────────────────────
-  const SALT_FORMS_CHECK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
+  const SALT_FORMS_CHECK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro','acido','ácido']);
   if (SALT_FORMS_CHECK.has(text)) return false;
 
   // ── NO-CONSULTA denylist ──────────────────────────────────────────────
