@@ -5986,13 +5986,20 @@ function looksLikeMedicineName(value) {
     'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas', 'aquel', 'aquella',
     'tengo', 'tienes', 'tiene', 'tenemos', 'tienen', 'hacer', 'hace', 'haces', 'hacen',
     'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer',
-    'feliz', 'viernes', 'buenos', 'buenas', 'dias', 'tardes', 'noches']);
+    'feliz', 'viernes', 'buenos', 'buenas', 'dias', 'tardes', 'noches',
+    // Bloquear palabras conversacionales de 4+ chars que se colaban como "medicinas"
+    'hola', 'holas', 'quiero', 'saben', 'saber', 'hacen', 'haces', 'hacer',
+    'disponen', 'disponer', 'tienes', 'tengo', 'tiene', 'buscar', 'busco']);
   const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()));
   // Also accept 4-char medicine names (e.g. "esoz", "fatr", "ferrz")
   // Reject single generic tokens even if 4+ chars (feliz/viernes/dias/buenos/buenas/etc.)
+  // Also reject tokens that START with a WEAK_OPENER prefix (e.g. "dispones" starts with "dis")
+  const singleLower = tokens[0] ? tokens[0].toLowerCase() : '';
+  const startsWithWeakOpener = singleLower.length >= 4
+    && (WEAK_OPENER_PREFIXES.some(p => singleLower.startsWith(p)) || GENERIC_TOKENS.has(singleLower));
   const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4
     && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0])
-    && !GENERIC_TOKENS.has(tokens[0].toLowerCase());
+    && !startsWithWeakOpener;
 
   return hasDosageOrForm || hasUsefulMultiTokenPhrase || hasStrongSingleToken;
 }
@@ -6136,14 +6143,14 @@ const MED_FORM_TOKENS=new Set([
   }
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
-  const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
+  const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token) && !isSaltForm(token));
   console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "%s" (cleanedTokens=%s firstStrong=%s)', _dbg_input, cleaned, firstStrongToken || '', JSON.stringify(cleanedTokens), firstStrongToken || 'none');
   // If multiple non-dose tokens remain, return the FULL normalized candidate
   // to preserve multi-token product names (e.g. "atamel forte", "dorixina flex").
   // The single-token case also returns the candidate (may be multi-word).
   if (firstStrongToken) {
     // Only use firstStrongToken alone if it is the ONLY non-weak token
-    const otherStrongTokens = cleanedTokens.filter((t) => t !== firstStrongToken && !isWeakOpener(t));
+    const otherStrongTokens = cleanedTokens.filter((t) => t !== firstStrongToken && !isWeakOpener(t) && !isSaltForm(t));
     if (otherStrongTokens.length > 0) {
       // Multiple strong tokens → return full normalized query to preserve all tokens
       console.log('🧪 [DIAG-EMQ] IN="%s" => returning FULL candidate="%s" (cleanedTokens=%s)', _dbg_input, candidate, JSON.stringify(cleanedTokens));
