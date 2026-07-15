@@ -5994,9 +5994,10 @@ function looksLikeMedicineName(value) {
   // Also accept 4-char medicine names (e.g. "esoz", "fatr", "ferrz")
   // Reject single generic tokens even if 4+ chars (feliz/viernes/dias/buenos/buenas/etc.)
   // Also reject tokens that START with a WEAK_OPENER prefix (e.g. "dispones" starts with "dis")
+  const WEAK_OPENER_PREFIXES_LM = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier', 'dis'];
   const singleLower = tokens[0] ? tokens[0].toLowerCase() : '';
   const startsWithWeakOpener = singleLower.length >= 4
-    && (WEAK_OPENER_PREFIXES.some(p => singleLower.startsWith(p)) || GENERIC_TOKENS.has(singleLower));
+    && (WEAK_OPENER_PREFIXES_LM.some(p => singleLower.startsWith(p)) || GENERIC_TOKENS.has(singleLower));
   const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4
     && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0])
     && !startsWithWeakOpener;
