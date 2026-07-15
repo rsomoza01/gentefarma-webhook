@@ -2710,6 +2710,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
 }
 
 async function searchMedicinesByName(userQuery, options = {}) {
+  console.log(`🔍 [SMN-START] version=cf7b9c5-hasvalidids userQuery='${userQuery}'`);
   console.log(`🧪 [SEARCH-KICK] userQuery='${userQuery}' strictConsultationMode=${options.strictConsultationMode} preExtractedMedicines=${JSON.stringify(options.preExtractedMedicines)}`);
   if (!db) return null;
 
@@ -3319,6 +3320,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
       // Reject degraded results with refSim < 0.76 — they are spurious for prescription scans
       const consultBestRefSim = degradedMatches.length > 0 ? (degradedMatches[0].referenceSimilarity ?? 0) : 0;
       const consultHasValidIds = degradedMatches.some((m) => m.doc?.id);
+      console.log(`🧪 [CONSULT-DEGRADED-HAS-ID] hasValidIds=${consultHasValidIds} firstDocId=${degradedMatches[0]?.doc?.id ?? 'UNDEF'} bestRefSim=${consultBestRefSim}`);
       if (degradedMatches.length && consultBestRefSim >= 0.76 && consultHasValidIds) {
         candidateMatches = degradedMatches;
       }
@@ -3469,6 +3471,7 @@ async function searchMedicinesByName(userQuery, options = {}) {
     // Only use degraded matches if they have valid Firebase document IDs.
     // If ALL matches have NO-ID (doc.id missing), they are not real products — reject.
     const hasValidIds = degradedMatches.some((m) => m.doc?.id);
+    console.log(`🧪 [DEGRADED-HAS-ID] hasValidIds=${hasValidIds} firstDocId=${degradedMatches[0]?.doc?.id ?? 'UNDEF'} firstRefSim=${bestRefSim}`);
     if (degradedMatches.length && bestRefSim >= 0.70 && hasValidIds) {
       candidateMatches = degradedMatches;
     }
