@@ -145,25 +145,11 @@ async function appendConsultationToSheet({ products, exists, phone, userName }) 
 }
 
 // ----------------------------------------------------
-// City coordinates (hardcoded for Venezuela main cities)
-// Used for geolocation-based pharmacy filtering
-// ----------------------------------------------------
-const CITY_COORDS = {
-  'ciudad bolivar': { lat: 8.1292, lng: -63.5409 },
-  'caracas':        { lat: 10.4806, lng: -66.9036 },
-  'caja seca':      { lat: 10.4628, lng: -68.7613 },
-  'zaraza':         { lat: 9.3500, lng: -67.3500 },
-};
-
-const DEFAULT_RADIO_KM = 5; // km radius for pharmacy search
-
-// ----------------------------------------------------
 // Session memory
 // ----------------------------------------------------
 const sessions = new Map();
 const processedInboundMessages = new Map();
 const globalCatalogByPhone = new Map(); // phone -> { options, timestamp } — survives session reloads
-let providersCache = []; // cached providers with location for geolocation filtering
 let botEnabled = true;
 const ADMIN_NUMBERS = ['584128840350', '584128009482'];
 const INBOUND_MESSAGE_DEDUP_TTL_MS = 5 * 60 * 1000;
@@ -269,10 +255,7 @@ function getSession(phone) {
       pendingSelectionResults: null,
       catalogHistory: [],
       selectedProducts: [],
-      updatedAt: Date.now(),
-      userCity: null,     // ciudad del usuario ej: "ciudad bolivar"
-      userCoords: null,   // { lat, lng } del usuario
-      pendingCityRetry: null, // { text, options, context } — para reintentar tras detectar ciudad
+      updatedAt: Date.now()
     });
   }
   return sessions.get(phone);
@@ -1398,48 +1381,6 @@ async function classifyIntentWithLLM(text, sessionContext) {
   }
 }
 
-// ── LLM Medicine Extraction Fallback ─────────────────────────────────────
-// Runs AFTER the regex pipeline fails to extract any medicines.
-// Strategy: regex first → LLM only if regex returns nothing.
-// This keeps LLM calls rare (only for genuinely ambiguous/empty cases),
-// saving latency and API cost while covering edge cases the regex misses.
-async function extractMedicinesWithLLMFallback(text, session) {
-  // Phase 1: regex pipeline (fast, free, handles 90%+ of inputs)
-  const regexMedicines = extractMedicineRequests(text);
-  const regexFallback = extractMedicineRequestsFromSegments(text);
-  const allRegex = [...new Set([...regexMedicines, ...regexFallback])];
-
-  if (allRegex.length > 0) {
-    console.log('🧪 [LLM-FALLBACK] Regex extracted %d medicines: %s — no LLM needed',
-      allRegex.length, JSON.stringify(allRegex));
-    return allRegex;
-  }
-
-  // Phase 2: LLM fallback — only when regex returned nothing
-  console.log('🧪 [LLM-FALLBACK] Regex empty — activating LLM extraction for: "%s"',
-    String(text).slice(0, 80));
-
-  if (!LLM_INTENT_ENABLED || !OPENAI_API_KEY) {
-    console.log('🧪 [LLM-FALLBACK] LLM not enabled — returning empty');
-    return [];
-  }
-
-  try {
-    const llmResult = await classifyIntentWithLLM(text, { mode: session?.mode });
-    if (llmResult && llmResult.intent === 'medicine_search' && llmResult.confidence >= LLM_INTENT_CONFIDENCE_THRESHOLD) {
-      const meds = dedupLLMMedicines(llmResult.medicines || []);
-      console.log('🧠 [LLM-FALLBACK] LLM extracted %d medicines: %s (confidence=%.2f)',
-        meds.length, JSON.stringify(meds), llmResult.confidence);
-      return meds;
-    }
-    console.log('🧪 [LLM-FALLBACK] LLM returned null or low confidence — returning empty');
-    return [];
-  } catch (llmErr) {
-    console.log('🧪 [LLM-FALLBACK] LLM error — returning empty: %s', llmErr.message?.slice(0, 100));
-    return [];
-  }
-}
-
 // Map LLM intent to routeMessage handler
 // ── SMART SUBSET DEDUP ─────────────────────────────────────────────────
 // Remove ONLY dosage-form fragments, NOT valid medicine base names.
@@ -1685,53 +1626,6 @@ async function routeMessage(phone, text, session, context = {}) {
     }
   }
 
-  // Allow user to change city at any time
-  const normalizedTextForCityChange = normalizeText(text);
-  if (normalizedTextForCityChange.includes('cambiar ciudad') ||
-      normalizedTextForCityChange.includes('cambiar mi ciudad') ||
-      normalizedTextForCityChange.includes('otra ciudad') ||
-      normalizedTextForCityChange.includes('otro ciudad')) {
-    session.userCity = null;
-    session.userCoords = null;
-    session.pendingCityRetry = null;
-    touchSession(session);
-    return 'Entendido. Indícame tu nueva ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
-  }
-
-  // ── CITY GATE ─────────────────────────────────────────────────────────
-  // If user has not set their city yet, intercept medicine searches and ask for it.
-  // Store pending query so we retry it after city is detected.
-  if (!session.userCity) {
-    // Check if user is responding to a city question (pendingCityRetry is set)
-    if (session.pendingCityRetry) {
-      const cityInfo = detectCityFromText(text);
-      if (cityInfo) {
-        // City detected — save to session and retry the pending query
-        session.userCity = cityInfo.city;
-        session.userCoords = cityInfo.coords;
-        const pending = session.pendingCityRetry;
-        session.pendingCityRetry = null;
-        touchSession(session);
-        console.log(`[CITY] Detected='${cityInfo.city}' coords=${JSON.stringify(cityInfo.coords)} — retrying pending query`);
-        // Retry the pending medicine query (recursive call with same phone/session)
-        return await routeMessage(phone, pending.text, session, pending.context);
-      } else {
-        // No city detected, ask again
-        return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
-      }
-    }
-
-    // Not a city response — check if it looks like a medicine search
-    const looksLikeMedicine = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
-    if (looksLikeMedicine) {
-      // Ask user to set their city first
-      session.pendingCityRetry = { text, context };
-      touchSession(session);
-      return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
-    }
-    // Non-medicine queries (small talk, etc.) pass through without city gate
-  }
-
   // ── LLM INTENT ROUTER ──────────────────────────────────────────────────
   // Phase 1 of the intelligent agent: use LLM to classify intent BEFORE regex.
   // If the LLM returns a high-confidence classification, handle it directly.
@@ -1758,7 +1652,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
   const directMedicineQuery = extractMedicineQuery(text);
   const strictConsultationQuery = extractStrictConsultationMedicineQuery(text);
-  const extractedMedicineRequests = await extractMedicinesWithLLMFallback(text, session);
+  const extractedMedicineRequests = extractMedicineRequests(text);
   const consultationQuery = strictConsultationQuery || directMedicineQuery || extractedMedicineRequests[0] || text;
   const consultationIsMedicine = isMedicineConsultationPhrase(normalized);
   const isMedicineSignal = Boolean(
@@ -2230,12 +2124,6 @@ async function routeMessage(phone, text, session, context = {}) {
       }
     }
 
-    // Multi-medicine query: skip selection parsing — dosage numbers like 75/50/30/10
-    // are NOT option numbers; fall through to the multi-medicine pipeline below.
-    if (medicineRequests.length >= 2) {
-      // fall through to multi-medicine pipeline (line ~2294)
-    } else {
-
     const parsed = parseSelectionCommand(normalized);
     if (parsed) {
       // Use resolveSelectionResults which checks session.pendingSelectionResults FIRST,
@@ -2269,7 +2157,6 @@ async function routeMessage(phone, text, session, context = {}) {
     } else {
       return '⚠️ Escribe el número de opción y la cantidad. Ejemplos: *1 2*, *opción 1 cantidad 2*, *agregar 1 x 2*';
     }
-    } // end else (skip parseSelectionCommand for multi-medicine)
   }
 
   if (session.mode === 'awaiting_choice_global') {
@@ -2339,9 +2226,9 @@ async function routeMessage(phone, text, session, context = {}) {
     if (catalogResult_awcgelse !== null) return catalogResult_awcgelse;
   }
 
-  const multiMedicineRequests = await extractMedicinesWithLLMFallback(text, session);
+  const multiMedicineRequests = extractMedicineRequests(text);
   if (multiMedicineRequests.length > 1) {
-    const catalogResult_multi = await searchAndBuildCatalogResponse(text, session, { preExtractedMedicines: multiMedicineRequests }, { phone, pushName });
+    const catalogResult_multi = await searchAndBuildCatalogResponse(text, session, {}, { phone, pushName });
     if (catalogResult_multi !== null) return catalogResult_multi;
   }
 
@@ -2412,22 +2299,11 @@ function buildSearchDiagnosticMessage(result, query) {
   ].filter(Boolean);
   lines.push('');
 
-  if (result.geoNoResults) {
-    lines.push('⚠️ No hay farmacias a menos de 5 km de tu zona.');
-    lines.push('Escribe *LISTO* o busca otro medicamento.');
-    return lines.join('\n').trim();
-  }
-
   (result.matches || []).forEach((item, index) => {
     const title = shortenText(item.title || 'Medicamento', 52);
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
     lines.push(`💊 *${index + 1}. ${title}*`);
-    // Show pharmacy name and distance if geolocation data available
-    if (item.providerName) {
-      const distText = item.distancia != null ? ` — a ${item.distancia} km` : '';
-      lines.push(`   🏥 ${item.providerName}${distText}`);
-    }
     lines.push(`   ${usdText}  |  ${bsText}`);
     lines.push('');
   });
@@ -2556,70 +2432,6 @@ function shouldSendInstagramReel(value) {
 // ----------------------------------------------------
 // Catalog search
 // ----------------------------------------------------
-// ── Geolocation helpers ────────────────────────────────────────────────
-
-async function fetchProviders() {
-  if (providersCache.length > 0) return providersCache;
-  if (!db) return [];
-  try {
-    const snapshot = await db.collection('providers').get();
-    providersCache = snapshot.docs.map((doc) => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        providerId: data.providerId || doc.id,
-        name: data.name || 'Farmacia sin nombre',
-        ciudad: data.ciudad || '',
-        location: data.location, // Firestore GeoPoint → { latitude, longitude }
-        address: data.address || '',
-        phone: data.phone || '',
-        hours: data.hours || '',
-      };
-    });
-    console.log(`[PROVIDERS] Loaded ${providersCache.length} providers into cache`);
-    return providersCache;
-  } catch (err) {
-    console.error('❌ [PROVIDERS] Error fetching providers:', err.message);
-    return [];
-  }
-}
-
-function haversineDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) *
-    Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function detectCityFromText(text) {
-  const normalized = normalizeText(text);
-  for (const [cityName, coords] of Object.entries(CITY_COORDS)) {
-    if (normalized.includes(cityName)) {
-      return { city: cityName, coords };
-    }
-  }
-  return null;
-}
-
-function getProviderById(providerId, providersList) {
-  return providersList.find(p => p.providerId === String(providerId)) || null;
-}
-
-function enrichMatchWithProvider(item, userCoords, providersList) {
-  if (!userCoords || !item?.doc?.ProviderId) return item;
-  const provider = getProviderById(item.doc.ProviderId, providersList);
-  if (!provider?.location) return item;
-  const { latitude, longitude } = provider.location;
-  if (latitude == null || longitude == null) return item;
-  const distancia = haversineDistance(userCoords.lat, userCoords.lng, latitude, longitude);
-  return { ...item, provider, distancia };
-}
-
 async function searchAndBuildCatalogResponse(text, session, options = {}, userInfo = {}) {
   // Log only when text looks TRUNCATED (possible chunking bug)
   // DISABLED after root cause found in extractStrictConsultationMedicineQuery
@@ -2654,18 +2466,11 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // (i.e. a concatenated multi-medicine string from routeMessage), split it into
   // individual tokens so candidateMedicines gets one item per medicine, not one
   // item per concatenated blob.
-  // FIX: Split and filter each token through looksLikeMedicineName so that
-  // "acido ursodesoxicolico" → ["ursodesoxicolico"] (not ["acido","ursodesoxicolico"]).
-  // Without this, "acido" passes the length>=3 filter but is not a real medicine,
-  // and fires a spurious ACIDO search against Firebase that returns ACIDO FOLICO/etc.
   const normalizedPreExtracted = (preExtracted.length === 1 && typeof preExtracted[0] === 'string' && preExtracted[0].includes(' '))
-    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3 && looksLikeMedicineName(t))
+    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3)
     : preExtracted;
   const requestedMedicines = normalizedPreExtracted.length > 0 ? normalizedPreExtracted : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
-  // TEMP DIAGNOSTIC: log extraction steps
-  console.log('🧪 [FEXOF-DIAG] text="%s" normalizedPreExtracted=%s requestedMedicines=%s fallbackMedicines=%s',
-    String(text).slice(0, 60), JSON.stringify(normalizedPreExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines));
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
   const recipeMode = ocrOnly || Boolean(options.recipeMode) || /\b(receta|rx|rp)\b/i.test(normalizeText(text)) || /^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(normalizeText(text));
   // Known pharmaceutical dosage forms — never search for these as standalone medicines.
@@ -2702,67 +2507,27 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     }
   }
 
-  // LLM fallback: only activate when all three regex passes returned nothing
-  const llmFallbackMeds = (requestedMedicines.length === 0 && fallbackMedicines.length === 0 && flattenedLines.length === 0)
-    ? await extractMedicinesWithLLMFallback(text, session)
-    : [];
-
   const candidateMedicines = dedupeStrings([
     ...requestedMedicines,
     ...fallbackMedicines,
-    ...flattenedLines,
-    ...llmFallbackMeds
+    ...flattenedLines
   ]).filter((item) => {
     const normalizedItem = normalizeText(item);
     if (normalizedItem.length < 3) return false;
     // Reject dosage form tokens searched as standalone medicines
     if (DOSAGE_FORMS.has(normalizedItem)) return false;
-    // TEMP DIAGNOSTIC: log candidate medicines to debug fexofenadina case
-    if (normalizedItem.includes('fexofenadina')) {
-      console.log('🧪 [FEXOF-DIAG] candidateMedicine item="%s" normalized="%s" passed=true', item, normalizedItem);
-    }
     // Reject generic single-word selection tokens that are not medicine names
     if (/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(normalizedItem)) return false;
     if (/^(?:seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|mostrar|mostra|muestra)$/i.test(normalizedItem)) return false;
     if (/^(?:listo|resumen)$/i.test(normalizedItem)) return false;
     if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
-    if (/^(?:por|favor)$/i.test(normalizedItem)) return false;
     if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3"
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
-    // ── REJECT concatenated multi-medicine OCR strings (4+ tokens with spaces) ──
+    // ── REJECT concatenated multi-medicine OCR strings (7+ tokens with spaces) ──
     // These are never valid single-medicine search queries — they create duplicate
-    // search groups like "SIMETICONA DOBET GOTAS HIDROTEN"
+    // search groups like "ESOZ LEPRIT BUMETIN RETADAR EVIGAX CAP MODERAN SUSP"
     const itemTokens = normalizedItem.split(/\s+/).filter(Boolean);
     if (itemTokens.length >= 7) return false;
-    // For 4-6 token strings: detect if it is a corrupted OCR merge of 2+ distinct
-    // medicines that are ALSO present as standalone candidates in the same list.
-    // Count how many distinct standalone medicine names appear inside this string.
-    // If 2+ matches → reject it as a concatenated fragment.
-    if (itemTokens.length >= 4) {
-      const otherCandidates = candidateMedicines.filter(c => {
-        const cn = normalizeText(c);
-        return cn.length >= 3 && cn !== normalizedItem && !DOSAGE_FORMS.has(cn);
-      });
-      let containedCount = 0;
-      for (const other of otherCandidates) {
-        const otherNorm = normalizeText(other);
-        // Strip dosage suffixes to get just the medicine name for comparison
-        const otherNormRaw = normalizeText(other);
-        const otherNormBase = otherNormRaw
-          .replace(/\s*\d+\s*(?:mg|mcg|g|gr|ml|mL|ui|iu)\b.*$/i, '')
-          .replace(/\s*de\s+\d+\s*(?:mg|mcg|g|gr|ml|cc|ui|iu)\b.*$/i, '')
-          .trim();
-        // Check if this medicine (without dosage) appears in itemTokens
-        if (itemTokens.includes(otherNormBase) || itemTokens.some(t => otherNormBase.startsWith(t + ' ') || t.startsWith(otherNormBase + ' '))) {
-          containedCount++;
-          if (containedCount >= 2) break;
-        }
-      }
-      if (containedCount >= 2) {
-        console.log('🧹 [CONCAT-REJECT] Rejected concatenated fragment: "%s" (matched %d other medicines)', item, containedCount);
-        return false;
-      }
-    }
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
     if (/\b(paciente)\b/i.test(normalizedItem)) return false;
     if (/\b(nombre)\b/i.test(normalizedItem)) return false;
@@ -2796,10 +2561,6 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     const missingMedicineSet = new Set();
 
     console.log('🧪 [MULTI-MEDICINE] dedupedCandidates=%s (count=%d)', JSON.stringify(dedupedCandidates), dedupedCandidates.length);
-    // TEMP DIAGNOSTIC: log dedupedCandidates for fexofenadina case
-    if (JSON.stringify(dedupedCandidates).includes('fexofenadina')) {
-      console.log('🧪 [FEXOF-DEDUP] dedupedCandidates=%s rawCandidates=%s', JSON.stringify(dedupedCandidates), JSON.stringify(rawCandidates));
-    }
 
     for (const medicineQuery of dedupedCandidates) {
       const result = await searchMedicinesByName(medicineQuery, {
@@ -2808,8 +2569,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
         strictListMode: !ocrOnly,
         recipeMode,
         strictConsultationMode: consultationMode,
-        forceExactConsultationToken: consultationMode && !recipeMode,
-        userCoords: session.userCoords,
+        forceExactConsultationToken: consultationMode && !recipeMode
       });
       console.log('🧪 [MEDICINE-RESULT] query="%s" matches=%d groupTitle="%s"',
         medicineQuery, result?.matches?.length || 0, result?.groupTitle || '');
@@ -2881,13 +2641,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     recipeMode,
     strictConsultationMode: consultationMode,
     forceExactConsultationToken: consultationMode && !recipeMode,
-    queryDosageSignatures: queryDosageSignatures.length > 0 ? queryDosageSignatures : null,
-    userCoords: session.userCoords,
+    queryDosageSignatures: queryDosageSignatures.length > 0 ? queryDosageSignatures : null
   });
-
-  // TEMP DIAGNOSTIC: log result matches to debug missing products
-  console.log('🧪 [FEXOF-DIAG] singleQuery=%s result.matchesCount=%d result.matches[0].title=%s',
-    singleQuery, result?.matches?.length || 0, result?.matches?.[0]?.title || 'N/A');
 
   if (!result || !result.matches.length) {
     session.mode = 'awaiting_product_name';
@@ -2916,7 +2671,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
   console.log(`🧪 [SEARCH-KICK] userQuery='${userQuery}' strictConsultationMode=${options.strictConsultationMode} preExtractedMedicines=${JSON.stringify(options.preExtractedMedicines)}`);
   if (!db) return null;
 
-const userCoords = options.userCoords || null;
   const query = normalizeText(userQuery);
   const queryTokens = tokenize(query).filter((t) => !STOPWORDS.has(t) && t.length > 1);
 
@@ -3427,14 +3181,6 @@ const userCoords = options.userCoords || null;
         || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
         || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
       ) return true;
-      // 1a) Substring-in-token for brand-name tokens: when "FEXOFENADINA" query token is embedded
-      // inside a brand token like "FEXORAT", the exact token check fails. Catch it here.
-      // Only for q.length>=4 to avoid short-token false positives.
-      if (q.length >= 4) {
-        for (const t of item.tokenSet) {
-          if (t.length >= 4 && t.includes(q)) return true;
-        }
-      }
       // 2) Fallback fuzzy: algún token del producto se parece ≥92% al query
       for (const t of item.tokenSet) {
         if (tokenSimilarity(q, t) >= 0.92) return true;
@@ -3454,25 +3200,6 @@ const userCoords = options.userCoords || null;
     }
   } else {
     console.log(`[CONSULTATION-GATE] SKIPPED: consultationMode=${consultationMode} primaryTokens.length=${primaryTokens.length}`);
-  }
-
-  // Salt-only query guard for OCR (consultation mode):
-  // When the user sends an OCR image like "FEXOFENADINA CLORHIDRATO 120 MG", the LLM may
-  // extract "CLORHIDRATO" as a separate query. Searching for "CLORHIDRATO" alone returns
-  // dozens of unrelated products (METFORMINA CLORHIDRATO, BUPIVACAINA CLORHIDRATO, etc.)
-  // which is clearly wrong. Salt forms (clorhidrato, sulfato, etc.) are NOT medicines
-  // by themselves — they are the active ingredient's salt. In OCR mode, we search by the
-  // commercial name, not the active ingredient. So "CLORHIDRATO" alone → skip.
-  if (consultationMode && primaryTokens.length > 0) {
-    const saltOnlyRe = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
-    const dosageTokenRe = /^(?:\d+(?:[.,]\d+)?\s*(?:m\s*g|mcg|g|gr|m\s*l|mL|ui|iu|ml)|[xyz]\s*\d+|\d+%|m\s*g$|m\s*l$|mcg$|g$|gr$|ui$|iu$|\d+(?:[.,]\d+)?\s*(?:tab|cap|comp|sobres?|amp|vial|gotas?|ml|gr|mg|g)$)$/i;
-    const rawQueryUpper = query.toUpperCase();
-    const tokensAfterDosage = queryTokens.filter(t => !dosageTokenRe.test(t));
-    const isPureSaltForm = tokensAfterDosage.length === 1 && saltOnlyRe.test(tokensAfterDosage[0]);
-    if (isPureSaltForm) {
-      console.log(`🧪 [SALT-FORM-GUARD] query="${query}" is pure salt form (no medicine name) — returning empty in OCR mode`);
-      return { query, queryTokens, exchangeRate, matches: [] };
-    }
   }
 
   let candidateMatches = [];
@@ -3654,18 +3381,6 @@ const userCoords = options.userCoords || null;
     } else {
       console.log(`[DEGRADED-DAFLON] NOT FOUND in scoredProducts (checked tokenSet for 'daflon')`);
     }
-    // Diagnostic: find FEXORAT and FEXOFENADINA entries in scoredProducts
-    const fexoratIdx = scoredProducts.findIndex((item) => item.tokenSet && (item.tokenSet.has('fexorat') || (item.productTitleFull && /fexorat/i.test(item.productTitleFull))));
-    const fexofenadinaStandaloneIdx = scoredProducts.findIndex((item) => item.tokenSet && (item.tokenSet.has('fexofenadina') && !item.tokenSet.has('fexorat') && !item.tokenSet.has('rinolast') && !item.tokenSet.has('suspension') && (item.productTitleFull && /^(?!.*\().*fexofenadina\s*180\s*mg/i.test(item.productTitleFull))));
-    console.log(`[DIAG-FEXORAT] fexoratIdx=${fexoratIdx} fexofenadinaStandaloneIdx=${fexofenadinaStandaloneIdx}`);
-    if (fexoratIdx >= 0) {
-      const fexoratItem = scoredProducts[fexoratIdx];
-      console.log(`[DIAG-FEXORAT] rank=${fexoratIdx} title='${fexoratItem.productTitleFull}' score=${fexoratItem.score ?? 'N/A'} refSim=${fexoratItem.referenceSimilarity ?? 'N/A'} tokenSet=${JSON.stringify([...fexoratItem.tokenSet].slice(0, 10))}`);
-    }
-    if (fexofenadinaStandaloneIdx >= 0) {
-      const fsItem = scoredProducts[fexofenadinaStandaloneIdx];
-      console.log(`[DIAG-FEXORAT] fexofenadinaStandalone rank=${fexofenadinaStandaloneIdx} title='${fsItem.productTitleFull}' score=${fsItem.score ?? 'N/A'} refSim=${fsItem.referenceSimilarity ?? 'N/A'} tokenSet=${JSON.stringify([...fsItem.tokenSet].slice(0, 10))}`);
-    }
     const degradedMatches = scoredProducts.filter((item) => {
       const candidateCore = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
       if (!candidateCore) return false;
@@ -3715,16 +3430,14 @@ const userCoords = options.userCoords || null;
 
     }
 
-  // ── Firebase direct fallback: cuando los candidatos del catálogo local (primeros 2000 docs)
-  // son escasos (< 3) o ausentes, consultar Firebase directamente para capturar productos
-  // más allá del documento 2000 usando arrayContains sobre productTitleArray.
-  if (candidateMatches.length < 3 && db) {
-    // Buscar el primer token que NO sea sal farmacéutica ni dosage para la query directa.
-    // En "fexofenadina clorhidrato 120 mg", el token útil es "fexofenadina".
-    const saltFormTokens = new Set(['clorhidrato','cloruro','sulfato','fosfato','acetato','tartrato','malato','bromuro','ioduro','nitrato','besilato','succinato','fumarato','malonato','tiocianato','glucosamina','lisina','ornitina']);
-    const qToken = (queryTokens.find((t) => !saltFormTokens.has(t) && !/^\d+$/.test(t) && t.length >= 4) || queryTokens[0] || '');
-    if (qToken.length >= 4) {
-      console.log(`[FIREBASE-DIRECT] candidateMatches=${candidateMatches.length} (< 3), querying Firebase arrayContains for token='${qToken}'...`);
+  if (!candidateMatches.length) {
+    // ── Firebase direct fallback: candidateMatches empty after all local search paths.
+    // Query Firebase directly using arrayContains on productTitleArray to catch products
+    // beyond the 2000-document catalog limit or not indexed in scoredProducts.
+    const qToken = queryTokens[0] || '';
+    const qIsSingleToken = !isVitaminQuery && !hasQueryDosage && queryTokens.length === 1;
+    if (qIsSingleToken && db) {
+      console.log(`[FIREBASE-DIRECT] candidateMatches empty, querying Firebase for token='${qToken}'...`);
       try {
         const [pmSnap, ppSnap] = await Promise.all([
           db.collection('products-market').where('productTitleArray', 'array-contains', qToken).limit(20).get(),
@@ -3737,30 +3450,20 @@ const userCoords = options.userCoords || null;
             .map((doc) => {
               const s = buildCatalogSignal(doc);
               const m = scoreSignal(s);
-              const basePriceUsd = getPrice(doc);
-              const basePriceBs = getPriceBs(doc, exchangeRate);
-              const pricing = applySalesPricing(basePriceUsd, exchangeRate);
-              const shortLabel = buildShortProductLabel(doc);
               return {
                 ...m,
-                productTitleFull: normalizeText(doc?.ProductTitle || shortLabel),
+                productTitleFull: doc.productTitleFull || doc.title || '',
                 productText: doc.productText || '',
-                title: shortLabel,
-                doc,
-                basePriceUsd,
-                basePriceBs,
-                priceUsd: pricing.displayUsd,
-                priceBs: pricing.displayBs,
-                feeRate: pricing.feeRate,
-                feeAmountUsd: pricing.feeAmountUsd,
+                title: doc.title || '',
+                priceUsd: doc.priceUsd ?? 0,
+                priceBs: doc.priceBs ?? 0,
+                feeRate: doc.feeRate ?? 0,
+                feeAmountUsd: doc.feeAmountUsd ?? 0,
               };
             })
             .sort((a, b) => b.score - a.score);
           console.log(`[FIREBASE-DIRECT] scored ${directScored.length} products, top title='${directScored[0]?.productTitleFull}' score=${directScored[0]?.score}`);
-          // Append new candidates, avoiding duplicates with existing ones
-          const existingIds = new Set(candidateMatches.map((c) => c.productTitleFull));
-          const newCandidates = directScored.filter((c) => !existingIds.has(c.productTitleFull));
-          candidateMatches = [...candidateMatches, ...newCandidates];
+          candidateMatches = directScored;
         }
       } catch (e) {
         console.error(`[FIREBASE-DIRECT] error: ${e.message}`);
@@ -3953,83 +3656,99 @@ const userCoords = options.userCoords || null;
   // that exact dosage. Uses passedDosageSigs (from original text, not stripped query).
   // This ensures "losartan potasico 50mg" only returns 50mg products.
   // This runs after scoring so it catches all paths including consultationMode.
+  // ── STRICT MODIFIER + DOSAGE FILTER ────────────────────────────────────────
+  // When query has modifier tokens (forte, flex, plus, etc.), ONLY accept
+  // products that contain ALL modifiers. Missing modifier = excluded, not penalised.
+  // When query has dosage signatures (50mg, 100mg, etc.):
+  //   - In recipeMode: product MUST contain that exact dosage (strict filter).
+  //   - In non-recipe mode: dosage is CONTEXT from the original text, NOT a strict
+  //     requirement. We penalize non-matching scores but keep all candidates so
+  //     the user sees all available variants (e.g. "fexofenadina 120mg" should
+  //     show 120mg, 180mg, and suspension, not just the 120mg product).
   if ((modifierTokens && modifierTokens.length > 0) || hasPassedDosage) {
     const beforeCount = finalMatches.length;
-    const filteredByModifier = finalMatches.filter((item) => {
-      const productText = (item.productTitleFull || '').toLowerCase();
-      // Modifier filter: product must contain every modifier token
-      const modifierOk = !modifierTokens || modifierTokens.length === 0 ||
-        modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
-      if (!modifierOk) return false;
-      // Dosage filter: if query has dosage signatures (passed from original text), product must contain each one
-      if (hasPassedDosage) {
+    if (recipeMode) {
+      // Strict mode: reject products that don't match modifiers or dosage
+      const filteredByModifier = finalMatches.filter((item) => {
+        const productText = (item.productTitleFull || '').toLowerCase();
+        const modifierOk = !modifierTokens || modifierTokens.length === 0 ||
+          modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+        if (!modifierOk) return false;
+        if (hasPassedDosage) {
+          const productDosageSigs = extractDosageSignatures(item.productTitleFull || '');
+          const dosageOk = passedDosageSigs.every((sig) =>
+            productDosageSigs.some((pSig) => pSig === sig || pSig.replace(/\s+/g, '') === sig.replace(/\s+/g, ''))
+          );
+          if (!dosageOk) return false;
+        }
+        return true;
+      });
+      console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${filteredByModifier.length} [STRICT]`);
+      if (filteredByModifier.length > 0) {
+        finalMatches = filteredByModifier;
+      }
+    } else if (hasPassedDosage) {
+      // Non-strict mode: penalize non-matching products but keep all candidates
+      let penaltyCount = 0;
+      finalMatches = finalMatches.map((item) => {
+        const productText = (item.productTitleFull || '').toLowerCase();
+        const modifierOk = !modifierTokens || modifierTokens.length === 0 ||
+          modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+        if (!modifierOk) {
+          item.score -= 400;
+          penaltyCount++;
+          return item;
+        }
         const productDosageSigs = extractDosageSignatures(item.productTitleFull || '');
-        const dosageOk = passedDosageSigs.every((sig) =>
+        const dosageMatch = passedDosageSigs.some((sig) =>
           productDosageSigs.some((pSig) => pSig === sig || pSig.replace(/\s+/g, '') === sig.replace(/\s+/g, ''))
         );
-        if (!dosageOk) return false;
-      }
-      return true;
-    });
-    console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${filteredByModifier.length}`);
-    if (filteredByModifier.length > 0) {
-      finalMatches = filteredByModifier;
-    }
-    // If filteredByModifier is empty, keep original (don't suppress all results)
-  }
-
-  // ── GEOLOCATION: Load providers and filter by distance ─────────────────
-  const radioKm = options.radioKm ?? DEFAULT_RADIO_KM;
-  let providersList = [];
-  if (userCoords) {
-    providersList = await fetchProviders();
-    console.log(`[GEO] userCoords=${JSON.stringify(userCoords)} providers=${providersList.length} radio=${radioKm}km`);
-  }
-
-  // ── ENRICH + FILTER + SORT matches ──────────────────────────────────────
-  let geoMatches = finalMatches;
-  if (userCoords && providersList.length > 0) {
-    // Enrich each match with provider info and distance
-    geoMatches = finalMatches
-      .map((item) => enrichMatchWithProvider(item, userCoords, providersList))
-      .filter((item) => {
-        if (item.distancia == null) return true; // keep if no provider found
-        return item.distancia <= radioKm;
-      })
-      .sort((a, b) => {
-        // Primary sort: distance (asc). Items without distance go last.
-        const distA = a.distancia ?? Infinity;
-        const distB = b.distancia ?? Infinity;
-        if (distA !== distB) return distA - distB;
-        // Secondary sort: score (desc) for same distance
-        return (b.score || 0) - (a.score || 0);
+        if (!dosageMatch) {
+          item.score -= 300;
+          penaltyCount++;
+        }
+        return item;
       });
-
-    const filteredOut = finalMatches.length - geoMatches.length;
-    if (filteredOut > 0) {
-      console.log(`[GEO-FILTER] query='${query}' filteredOut=${filteredOut} within=${radioKm}km`);
+      // Re-sort by updated scores
+      finalMatches.sort((a, b) => {
+        const vitaminA = a.vitaminHit ? 1 : 0;
+        const vitaminB = b.vitaminHit ? 1 : 0;
+        if (vitaminA !== vitaminB) return vitaminB - vitaminA;
+        const exactA = a.exactHit ? 1 : 0;
+        const exactB = b.exactHit ? 1 : 0;
+        if (exactA !== exactB) return exactB - exactA;
+        const phraseA = a.phraseHit ? 1 : 0;
+        const phraseB = b.phraseHit ? 1 : 0;
+        if (phraseA !== phraseB) return phraseB - phraseA;
+        const scoreA = a.score ?? 0;
+        const scoreB = b.score ?? 0;
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+        const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+        return priceA - priceB;
+      });
+      console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${finalMatches.length} penalties=${penaltyCount} [SOFT]`);
+    } else if (modifierTokens && modifierTokens.length > 0) {
+      // No dosage but has modifiers → strict filter
+      const filteredByModifier = finalMatches.filter((item) => {
+        const productText = (item.productTitleFull || '').toLowerCase();
+        return modifierTokens.every((mod) => productText.includes(mod.toLowerCase()));
+      });
+      console.log(`🧪 [MODIFIER-FILTER] query='${query}' modifierTokens=${JSON.stringify(modifierTokens)} passedDosageSigs=${JSON.stringify(passedDosageSigs)} before=${beforeCount} after=${filteredByModifier.length} [MODIFIERS-ONLY]`);
+      if (filteredByModifier.length > 0) {
+        finalMatches = filteredByModifier;
+      }
     }
   }
 
-  if (geoMatches.length === 0) {
-    return {
-      query,
-      queryTokens,
-      exchangeRate,
-      groupTitle: query,
-      matches: [],
-      geoNoResults: userCoords ? true : false
-    };
-  }
-
-  const top3titles = geoMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
-  console.log(`🧪 [SMN-RETURN] query='${query}' geoMatches.length=${geoMatches.length} topMatches.length=${topMatches.length} top3=[${top3titles}] consultationMode=${consultationMode}`);
+  const top3titles = finalMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
+  console.log(`🧪 [SMN-RETURN] query='${query}' finalMatches.length=${finalMatches.length} topMatches.length=${topMatches.length} top3=[${top3titles}] consultationMode=${consultationMode}`);
   return {
     query,
     queryTokens,
     exchangeRate,
     groupTitle: query,
-    matches: geoMatches.map((item) => ({
+    matches: finalMatches.map((item) => ({
       title: item.title,
       basePriceUsd: item.priceUsd,
       basePriceBs: item.priceBs,
@@ -4042,11 +3761,7 @@ const userCoords = options.userCoords || null;
       phraseHit: item.phraseHit,
       tokenCoverage: item.tokenCoverage,
       exactHit: item.exactHit,
-      focusTitleHit: item.vitaminHit,
-      // Geolocation data
-      providerName: item.provider?.name || null,
-      providerCiudad: item.provider?.ciudad || null,
-      distancia: item.distancia != null ? Math.round(item.distancia * 10) / 10 : null,
+      focusTitleHit: item.vitaminHit
     }))
   };
 }
@@ -4068,10 +3783,6 @@ function buildCatalogResponse(result) {
     const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
     const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
     lines.push(`💊 *${index + 1}. ${title}*`);
-    if (item.providerName) {
-      const distText = item.distancia != null ? ` — a ${item.distancia} km` : '';
-      lines.push(`   🏥 ${item.providerName}${distText}`);
-    }
     lines.push(`   ${usdText}  |  ${bsText}`);
     lines.push('');
   });
@@ -4121,17 +3832,10 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
 
   let optionNumber = 1;
   // Normalize groupTitles to avoid duplicates like "SIMETICONA" and "SIMETICONA DE 125 MG"
-  // Group results by normalized medicine name, merging groups that differ only in dosage.
-  //
-  // IMPORTANT: use result.query (not groupTitle) as the source of truth.
-  // groupTitle is set to query inside searchMedicinesByName and is not further
-  // normalized — but downstream code may have corrupted it (e.g. returning the
-  // full multi-medicine query string instead of the individual medicine name).
-  // result.query is the original medicineQuery passed to searchMedicinesByName
-  // in the multi-medicine loop and is always a single, correct medicine name.
+  // Group results by normalized medicine name, merging groups that differ only in dosage
   const normalizedGroups = new Map();
   for (const result of results) {
-    const rawTitle = String(result.query || result.groupTitle || 'MEDICAMENTO').toUpperCase();
+    const rawTitle = String(result.groupTitle || result.query || 'MEDICAMENTO').toUpperCase();
     // Strip dosage suffixes to find the base medicine name
     const normalizedTitle = rawTitle
       .replace(/^(?:TIENES|TIENE|TENER|HAY|DISPONIBLE|DISPONIBLES|DISPONIBILIDAD|POR\s+FAVOR|QUISIERA|QUIERO|NECESITO|BUSCO|BUSCAR|CONSULTAR)\s+/i, '')
@@ -4144,24 +3848,9 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
     // If this group's normalized name is a substring of the query (meaning the query
     // is more specific), don't create a separate group — it would be a subset duplicate.
     // E.g. query="DORIXINA FLEX", normalized="DORIXINA" → skip; query="DORIXINA", same → keep.
-    // HOWEVER: if the remainder after the normalized title is PURE DOSAGE (e.g. "40 MG",
-    // "300 MG"), then this is the SAME medicine with dosage info, NOT a different product —
-    // do NOT skip. Only skip when remainder is a real modifier like "FLEX", "FORTE", "DUO".
     const rawQueryUpper = String(result.query || '').toUpperCase();
-    const isSubsetOfQuery = (() => {
-      if (rawQueryUpper.length <= normalizedTitle.length || !rawQueryUpper.includes(normalizedTitle)) {
-        return false;
-      }
-      // Extract what comes after the normalized title in the query
-      const remainder = rawQueryUpper.startsWith(normalizedTitle + ' ')
-        ? rawQueryUpper.slice(normalizedTitle.length + 1)
-        : '';
-      // Pure dosage remainder: "40 MG", "300 MG", "10,5 ML", "DE 40 MG" → same medicine, don't skip
-      if (/^\d+(?:[.,]\d+)?\s*(MG|MCG|G|GR|ML|CC|UI|IU)\s*$/i.test(remainder)) return false;
-      if (/^DE\s+\d+(?:[.,]\d+)?\s*(MG|MCG|G|GR|ML|CC|UI|IU)\s*$/i.test(remainder)) return false;
-      // Otherwise it's a real modifier (FLEX, FORTE, DUO…) → skip
-      return true;
-    })();
+    const isSubsetOfQuery = rawQueryUpper.length > normalizedTitle.length &&
+      rawQueryUpper.includes(normalizedTitle);
     if (isSubsetOfQuery) {
       // Merge matches directly into the superstring group if it exists
       const superstringKey = normalizedGroups.has(key) ? key : null;
@@ -4214,10 +3903,6 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
       const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
       const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
       lines.push(`💊 ${optionNumber}. ${name}`);
-      if (item.providerName) {
-        const distText = item.distancia != null ? ` — a ${item.distancia} km` : '';
-        lines.push(`   🏥 ${item.providerName}${distText}`);
-      }
       lines.push(`   ${usdText}  |  ${bsText}`);
       optionNumber += 1;
     });
@@ -4260,16 +3945,10 @@ function extractMedicineRequests(text) {
     // Always split by spaces and validate each token. This handles both:
     // (a) single-token query + multi-token cleaned → space-token fallback (was already here)
     // (b) multi-token query (e.g. "bumetin retadar evigax...") → now split and validated too
-    const SALT_FORMS = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
     const spaceTokens = cleaned.split(/\s+/).filter((t) => t.length >= 3);
     let tokensAdded = 0;
     for (const token of spaceTokens) {
       if (results.includes(token)) continue;
-      const lower = token.toLowerCase();
-      // Reject pharmaceutical salt forms — they are descriptors, not medicines
-      // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
-      // not a standalone medicine — treat it like a salt form so it never appears alone.
-      if (SALT_FORMS.has(lower) || lower === 'acido' || lower === 'ácido') continue;
       if (looksLikeMedicineName(token)) {
         results.push(token);
         tokensAdded += 1;
@@ -4281,13 +3960,7 @@ function extractMedicineRequests(text) {
     // search groups like "ESOZ LEPRIT BUMETIN..." with bad fuzzy matches.
     const queryTokensCount = cleaned.split(/\s+/).length;
     if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6) {
-      // Reject fragments that start with a bare number — e.g. "75 Losartan" from
-      // splitSingleLineMedicineList boundary splitting on dosage numbers.
-      if (/^\d+\s/.test(query)) {
-        console.log('🧹 [EXTRACT-MED] Rejected number-prefixed fragment: "%s"', query);
-      } else {
-        results.push(query);
-      }
+      results.push(query);
     }
   }
 
@@ -4530,29 +4203,26 @@ function flattenCatalogResults(results) {
   // guaranteed same product even if laboratory/sizing in title differs).
   const seenTitles = new Set();
   const seenProductIds = new Set();
-  const seenProductTitleFull = new Set();
   for (const group of Array.isArray(results) ? results : []) {
     const groupQuery = String(group?.query || '').trim();
     const groupLabel = String(group?.groupTitle || group?.title || groupQuery || 'Medicamento').trim();
     for (const item of group?.matches || []) {
       const normTitle = normalizeText(item.title || '');
-      const normPTF = normalizeText(item.productTitleFull || '');
       const productId = item.doc?.id;
       // Skip if we've already seen this product (by doc.id Firebase document ID,
       // or by exact normalized title — handles same product returned via
-      // different search queries like "evigax cap" vs "evigax").
-      // Also dedup by productTitleFull as fallback when title is empty.
-      const titleKey = normTitle || normPTF;
+      // different search queries like "evigax cap" vs "evigax")
+      const titleKey = normTitle;
       const idKey = String(productId || '');
-      if (titleKey && seenTitles.has(titleKey)) {
-        console.log('🧹 [FLATTEN-DEDUP] Skipped duplicate title="%s" ptf="%s" id="%s"', item.title || '', item.productTitleFull || '', idKey);
+      if (seenTitles.has(titleKey)) {
+        console.log('🧹 [FLATTEN-DEDUP] Skipped duplicate title="%s" id="%s"', item.title || '', idKey);
         continue;
       }
       if (idKey && seenProductIds.has(idKey)) {
         console.log('🧹 [FLATTEN-DEDUP] Skipped duplicate productId="%s" title="%s"', idKey, item.title || '');
         continue;
       }
-      if (titleKey) seenTitles.add(titleKey);
+      seenTitles.add(titleKey);
       if (idKey) seenProductIds.add(idKey);
       flattened.push({
         groupQuery,
@@ -5461,15 +5131,12 @@ function extractRecipeMedicineLines(value) {
   // }
 
   // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
-  const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
-  const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido)$/i;
-  // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
   if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
     // Single-line multi-token input: split into individual tokens
-    // Filter out dosage forms (CAP, SUSP, etc.), salt forms (CLORHIDRATO, SULFATO, etc.),
-    // and pure numeric tokens — they are not standalone medicines
-    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !SALT_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
+    // Filter out dosage forms (CAP, SUSP, etc.) and known non-medicine tokens
+    const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
+    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
     console.log('🧪 [EXTRACT-RECIPE] raw value=%s → SPLIT into tokens=%s', raw.slice(0, 200), JSON.stringify(splitTokens));
     return splitTokens;
   }
@@ -5519,14 +5186,8 @@ function extractRecipeMedicineLines(value) {
     }
 
     if (dosages.length === 0) {
-      // No dosage found — line might be "EVIGAX CAP" (form only) — keep as-is.
-      // BUT: skip lines that are purely a salt form (e.g. "CLORHIDRATO") — they are
-      // not standalone medicines. Also skip lines where every token is a salt form.
-      const lineWords = lineFixed.split(/\s+/);
-      const allSaltForm = lineWords.length > 0 && lineWords.every(w => SALT_FORMS_RE.test(w));
-      if (!allSaltForm) {
-        refinedLines.push(lineFixed);
-      }
+      // No dosage found — line might be "EVIGAX CAP" (form only) — keep as-is
+      refinedLines.push(lineFixed);
     } else if (dosages.length === 1) {
       // Single dosage — keep the whole line (it's a single medicine)
       refinedLines.push(lineFixed);
@@ -5933,18 +5594,16 @@ function extractPrimaryRecipeMedicineQuery(value) {
   const normalized = normalizeText(raw);
   if (!normalized) return '';
 
-if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return '';
+  if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return '';
   if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|stadium|ano nac|año nac|datum|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return '';
 
   const tokens = normalized.split(' ').filter(Boolean);
   if (!tokens.length) return '';
 
-  const MED_FORM_TOKENS=new Set([
+  const MED_FORM_TOKENS = new Set([
     'ampolla', 'ampollas', 'vial', 'viales', 'frasco', 'frascos', 'tableta', 'tabletas', 'capsula', 'capsulas',
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
-    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass',
-    // Pharmaceutical salt forms — never standalone medicines
-    'potasico', 'potásico', 'sodico', 'sódico', 'clorhidrato', 'maleato', 'besilato', 'sulfato', 'nitrato', 'fosfato', 'acetato', 'diclorhidrato', 'bromuro'
+    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
@@ -5964,10 +5623,6 @@ function looksLikeMedicineName(value) {
   const text = normalizeText(value);
   if (!text) return false;
   if (isGreetingOrMenu(text) || isThanksMessage(text) || /^(listo|resumen|bot on|bot off|bot status)$/i.test(text)) return false;
-
-  // ── Salt forms are NEVER standalone medicines ──────────────────────────
-  const SALT_FORMS_CHECK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro','acido','ácido']);
-  if (SALT_FORMS_CHECK.has(text)) return false;
 
   // ── NO-CONSULTA denylist ──────────────────────────────────────────────
   // Mensajes que claramente no son consultas de medicamentos
@@ -6008,21 +5663,13 @@ function looksLikeMedicineName(value) {
     'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'esos', 'esas', 'aquel', 'aquella',
     'tengo', 'tienes', 'tiene', 'tenemos', 'tienen', 'hacer', 'hace', 'haces', 'hacen',
     'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer',
-    'feliz', 'viernes', 'buenos', 'buenas', 'dias', 'tardes', 'noches',
-    // Bloquear palabras conversacionales de 4+ chars que se colaban como "medicinas"
-    'hola', 'holas', 'quiero', 'saben', 'saber', 'hacen', 'haces', 'hacer',
-    'disponen', 'disponer', 'tienes', 'tengo', 'tiene', 'buscar', 'busco']);
+    'feliz', 'viernes', 'buenos', 'buenas', 'dias', 'tardes', 'noches']);
   const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()));
   // Also accept 4-char medicine names (e.g. "esoz", "fatr", "ferrz")
   // Reject single generic tokens even if 4+ chars (feliz/viernes/dias/buenos/buenas/etc.)
-  // Also reject tokens that START with a WEAK_OPENER prefix (e.g. "dispones" starts with "dis")
-  const WEAK_OPENER_PREFIXES_LM = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier', 'dis'];
-  const singleLower = tokens[0] ? tokens[0].toLowerCase() : '';
-  const startsWithWeakOpener = singleLower.length >= 4
-    && (WEAK_OPENER_PREFIXES_LM.some(p => singleLower.startsWith(p)) || GENERIC_TOKENS.has(singleLower));
   const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4
     && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0])
-    && !startsWithWeakOpener;
+    && !GENERIC_TOKENS.has(tokens[0].toLowerCase());
 
   return hasDosageOrForm || hasUsefulMultiTokenPhrase || hasStrongSingleToken;
 }
@@ -6103,7 +5750,7 @@ function extractMedicineQuery(text) {
     .replace(/^(?:donde\s+puedo\s+comprar|dónde\s+puedo\s+comprar|donde\s+comprar|dónde\s+comprar|donde\s+consigo|dónde\s+consigo|donde\s+encuentro|dónde\s+encuentro)\s+/i, '')
     .replace(/^(?:me\s+puedes\s+ayudar\s+con|me\s+ayudas\s+con|necesito|busco|busque|buscame|buscando|quiero|quisiera|me\s+interesa|me\s+interesan|tienes|tiene|tienen|hay|hay\s+disponible|disponibilidad(?:\s+de)?|informar(?:\s+sobre)?|informe(?:\s+sobre)?|consultar(?:\s+sobre)?|consulta(?:\s+sobre)?|informame(?:\s+sobre)?|informarme(?:\s+sobre)?|saber(?:\s+el)?(?:\s+precio)?(?:\s+de)?|cuanto\s+cuesta|cuánto\s+cuesta|conoces|vendes|venden)\s+/i, '')
     .replace(/^(?:comprar|conseguir|buscar|necesitar|querer|pedir|obtener|hallar|hallarme|buscame|buscame|buscarnos?|encuentra[rm]?)\s+/i, '')
-    .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a|la|el|las|los|unos|unas|y|acido|ácido)\s+/i, '')
+    .replace(/^(?:de|del|para|con|sobre|acerca\s+de|respecto\s+a|la|el|las|los|unos|unas|y)\s+/i, '')
     // Remove 'disponible' and 'precio' from anywhere by replacing with space (not deleting), preserving medicine names between them
     .replace(/\b(?:precio|costo|valor)\b/gi, ' ')
     .replace(/\b(?:disponible|hay\s+disponible|disponibles)\b/gi, ' ')
@@ -6135,54 +5782,40 @@ function extractMedicineQuery(text) {
 
   if (!tokens.length) return '';
 
-const MED_FORM_TOKENS=new Set([
+  const MED_FORM_TOKENS = new Set([
     'ampolla', 'ampollas', 'vial', 'viales', 'frasco', 'frascos', 'tableta', 'tabletas', 'capsula', 'capsulas',
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
-    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass',
-    // Pharmaceutical salt forms — never standalone medicines
-    'potasico', 'potásico', 'sodico', 'sódico', 'clorhidrato', 'maleato', 'besilato', 'sulfato', 'nitrato', 'fosfato', 'acetato', 'diclorhidrato', 'bromuro'
+    'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
-  const MED_QUERY_WEAK_TOKENS=new Set([
+  const MED_QUERY_WEAK_TOKENS = new Set([
     'precio', 'costo', 'valor', 'consulta', 'consultar', 'saber',
     'hola', 'buenas', 'gracias', 'medicamento', 'medicamentos', 'producto', 'productos', 'favor', 'por',
     'disponible', 'disponibles', 'disponibilidad',
     'me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto',
     'es', 'soy', 'son', 'está', 'están',
     'quiero', 'quisiera', 'necesito', 'busco', 'busque',
-    'caja', 'cajas', 'unidad', 'unidades', 'opcion', 'opciones',
-    // Verbs / conversational fragments that should never be medicine names
-    'disponen', 'disponer', 'tengo', 'tienes', 'tiene', 'hacer', 'hace', 'haces'
+    'caja', 'cajas', 'unidad', 'unidades', 'opcion', 'opciones'
   ]);
-  const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier', 'dis'];
+  const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier'];
   function isWeakOpener(token) {
     const lower = token.toLowerCase();
     if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
     return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
   }
-  // Salt forms are NEVER standalone medicines — treat them as weak openers
-  const SALT_FORMS_WEAK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
-  function isSaltForm(token) {
-    return SALT_FORMS_WEAK.has(token.toLowerCase());
-  }
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
   const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
-  const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token) && !isSaltForm(token));
+  const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
   console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "%s" (cleanedTokens=%s firstStrong=%s)', _dbg_input, cleaned, firstStrongToken || '', JSON.stringify(cleanedTokens), firstStrongToken || 'none');
   // If multiple non-dose tokens remain, return the FULL normalized candidate
   // to preserve multi-token product names (e.g. "atamel forte", "dorixina flex").
   // The single-token case also returns the candidate (may be multi-word).
   if (firstStrongToken) {
     // Only use firstStrongToken alone if it is the ONLY non-weak token
-    const otherStrongTokens = cleanedTokens.filter((t) => t !== firstStrongToken && !isWeakOpener(t) && !isSaltForm(t));
+    const otherStrongTokens = cleanedTokens.filter((t) => t !== firstStrongToken && !isWeakOpener(t));
     if (otherStrongTokens.length > 0) {
       // Multiple strong tokens → return full normalized query to preserve all tokens
       console.log('🧪 [DIAG-EMQ] IN="%s" => returning FULL candidate="%s" (cleanedTokens=%s)', _dbg_input, candidate, JSON.stringify(cleanedTokens));
       return candidate;
-    }
-    // Reject salt forms even as single strong token — "potasico" alone is never a medicine
-    if (isSaltForm(firstStrongToken)) {
-      console.log('🧪 [DIAG-EMQ] IN="%s" => rejecting salt form "%s"', _dbg_input, firstStrongToken);
-      return '';
     }
     console.log('🧪 [DIAG-EMQ] IN="%s" => returning firstStrongToken="%s" (cleanedTokens=%s)', _dbg_input, firstStrongToken, JSON.stringify(cleanedTokens));
     return firstStrongToken;
@@ -6225,14 +5858,8 @@ const MED_FORM_TOKENS=new Set([
 
   const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
   if (weakFiltered.length) {
-    const firstWeak = weakFiltered[0];
-    // Never return a salt form or a weak opener as fallback result
-    if (isSaltForm(firstWeak) || isWeakOpener(firstWeak)) {
-      console.log('🧪 [DIAG-EMQ] IN="%s" => rejecting weak/salt fallback "%s"', _dbg_input, firstWeak);
-      return '';
-    }
-    console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, firstWeak);
-    return firstWeak;
+    console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, weakFiltered[0]);
+    return weakFiltered[0];
   }
   console.log('🧪 [DIAG-EMQ] IN="%s" => returning "%s" (weakFiltered=%s)', _dbg_input, weakFiltered[0] || '', JSON.stringify(weakFiltered));
   return weakFiltered[0] || '';
