@@ -5134,9 +5134,13 @@ function extractRecipeMedicineLines(value) {
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
   if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
     // Single-line multi-token input: split into individual tokens
-    // Filter out dosage forms (CAP, SUSP, etc.) and known non-medicine tokens
+    // Filter out dosage forms (CAP, SUSP, etc.), known non-medicine tokens,
+    // AND pharmaceutical salt forms (clorhidrato, sulfato, etc.) that would
+    // otherwise be treated as standalone medicines (e.g. "FEXOFENADINA CLORHIDRATO"
+    // → ["FEXOFENADINA", "CLORHIDRATO"] with CLORHIDRATO creating a spurious group).
     const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
-    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
+    const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
+    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !SALT_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
     console.log('🧪 [EXTRACT-RECIPE] raw value=%s → SPLIT into tokens=%s', raw.slice(0, 200), JSON.stringify(splitTokens));
     return splitTokens;
   }
@@ -5605,8 +5609,13 @@ function extractPrimaryRecipeMedicineQuery(value) {
     'cápsula', 'cápsulas', 'cap', 'caps', 'suspension', 'suspensión', 'susp', 'jarabe', 'gotas', 'crema', 'gel', 'polvo', 'polvos',
     'unguento', 'unguentos', 'sobres', 'sobresa', 'retad', 'retadar', 'retardar', 'retardado', 'retardada', 'capsules', 'tablet', 'tabletass'
   ]);
+  // Pharmaceutical salt forms — reject as standalone medicine names
+  const SALT_TOKENS = new Set([
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato'
+  ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !SALT_TOKENS.has(token) && !isDoseToken(token));
   console.log('🧪 [EXTRACT-PRIMARY] raw="%s" tokens=%s cleanedTokens=%s => returning "%s"', raw, JSON.stringify(tokens), JSON.stringify(cleanedTokens), cleanedTokens[0] || 'NONE');
 
   if (cleanedTokens.length) return cleanedTokens[0];
