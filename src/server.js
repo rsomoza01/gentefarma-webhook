@@ -2710,8 +2710,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
 }
 
 async function searchMedicinesByName(userQuery, options = {}) {
-  console.log(`🔍 [SMN-START] version=cf7b9c5-hasvalidids userQuery='${userQuery}'`);
-  console.log(`🧪 [SEARCH-KICK] userQuery='${userQuery}' strictConsultationMode=${options.strictConsultationMode} preExtractedMedicines=${JSON.stringify(options.preExtractedMedicines)}`);
+  console.log(`🧪 [SEARCH-KICK] userQuery='${userQuery}' strictConsultationMode=${options.strictConsultationMode} preExtractedMedicines=${options.preExtractedMedicines ? JSON.stringify(options.preExtractedMedicines) : 'undefined'}`);
   if (!db) return null;
 
   const query = normalizeText(userQuery);
@@ -3320,7 +3319,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
       // Reject degraded results with refSim < 0.76 — they are spurious for prescription scans
       const consultBestRefSim = degradedMatches.length > 0 ? (degradedMatches[0].referenceSimilarity ?? 0) : 0;
       const consultHasValidIds = degradedMatches.some((m) => m.doc?.id);
-      console.log(`🧪 [CONSULT-DEGRADED-HAS-ID] hasValidIds=${consultHasValidIds} firstDocId=${degradedMatches[0]?.doc?.id ?? 'UNDEF'} bestRefSim=${consultBestRefSim}`);
       if (degradedMatches.length && consultBestRefSim >= 0.76 && consultHasValidIds) {
         // Specificity gate for multi-token queries in consultation mode
         const isMultiTokenQuery = alternativeTokens.length >= 2;
@@ -3485,7 +3483,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
     // Only use degraded matches if they have valid Firebase document IDs.
     // If ALL matches have NO-ID (doc.id missing), they are not real products — reject.
     const hasValidIds = degradedMatches.some((m) => m.doc?.id);
-    console.log(`🧪 [DEGRADED-HAS-ID] hasValidIds=${hasValidIds} firstDocId=${degradedMatches[0]?.doc?.id ?? 'UNDEF'} firstRefSim=${bestRefSim}`);
     if (degradedMatches.length && bestRefSim >= 0.70 && hasValidIds) {
       // Final specificity gate: for multi-token queries, at least one non-generic
       // token must appear in the candidate. Otherwise "acido X" matches every "acido Y"
@@ -3502,7 +3499,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
           const title = (m.productTitleFull || '').toLowerCase();
           return significantTokens.some(t => title.includes(t));
         });
-        console.log(`🧪 [SPECIFICITY-FILTER] multiToken=${isMultiTokenQuery} sigTokens=${JSON.stringify(significantTokens)} before=${degradedMatches.length} after=${candidateMatches.length}`);
         if (!candidateMatches.length) return;
       } else {
         candidateMatches = degradedMatches;
