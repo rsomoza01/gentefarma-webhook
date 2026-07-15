@@ -4248,7 +4248,9 @@ function extractMedicineRequests(text) {
       if (results.includes(token)) continue;
       const lower = token.toLowerCase();
       // Reject pharmaceutical salt forms — they are descriptors, not medicines
-      if (SALT_FORMS.has(lower)) continue;
+      // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
+      // not a standalone medicine — treat it like a salt form so it never appears alone.
+      if (SALT_FORMS.has(lower) || lower === 'acido' || lower === 'ácido') continue;
       if (looksLikeMedicineName(token)) {
         results.push(token);
         tokensAdded += 1;
@@ -5441,7 +5443,8 @@ function extractRecipeMedicineLines(value) {
 
   // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
   const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
-  const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
+  const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido)$/i;
+  // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
   if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
     // Single-line multi-token input: split into individual tokens
