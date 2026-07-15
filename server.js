@@ -3930,6 +3930,8 @@ function extractMedicineRequests(text) {
   const segments = explicitSegments.length > 1 ? explicitSegments : splitSingleLineMedicineList(rawText);
   const results = [];
 
+  console.log('🧪 [EXTRACT-MED-REQ] input="%s" segments=%s', rawText.slice(0, 100), JSON.stringify(segments));
+
   for (const segment of segments) {
     const cleaned = normalizeText(segment);
     if (!cleaned) continue;
@@ -3942,6 +3944,8 @@ function extractMedicineRequests(text) {
     const query = extractMedicineQuery(segment) || segment;
     if (!query) continue;
 
+    console.log('🧪 [EXTRACT-MED-REQ] segment="%s" query="%s" queryTokensCount=%d', segment.slice(0, 80), query, cleaned.split(/\s+/).length);
+
     // Always split by spaces and validate each token. This handles both:
     // (a) single-token query + multi-token cleaned → space-token fallback (was already here)
     // (b) multi-token query (e.g. "bumetin retadar evigax...") → now split and validated too
@@ -3949,7 +3953,9 @@ function extractMedicineRequests(text) {
     let tokensAdded = 0;
     for (const token of spaceTokens) {
       if (results.includes(token)) continue;
-      if (looksLikeMedicineName(token)) {
+      const isMed = looksLikeMedicineName(token);
+      console.log('🧪 [EXTRACT-MED-REQ] token="%s" looksLikeMedicineName=%s', token, isMed);
+      if (isMed) {
         results.push(token);
         tokensAdded += 1;
       }
@@ -3964,11 +3970,14 @@ function extractMedicineRequests(text) {
     // Long concatenated strings (many tokens) are NOT added — they create spurious
     // search groups like "ESOZ LEPRIT BUMETIN..." with bad fuzzy matches.
     const queryTokensCount = cleaned.split(/\s+/).length;
-    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6 && !SALT_FORMS_FALLBACK_RE.test(query)) {
+    const fallbackRejected = SALT_FORMS_FALLBACK_RE.test(query);
+    console.log('🧪 [EXTRACT-MED-REQ] query="%s" tokensAdded=%d queryTokensCount=%d fallbackRejected=%s', query, tokensAdded, queryTokensCount, fallbackRejected);
+    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6 && !fallbackRejected) {
       results.push(query);
     }
   }
 
+  console.log('🧪 [EXTRACT-MED-REQ] => returning %s', JSON.stringify(results));
   return results;
 }
 
