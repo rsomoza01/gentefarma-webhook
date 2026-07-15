@@ -3954,12 +3954,17 @@ function extractMedicineRequests(text) {
         tokensAdded += 1;
       }
     }
+    // Pharmaceutical salt forms — reject these as standalone medicine queries in the
+    // fallback path. Without this, "fexofenadina clorhidrato" would add "fexofenadina
+    // clorhidrato" as a full query (tokensAdded=0) and the second search group would
+    // be "clorhidrato" from the space-split, creating spurious results.
+    const SALT_FORMS_FALLBACK_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
     // Only fall back to the original query if space-token split added nothing
     // AND the query is short enough that it won't pollute multi-medicine results.
     // Long concatenated strings (many tokens) are NOT added — they create spurious
     // search groups like "ESOZ LEPRIT BUMETIN..." with bad fuzzy matches.
     const queryTokensCount = cleaned.split(/\s+/).length;
-    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6) {
+    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6 && !SALT_FORMS_FALLBACK_RE.test(query)) {
       results.push(query);
     }
   }
@@ -5673,12 +5678,19 @@ function looksLikeMedicineName(value) {
     'tengo', 'tienes', 'tiene', 'tenemos', 'tienen', 'hacer', 'hace', 'haces', 'hacen',
     'poder', 'puede', 'pueden', 'ser', 'estar', 'ir', 'ver', 'dar', 'saber', 'querer',
     'feliz', 'viernes', 'buenos', 'buenas', 'dias', 'tardes', 'noches']);
-  const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()));
+  // Pharmaceutical salt forms — reject as standalone medicine names
+  const SALT_TOKENS = new Set([
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato'
+  ]);
+  const hasUsefulMultiTokenPhrase = tokens.length >= 2 && tokens.some((t) => t.length >= 4 && !GENERIC_TOKENS.has(t.toLowerCase()) && !SALT_TOKENS.has(t.toLowerCase()));
   // Also accept 4-char medicine names (e.g. "esoz", "fatr", "ferrz")
   // Reject single generic tokens even if 4+ chars (feliz/viernes/dias/buenos/buenas/etc.)
+  // Also reject pharmaceutical salt forms as single tokens (clorhidrato/sulfato/etc.)
   const hasStrongSingleToken = tokens.length === 1 && tokens[0].length >= 4
     && !/^(precio|costo|catalogo|catálogo|producto|medicamento|buscar|busco|tienes|tiene|hay|disponible|disponibilidad)$/.test(tokens[0])
-    && !GENERIC_TOKENS.has(tokens[0].toLowerCase());
+    && !GENERIC_TOKENS.has(tokens[0].toLowerCase())
+    && !SALT_TOKENS.has(tokens[0].toLowerCase());
 
   return hasDosageOrForm || hasUsefulMultiTokenPhrase || hasStrongSingleToken;
 }
@@ -5811,8 +5823,14 @@ function extractMedicineQuery(text) {
     if (MED_QUERY_WEAK_TOKENS.has(lower)) return true;
     return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
   }
+  // Pharmaceutical salt forms — reject these so they don't become standalone medicine queries
+  // (e.g. "clorhidrato" alone should not be treated as a medicine name)
+  const SALT_FORM_TOKENS = new Set([
+    'clorhidrato','cloruro','besilato','sulfato','fosfato','acetato','tartrato',
+    'malato','fumarato','succinato','bromuro','ioduro','nitrato','tiocianato'
+  ]);
   const isDoseToken = (token) => /^(\d+(?:[.,]\d+)?|mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i.test(token);
-  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !isDoseToken(token));
+  const cleanedTokens = tokens.filter((token) => !MED_FORM_TOKENS.has(token) && !SALT_FORM_TOKENS.has(token) && !isDoseToken(token));
   const firstStrongToken = cleanedTokens.find((token) => !isWeakOpener(token));
   console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "%s" (cleanedTokens=%s firstStrong=%s)', _dbg_input, cleaned, firstStrongToken || '', JSON.stringify(cleanedTokens), firstStrongToken || 'none');
   // If multiple non-dose tokens remain, return the FULL normalized candidate
@@ -5866,6 +5884,13 @@ function extractMedicineQuery(text) {
   }
 
   const weakFiltered = cleanedTokens.filter((token) => !MED_QUERY_WEAK_TOKENS.has(token));
+  // If cleanedTokens is empty after filtering (e.g. input is just "clorhidrato"), return ''
+  // without falling back to dosage patterns or raw tokens. This prevents salt forms
+  // from being treated as standalone medicine queries.
+  if (!cleanedTokens.length) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => "" (cleanedTokens empty after filtering salts/forms)', _dbg_input);
+    return '';
+  }
   if (weakFiltered.length) {
     console.log('🧪 [DIAG-EMQ] IN="%s" => returning weakFiltered[0]="%s"', _dbg_input, weakFiltered[0]);
     return weakFiltered[0];
