@@ -5173,6 +5173,19 @@ function extractRecipeMedicineLines(value) {
     // → ["FEXOFENADINA", "CLORHIDRATO"] with CLORHIDRATO creating a spurious group).
     const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
     const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato)$/i;
+
+    // ── SPECIAL CASE: "acido X" medicine names must be preserved as a whole ──
+    // "Acido Ursodesoxicolico" is a single medicine name. Splitting it into
+    // ["Acido", "Ursodesoxicolico"] causes "Acido" to become a standalone candidate
+    // (wrong results) and "Ursodesoxicolico" to be lost. Only preserve when the
+    // second token is NOT a pharmaceutical salt form.
+    const firstTok = fastTokens[0].toLowerCase();
+    const secondTok = fastTokens.length >= 2 ? fastTokens[1].toLowerCase() : '';
+    if (firstTok === 'acido' && !SALT_FORMS_RE.test(secondTok)) {
+      console.log('🧪 [EXTRACT-RECIPE] raw value=%s → PRESERVE (acido-prefixed medicine)', raw.slice(0, 200));
+      return [raw.trim()];
+    }
+
     const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !SALT_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
     console.log('🧪 [EXTRACT-RECIPE] raw value=%s → SPLIT into tokens=%s', raw.slice(0, 200), JSON.stringify(splitTokens));
     return splitTokens;
