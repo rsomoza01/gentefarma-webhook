@@ -3318,7 +3318,8 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
       // Reject degraded results with refSim < 0.76 — they are spurious for prescription scans
       const consultBestRefSim = degradedMatches.length > 0 ? (degradedMatches[0].referenceSimilarity ?? 0) : 0;
-      if (degradedMatches.length && consultBestRefSim >= 0.76) {
+      const consultHasValidIds = degradedMatches.some((m) => m.doc?.id);
+      if (degradedMatches.length && consultBestRefSim >= 0.76 && consultHasValidIds) {
         candidateMatches = degradedMatches;
       }
     }
