@@ -6108,6 +6108,13 @@ function looksLikeMedicineName(value) {
   if (!text) return false;
   if (isGreetingOrMenu(text) || isThanksMessage(text) || /^(listo|resumen|bot on|bot off|bot status)$/i.test(text)) return false;
 
+  // City names — these are NOT medicines
+  const CITY_NAMES = new Set(['ciudad','bolivar','caracas','caja','seca','zaraza','maracaibo','valencia','barquisimeto','merida','maturin','barcelona','guayana','cuscas','cumana','cabimas','aturio','ipostel','fuerte','turmero','carrizal','guacara','san joaquin','anaco','turbaco','mérida','zulia','tachira','carabobo','aragua','vargas','miranda','lara']);
+  const cityTokens = tokenize(text).filter((t) => t.length > 1);
+  if (cityTokens.length > 0 && cityTokens.every((t) => CITY_NAMES.has(t))) {
+    return false;
+  }
+
   // ── Salt forms are NEVER standalone medicines ──────────────────────────
   const SALT_FORMS_CHECK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro','acido','ácido']);
   if (SALT_FORMS_CHECK.has(text)) return false;
