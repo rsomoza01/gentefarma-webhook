@@ -1711,6 +1711,7 @@ async function routeMessage(phone, text, session, context = {}) {
     // Check if user is responding to a city question (pendingCityRetry is set)
     if (session.pendingCityRetry) {
       const cityInfo = detectCityFromText(text);
+      console.log('🧪 [CITY-GATE] pendingCityRetry set text="%s" cityInfo=%s', text, JSON.stringify(cityInfo));
       if (cityInfo) {
         // City detected — save to session and retry the pending query
         session.userCity = cityInfo.city;
@@ -1729,6 +1730,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
     // Check if the user is directly sending a city name (not a medicine query)
     const cityInfo = detectCityFromText(text);
+    console.log('🧪 [CITY-GATE] direct detectCityFromText text="%s" cityInfo=%s', text, JSON.stringify(cityInfo));
     if (cityInfo) {
       session.userCity = cityInfo.city;
       session.userCoords = cityInfo.coords;
@@ -1744,6 +1746,7 @@ async function routeMessage(phone, text, session, context = {}) {
 
     // Not a city response — check if it looks like a medicine search
     const looksLikeMedicine = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
+    console.log('🧪 [CITY-GATE] text="%s" looksLikeMedicine="%s" pendingCityRetry=%s', text, looksLikeMedicine, session.pendingCityRetry ? 'set' : 'null');
     if (looksLikeMedicine) {
       // Ask user to set their city first
       session.pendingCityRetry = { text, context };
