@@ -1916,6 +1916,24 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
+    // Check if user is sending a city name even though it looks like a greeting.
+    // This must run BEFORE buildMenuMessage to prevent "Ciudad Bolivar" from
+    // being swallowed by the greeting block.
+    if (!session.userCity) {
+      const cityInfo = detectCityFromText(text);
+      if (cityInfo) {
+        session.userCity = cityInfo.city;
+        session.userCoords = cityInfo.coords;
+        touchSession(session);
+        console.log(`[CITY] Detected='${cityInfo.city}' from greeting block`);
+        if (session.pendingCityRetry) {
+          const pending = session.pendingCityRetry;
+          session.pendingCityRetry = null;
+          return await routeMessage(phone, pending.text, session, pending.context);
+        }
+        return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
+      }
+    }
     console.log('🧪 [GREETING] matched isGreetingOrMenu=true isMedicineSignal=false text="%s"', text);
     clearSelectionState(session);
     if (session.mode === 'awaiting_product_name') {
