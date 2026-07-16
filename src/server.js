@@ -2592,15 +2592,32 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // prefix dedup doesn't catch it (neither is a prefix of the other). But searching
   // "acido" standalone returns 50 wrong products while "ursodesoxicolico" returns 0.
   // Remove "acido" standalone when another candidate starts with "acido " (prefix phrase).
-  const acidoIdx = dedupedCandidates.findIndex(c => normalizeText(c) === 'acido');
-  if (acidoIdx !== -1) {
-    const hasAcidoPhrase = dedupedCandidates.some(c => {
-      const n = normalizeText(c);
-      return n !== 'acido' && n.startsWith('acido ');
+  //
+  // Also clean up standalone pharmaceutical salt forms: "potásico" alone is not a
+  // medicine. If another candidate contains it as part of the name, strip the salt form.
+  const SALT_FORM_PATTERNS = [
+    /^acido$/i, /^potasico$/i, /^clorhidrato$/i, /^sodico$/i,
+    /^fosfato$/i, /^sulfato$/i, /^bromhidrato$/i, /^citrato$/i,
+    /^nitrato$/i, /^acetato$/i, /^maleato$/i, /^tartrato$/i,
+  ];
+  let idx;
+  while ((idx = dedupedCandidates.findIndex(c => {
+    const n = normalizeText(c);
+    return SALT_FORM_PATTERNS.some(re => re.test(n));
+  })) !== -1) {
+    const candidate = dedupedCandidates[idx];
+    const n = normalizeText(candidate);
+    // Only remove if another candidate contains this salt form as part of its name
+    const hasPhrase = dedupedCandidates.some(c => {
+      const cn = normalizeText(c);
+      return cn !== n && cn.includes(n + ' ');
     });
-    if (hasAcidoPhrase) {
-      const removed = dedupedCandidates.splice(acidoIdx, 1)[0];
-      console.log('🧹 [ACIDO-PREFIX] Removed standalone "acido" (found phrase prefix in candidates)');
+    if (hasPhrase) {
+      const removed = dedupedCandidates.splice(idx, 1)[0];
+      console.log(`🧹 [SALT-FORM-CLEANUP] Removed standalone "${removed}" (found phrase in candidates)`);
+    } else {
+      // Salt form not embedded in any other candidate — stop removing (it may be a real query)
+      break;
     }
   }
 
@@ -3560,25 +3577,30 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   if (!candidateMatches.length) {
     console.log(`🧪 [FINAL-RETURN] candidateMatches empty after all paths (including Firebase fallback), returning no results`);
-    // ── Fuzzy spelling rescue: try common single-character transpositions on the primary query token.
-    // Catches typos like "clopidrogel" (11 chars) vs "clopidogrel" — adjacent swap at position 4.
-    // Only attempt for tokens >= 6 chars where exact search found nothing.
+    // ── Fuzzy spelling rescue: try adjacent character transpositions on the primary
+    // query token and re-query Firebase. Catches typos like "clopidrogel" (adjacent
+    // swap at position 5: 'r'↔'o') or "atorvastatina"→"atorvastatina" (same letters,
+    // different order). Only attempt for tokens >= 6 chars where exact search found nothing.
     const primaryToken = queryTokens[0] || '';
     if (primaryToken.length >= 6 && db) {
-      const tryTranspositionSwap = (token) => {
-        // Swap two adjacent characters and compute levenshteinDistance to the original.
-        // If distance == 2 (one swap = 2 edits), accept the swapped form.
-        const swapped = token.split('').map((c, i, arr) => {
-          if (i < arr.length - 1 && arr[i] !== arr[i + 1]) {
-            return arr.slice(0, i).concat(arr[i + 1], c, arr.slice(i + 2)).join('');
-          }
-          return null;
-        }).filter(Boolean);
-        return swapped;
-      };
+      const tryAdjacentSwaps = (token) =>
+        token.split('').map((_, i, arr) =>
+          i < arr.length - 1 && arr[i] !== arr[i + 1]
+            ? arr.slice(0, i).concat(arr[i + 1], arr[i], arr.slice(i + 2)).join('')
+            : null
+        ).filter(Boolean);
 
-      const variants = tryTranspositionSwap(primaryToken);
-      for (const variant of variants) {
+      // Try all adjacent swaps first (distance=2 from original = 1 swap)
+      const swapVariants = tryAdjacentSwaps(primaryToken);
+      // Also try the original token with its first 4+3 chars as prefix fallback
+      const prefixFallback = primaryToken.slice(0, 4);
+      const allVariants = [...swapVariants];
+      if (prefixFallback.length >= 4) allVariants.push(prefixFallback);
+
+      const attempted = new Set();
+      for (const variant of allVariants) {
+        if (attempted.has(variant)) continue;
+        attempted.add(variant);
         try {
           const [pmSnap] = await Promise.all([
             db.collection('products-market').where('productTitleArray', 'array-contains', variant).limit(10).get(),
