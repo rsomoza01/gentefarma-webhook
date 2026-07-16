@@ -1894,7 +1894,7 @@ async function routeMessage(phone, text, session, context = {}) {
   // ── CITY EARLY DETECTION ─────────────────────────────────────────────────
   // Detect city responses BEFORE the greeting block so that "Ciudad Bolivar"
   // never falls through to buildMenuMessage when userCity is not yet set.
-  if (!session.userCity) {
+  if (!session.userCity || session.userCity === 'null' || session.userCity === 'undefined') {
     const cityInfo = detectCityFromText(text);
     if (cityInfo) {
       session.userCity = cityInfo.city;
@@ -1917,10 +1917,12 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
+    console.log('🧪 [GREETING] pre-check isGreetingOrMenu=%s isMedicineSignal=%s userCity="%s"', isGreetingOrMenu(normalized), !isMedicineSignal, session.userCity);
     // Check if user is sending a city name even though it looks like a greeting.
     // This must run BEFORE buildMenuMessage to prevent "Ciudad Bolivar" from
     // being swallowed by the greeting block.
-    if (!session.userCity) {
+    // NOTE: also treat session.userCity === 'null' (string) as unset.
+    if (!session.userCity || session.userCity === 'null' || session.userCity === 'undefined') {
       const cityInfo = detectCityFromText(text);
       if (cityInfo) {
         session.userCity = cityInfo.city;
