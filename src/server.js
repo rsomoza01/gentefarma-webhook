@@ -1657,6 +1657,7 @@ async function handleLLMIntent(llmResult, phone, text, session, context) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
+  console.log('🧪 [ROUTE] text="%s" userCity="%s" mode="%s"', text, session.userCity, session.mode);
   // ── ULTRA-EARLY-SELECTION-GUARD ────────────────────────────────────────
   // Before ANY extraction, detect if the message is purely a selection phrase.
   // If session has pending selection results (from a prior catalog), handle it
@@ -1933,6 +1934,8 @@ async function routeMessage(phone, text, session, context = {}) {
         }
         return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
       }
+    } else {
+      console.log('🧪 [CITY-SKIP] userCity already set="%s" — city detection skipped', session.userCity);
     }
     console.log('🧪 [GREETING] matched isGreetingOrMenu=true isMedicineSignal=false text="%s"', text);
     clearSelectionState(session);
