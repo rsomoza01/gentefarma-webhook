@@ -3000,6 +3000,14 @@ const userCoords = options.userCoords || null;
     return [...new Set(signatures)];
   };
   const queryDosageSignatures = extractDosageSignatures(query);
+  // Also detect standalone dosage numbers at the end of the query (e.g. "ATORVASTATINA 30",
+  // "NIFEDIPINA 10") where no unit is written. These MUST be treated as dosage signals
+  // so wrong-dose products (e.g. 40MG for a 30MG query) get properly penalised.
+  const standaloneMatch = query.match(/\b(\d+(?:[.,]\d+)?)\s*$/);
+  if (standaloneMatch) {
+    const num = standaloneMatch[1];
+    queryDosageSignatures.push(`sd:${num}`); // tag with prefix to distinguish from unit-based signatures
+  }
   const hasQueryDosage = queryDosageSignatures.length > 0;
 
   function jaroWinklerSimilarity(a, b) {
@@ -4334,14 +4342,29 @@ function extractMedicineRequests(text) {
     // AND the query is short enough that it won't pollute multi-medicine results.
     // Long concatenated strings (many tokens) are NOT added — they create spurious
     // search groups like "ESOZ LEPRIT BUMETIN..." with bad fuzzy matches.
+    // Also reject if the query contains a salt form token (e.g. "acido ursodesoxicolico"
+    // should not be searched as-is when "acido" is a salt form; strip it first).
     const queryTokensCount = cleaned.split(/\s+/).length;
-    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6) {
+    const queryTokensLower = cleaned.split(/\s+/).map(t => t.toLowerCase());
+    const queryHasSaltForm = queryTokensLower.some(t => SALT_FORMS.has(t) || t === 'acido' || t === 'ácido');
+    if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6 && !queryHasSaltForm) {
       // Reject fragments that start with a bare number — e.g. "75 Losartan" from
       // splitSingleLineMedicineList boundary splitting on dosage numbers.
       if (/^\d+\s/.test(query)) {
         console.log('🧹 [EXTRACT-MED] Rejected number-prefixed fragment: "%s"', query);
       } else {
         results.push(query);
+      }
+    } else if (tokensAdded === 0 && queryHasSaltForm) {
+      // Salt form detected in fallback query — strip salt form tokens and re-check
+      const strippedQuery = queryTokensLower
+        .filter(t => !SALT_FORMS.has(t) && t !== 'acido' && t !== 'ácido')
+        .join(' ');
+      if (strippedQuery.length >= 3 && !results.includes(strippedQuery)) {
+        if (looksLikeMedicineName(strippedQuery)) {
+          results.push(strippedQuery);
+          console.log('🧹 [EXTRACT-MED] Salt-form strip -> "%s" (from "%s")', strippedQuery, query);
+        }
       }
     }
   }
@@ -4356,6 +4379,8 @@ function splitMedicineSegments(text) {
   // Also split on dosage boundaries within each line: "40 MG LEPRIT 25 MG" → ["40 MG LEPRIT", "25 MG"]
   const unitList = 'mg|mcg|g|gr|ml|mL|ui|iu';
   const dosageBoundaryRe = new RegExp(`\\b(\\d+(?:[.,]\\d+)?)\\s+(${unitList})\\b(?=\\s+[A-ZÁÉÍÓÚÑ])`, 'gi');
+  // Salt forms must never appear as standalone medicine groups
+  const SALT_FORMS_SEG = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro','acido','ácido']);
 
   const lines = String(text)
     .split(/\n+|[•·●]+|(?:^|\s)-(?=\s|$)/g)
@@ -4503,8 +4528,14 @@ function splitSingleLineMedicineList(text) {
     } else {
       // No dosage found — whole segment is the query.
       // Skip if it's just a unit (e.g. "mg" leftover from previous dosage).
+      // Also reject if the segment is purely a salt form (e.g. "potasico") or
+      // starts/ends with a salt form that would create a spurious standalone group.
       const segText2 = segText.trim();
-      if (segText2.length >= 3 && !UNIT_RE.test(segText2)) {
+      const segTokensLower = segText2.split(/\s+/).map(t => t.toLowerCase());
+      const segHasSaltForm = segTokensLower.some(t =>
+        SALT_FORMS_SEG.has(t) || t === 'acido' || t === 'ácido'
+      );
+      if (segText2.length >= 3 && !UNIT_RE.test(segText2) && !segHasSaltForm) {
         result.push(segText2);
       }
     }
