@@ -1706,7 +1706,8 @@ async function routeMessage(phone, text, session, context = {}) {
   // ── CITY GATE ─────────────────────────────────────────────────────────
   // If user has not set their city yet, intercept medicine searches and ask for it.
   // Store pending query so we retry it after city is detected.
-  if (!session.userCity) {
+  // Also handle the case where session.userCity is the STRING 'null' (malformed).
+  if (!session.userCity || session.userCity === 'null' || session.userCity === 'undefined') {
     // Check if user is responding to a city question (pendingCityRetry is set)
     if (session.pendingCityRetry) {
       const cityInfo = detectCityFromText(text);
@@ -1724,6 +1725,21 @@ async function routeMessage(phone, text, session, context = {}) {
         // No city detected, ask again
         return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
       }
+    }
+
+    // Check if the user is directly sending a city name (not a medicine query)
+    const cityInfo = detectCityFromText(text);
+    if (cityInfo) {
+      session.userCity = cityInfo.city;
+      session.userCoords = cityInfo.coords;
+      touchSession(session);
+      console.log(`[CITY] Direct detect from city gate: '${cityInfo.city}'`);
+      if (session.pendingCityRetry) {
+        const pending = session.pendingCityRetry;
+        session.pendingCityRetry = null;
+        return await routeMessage(phone, pending.text, session, pending.context);
+      }
+      return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
     }
 
     // Not a city response — check if it looks like a medicine search
