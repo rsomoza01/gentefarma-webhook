@@ -5173,13 +5173,24 @@ const MODIFIER_TOKENS = new Set([
   'noct', 'diario', 'semanal', 'mensual', 'caps', 'film', 'ocular',
   'nasal', 'oral', 'topico', 'cutaneo', 'endovenoso', 'ev', 'im',
   'sl', 'sublingual', 'rectal', 'vaginal', 'transdermico', 'patch',
-  'original', 'generico', 'marca', 'premium', 'basic', 'fresh',
+'original', 'generico', 'marca', 'premium', 'basic', 'fresh',
   'classic', 'natural', 'sintetico', 'con', 'sin'
 ]);
 
+// Salt forms that should be rejected as standalone medicine groups
+// when they appear in segment-lists without a dosage (no mg/unit pattern).
+// Must be defined at module scope so splitSingleLineMedicineList can use it.
+const SALT_FORMS_SEG = new Set([
+  'potasico', 'potásico', 'sodico', 'sódico', 'clorhidrato', 'maleato',
+  'besilato', 'sulfato', 'nitrato', 'fosfato', 'acetato', 'diclorhidrato',
+  'bromuro', 'acido', 'ácido'
+]);
+
+// ----------------------------------------------------
+// Text helpers
+// ----------------------------------------------------
 function normalizeText(value) {
   return String(value || '')
-    .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
