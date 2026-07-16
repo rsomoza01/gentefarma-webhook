@@ -2823,8 +2823,16 @@ async function searchMedicinesByName(userQuery, options = {}) {
     dosagePattern.lastIndex = 0;
     return [...new Set(signatures)];
   };
-  const queryDosageSignatures = extractDosageSignatures(query);
-  const hasQueryDosage = queryDosageSignatures.length > 0;
+    const queryDosageSignatures = extractDosageSignatures(query);
+    // ── STANDALONE NUMBER DOSAGE (strictListMode) ─────────────────────────────────
+    // In strict multi-medicine mode, "ATORVASTATINA 30" (no "mg" after 30) means the
+    // user wants the 30mg variant. If the query ends with a standalone number token
+    // (e.g. "30", "10"), it is a dosage signal even without a unit.
+    // We treat these as dosage queries so the penalty (-2000) applies to products
+    // that have a different dosage in their name (e.g. ATORVASTATINA 40MG).
+    const lastTokenMatch = query.match(/\b(\d+(?:[.,]\d+)?)\s*$/);
+    const standaloneDosageNumber = lastTokenMatch ? lastTokenMatch[1] : null;
+    const hasQueryDosage = queryDosageSignatures.length > 0 || Boolean(standaloneDosageNumber);
 
   function jaroWinklerSimilarity(a, b) {
     const left = normalizeText(a);
@@ -2992,7 +3000,16 @@ async function searchMedicinesByName(userQuery, options = {}) {
     }
 
     const candidateDosageSignatures = extractDosageSignatures([signal.productTitleFull, signal.titleArrayTextFull, signal.ingredient, signal.productText].filter(Boolean).join(' '));
-    const dosageExactMatch = !hasQueryDosage || queryDosageSignatures.some((sig) => candidateDosageSignatures.includes(sig));
+    // dosageExactMatch: true if query has no dosage, OR query dosage signatures match product,
+    // OR query has standalone number (no unit, e.g. "ATORVASTATINA 30") AND that number
+    // IS present in the product's dosage signatures.
+    // For "ATORVASTATINA 30" (standalone=30): if product has "40mg" (sig="40mg"),
+    // "30" not in ["40mg"] → dosageExactMatch=false → penalty applies.
+    const sigMatch = queryDosageSignatures.some((sig) => candidateDosageSignatures.includes(sig));
+    const standaloneMatch = standaloneDosageNumber
+      ? candidateDosageSignatures.some((sig) => sig.replace(/[^\d.,]/g, '').startsWith(standaloneDosageNumber))
+      : false;
+    const dosageExactMatch = !hasQueryDosage || sigMatch || standaloneMatch;
 
     if (signal.productTitleFull === matchQuery) score += 600;
     if (signal.titleArrayTextFull === matchQuery) score += 560;
@@ -4072,24 +4089,14 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
     // is more specific), don't create a separate group — it would be a subset duplicate.
     // E.g. query="DORIXINA FLEX", normalized="DORIXINA" → skip; query="DORIXINA", same → keep.
     const rawQueryUpper = String(result.query || '').toUpperCase();
-    const isSubsetOfQuery = rawQueryUpper.length > normalizedTitle.length &&
-      rawQueryUpper.includes(normalizedTitle);
-    if (isSubsetOfQuery) {
-      // Merge matches directly into the superstring group if it exists
-      const superstringKey = normalizedGroups.has(key) ? key : null;
-      if (superstringKey) {
-        const existing = normalizedGroups.get(superstringKey);
-        const existingTitles = new Set(existing.matches.map((m) => normalizeText(m.title || '')));
-        for (const match of result.matches || []) {
-          const matchTitle = normalizeText(match.title || '');
-          if (!existingTitles.has(matchTitle)) {
-            existing.matches.push(match);
-            existingTitles.add(matchTitle);
-          }
-        }
-      }
-      continue;
-    }
+    // isSubsetOfQuery: query string contains this group's normalized name as prefix.
+    // OLD BEHAVIOR: merged any product from the subset group into the superstring group.
+    // THIS WAS WRONG: "ATORVASTATINA" products (with query "ATORVASTATINA 30")
+    // were being merged into the "ATORVASTATINA 30" group, polluting it with wrong-dosage products.
+    // NEW: Do NOT auto-merge. A group only shows products that were actually found for its
+    // specific query string. The subset merge was creating phantom dosage results.
+    // Keep the group as-is; the superstring group (if any) will appear separately.
+    // REMOVED the entire isSubsetOfQuery merge block.
     if (normalizedGroups.has(key)) {
       // Merge matches into existing group, deduplicating by doc.id (Firebase product ID)
       // and by normalized title. This handles cases where different query strings
