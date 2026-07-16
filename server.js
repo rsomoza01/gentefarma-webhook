@@ -3560,7 +3560,53 @@ async function searchMedicinesByName(userQuery, options = {}) {
 
   if (!candidateMatches.length) {
     console.log(`🧪 [FINAL-RETURN] candidateMatches empty after all paths (including Firebase fallback), returning no results`);
-    return { query, queryTokens, exchangeRate, matches: [] };
+    // ── Fuzzy spelling rescue: try common single-character transpositions on the primary query token.
+    // Catches typos like "clopidrogel" (11 chars) vs "clopidogrel" — adjacent swap at position 4.
+    // Only attempt for tokens >= 6 chars where exact search found nothing.
+    const primaryToken = queryTokens[0] || '';
+    if (primaryToken.length >= 6 && db) {
+      const tryTranspositionSwap = (token) => {
+        // Swap two adjacent characters and compute levenshteinDistance to the original.
+        // If distance == 2 (one swap = 2 edits), accept the swapped form.
+        const swapped = token.split('').map((c, i, arr) => {
+          if (i < arr.length - 1 && arr[i] !== arr[i + 1]) {
+            return arr.slice(0, i).concat(arr[i + 1], c, arr.slice(i + 2)).join('');
+          }
+          return null;
+        }).filter(Boolean);
+        return swapped;
+      };
+
+      const variants = tryTranspositionSwap(primaryToken);
+      for (const variant of variants) {
+        try {
+          const [pmSnap] = await Promise.all([
+            db.collection('products-market').where('productTitleArray', 'array-contains', variant).limit(10).get(),
+          ]);
+          if (pmSnap.size > 0) {
+            const fuzzyMatches = pmSnap.docs.map((d) => d.data());
+            console.log(`🧪 [FUZZY-RESCUE] '${primaryToken}' → '${variant}' found ${pmSnap.size} products`);
+            const fuzzyScored = fuzzyMatches
+              .map((doc) => {
+                const s = buildCatalogSignal(doc);
+                const m = scoreSignal(s);
+                return { ...m, productTitleFull: doc.productTitleFull || doc.title || '', title: doc.title || '', priceUsd: doc.priceUsd ?? 0, priceBs: doc.priceBs ?? 0 };
+              })
+              .sort((a, b) => b.score - a.score)
+              .slice(0, 5);
+            if (fuzzyScored.length > 0) {
+              candidateMatches = fuzzyScored;
+              break;
+            }
+          }
+        } catch (e) {
+          console.error(`[FUZZY-RESCUE] error: ${e.message}`);
+        }
+      }
+    }
+    if (!candidateMatches.length) {
+      return { query, queryTokens, exchangeRate, matches: [] };
+    }
   }
 
   let topMatches = candidateMatches
@@ -4844,7 +4890,31 @@ const STOPWORDS = new Set([
   'comprar',
   'tienes',
   'tiene',
-  'hay'
+  'hay',
+  // ── Pharmaceutical salt forms — never search for these as standalone medicines.
+  // "potásico" alone is not a medicine; it is the salt form of losartan/hydrochlorothiazide.
+  'potásico',
+  'potasico',
+  'clorhidrato',
+  'clorhidrato',
+  'sódico',
+  'sodico',
+  'bromhidrato',
+  'bromhidrato',
+  'fosfato',
+  'sulfato',
+  'nitrato',
+  'acetato',
+  'maleato',
+  'tartrato',
+  'citrato',
+  'diclorhidrato',
+  'dicloridrato',
+  'embonato',
+  'mesilato',
+  'metilsulfonato',
+  'pamoato',
+  'cloruro',
 ]);
 
 // Modifier tokens: adjectives/qualifiers that act as mandatory filters when paired
