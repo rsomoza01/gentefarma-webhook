@@ -4157,7 +4157,15 @@ function extractMedicineRequests(text) {
   if (!rawText) return [];
 
   const explicitSegments = splitMedicineSegments(rawText);
-  const segments = explicitSegments.length > 1 ? explicitSegments : splitSingleLineMedicineList(rawText);
+  const initialSegments = explicitSegments.length > 1 ? explicitSegments : splitSingleLineMedicineList(rawText);
+  // If splitSingleLineMedicineList returned a single segment but the input is a
+  // long multi-medicine string with dosages, try splitting on dosage boundaries.
+  // E.g. "ATORVASTATINA DE 30 NIFEDIPINA DE 10 MG" → single segment from
+  // splitSingleLineMedicineList (no "X unit" boundaries found), but should be
+  // ["ATORVASTATINA DE 30", "NIFEDIPINA DE 10 MG"].
+  const segments = initialSegments.length === 1 && initialSegments[0].split(/\s+/).filter(Boolean).length >= 8 && /\d/.test(initialSegments[0])
+    ? splitSingleLineMedicineList(initialSegments[0])
+    : initialSegments;
   const results = [];
 
   console.log('🧪 [EXTRACT-MED-REQ] input="%s" segments=%s', rawText.slice(0, 100), JSON.stringify(segments));
@@ -4202,8 +4210,26 @@ function extractMedicineRequests(text) {
     const queryTokensCount = cleaned.split(/\s+/).length;
     const fallbackRejected = SALT_FORMS_FALLBACK_RE.test(query);
     console.log('🧪 [EXTRACT-MED-REQ] query="%s" tokensAdded=%d queryTokensCount=%d fallbackRejected=%s', query, tokensAdded, queryTokensCount, fallbackRejected);
+
+    // ── MULTI-MEDICINE DOSAGE STRIP ─────────────────────────────────────────────
+    // When query is a long concatenated multi-medicine string with dosages
+    // (e.g. "ATORVASTATINA DE 30 NIFEDIPINA DE 10 MG") and no verb was matched,
+    // extractMedicineQuery returns the full string unchanged. Before adding it as
+    // a candidate, strip dosages so each medicine is searchable individually.
+    // Condition: 6+ tokens AND contains at least one dosage pattern.
+    const DOSAGE_STRIP_RE = /\b\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
+    let queryForCandidate = query;
+    if (tokensAdded === 0 && queryTokensCount >= 6 && !fallbackRejected && /^\d|\b(?:mg|mcg|g|gr|ml|ui|iu)\b/i.test(query)) {
+      const stripped = query.replace(DOSAGE_STRIP_RE, ' ').replace(/\s+/g, ' ').trim();
+      console.log('🧪 [EXTRACT-MED-REQ] multi-medicine dosage strip: "%s" → "%s"', query, stripped);
+      if (stripped && stripped !== query) queryForCandidate = stripped;
+    }
+
     if (tokensAdded === 0 && !results.includes(query) && queryTokensCount <= 6 && !fallbackRejected) {
       results.push(query);
+    } else if (tokensAdded === 0 && !results.includes(queryForCandidate) && queryTokensCount >= 6 && !fallbackRejected && queryForCandidate !== query) {
+      // Long multi-medicine string: add the dosage-stripped version as candidate
+      results.push(queryForCandidate);
     }
   }
 
