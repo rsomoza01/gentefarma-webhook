@@ -2803,7 +2803,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (/^(?:listo|resumen)$/i.test(normalizedItem)) return false;
     if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
     if (/^(?:por|favor)$/i.test(normalizedItem)) return false;
-    if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3"
+    if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3", "10"
+    // Reject pure dosage strings: "10mg", "40mg", "100mg", "5mg", etc.
+    if (/^\d+\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL)$/i.test(normalizedItem)) return false;
     if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
     if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
     if (/\b(paciente)\b/i.test(normalizedItem)) return false;
@@ -4665,6 +4667,8 @@ function extractMedicineRequestsFromSegments(text) {
     } else {
       // Single-word or multi-word query — also reject pure salt forms
       if (/^(?:potasico|potásico|clorhidrato|clorhidrico|sodico|sodica|sodio|benzoico|acetico)$/i.test(query)) return results;
+      // Reject pure dosage strings: "10mg", "40mg", "100mg", "5mg"
+      if (/^\d+\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL)$/i.test(normalizeText(query))) return results;
       if (!results.includes(query)) results.push(query);
     }
   }
@@ -5642,7 +5646,7 @@ function extractRecipeMedicineLines(value) {
 
   // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
   const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
-  const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido|potasico|potásico|potasi)$/i;
+  const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido|potasico|potásico|potasi|dinitrato|dinitric)$/i;
   // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
   if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
@@ -6281,6 +6285,8 @@ function extractMedicineQuery(text) {
 
   // Strip dosage from the extracted candidate (not from the original text before verb matching)
   candidate = candidate.replace(dosageStrip, ' ').replace(/\s+/g, ' ').trim();
+  // ALSO strip trailing bare dosage that P2A/P2B might leave: "isosorbide 10", "medicine 30"
+  candidate = candidate.replace(/\s+\d+(?:\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL))?\s*$/i, ' ').trim();
 
   candidate = candidate
     .replace(/^por\s+favor\s*/i, '')
