@@ -2665,9 +2665,9 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
 }
 
 function detectCityFromText(text) {
-  const normalized = normalizeText(text);
+  const normalized = normalizeText(text).toLowerCase();
   for (const [cityName, coords] of Object.entries(CITY_COORDS)) {
-    if (normalized.includes(cityName)) {
+    if (normalized.includes(cityName.toLowerCase())) {
       return { city: cityName, coords };
     }
   }
