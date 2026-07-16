@@ -1890,6 +1890,25 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildSelectedProductsSummary(session);
   }
 
+  // ── CITY EARLY DETECTION ─────────────────────────────────────────────────
+  // Detect city responses BEFORE the greeting block so that "Ciudad Bolivar"
+  // never falls through to buildMenuMessage when userCity is not yet set.
+  if (!session.userCity) {
+    const cityInfo = detectCityFromText(text);
+    if (cityInfo) {
+      session.userCity = cityInfo.city;
+      session.userCoords = cityInfo.coords;
+      touchSession(session);
+      console.log(`[CITY] Detected='${cityInfo.city}' — userCity set from early detection`);
+      if (session.pendingCityRetry) {
+        const pending = session.pendingCityRetry;
+        session.pendingCityRetry = null;
+        return await routeMessage(phone, pending.text, session, pending.context);
+      }
+      return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
+    }
+  }
+
   // Early exit para declaraciones de interés en medicamentos — siempre muestra bienvenida
   if (isMedicineInterestStatement(normalized)) {
     clearSelectionState(session);
