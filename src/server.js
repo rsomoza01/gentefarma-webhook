@@ -844,8 +844,11 @@ async function processIncomingMessage(payload) {
     touchSession(session);
 
     const response = await routeMessage(from, body, session, { hasOcrText: Boolean(mediaAnalysis?.text), ocrSearchText, rawOcrText, pushName });
+    console.log('🧪 [ROUTE-RESPONSE] body="%s" response=%s', body, response ? `"${response.slice(0,50)}..."` : 'null');
     if (response) {
       await sendOutboundWhatsAppMessage(from, response);
+    } else {
+      console.log('🧪 [ROUTE-RESPONSE] No response generated for body="%s"', body);
     }
   } catch (error) {
     console.error('❌ Error procesando mensaje:', error);
@@ -1893,12 +1896,15 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   if (isGreetingOrMenu(normalized) && !isMedicineSignal) {
+    console.log('🧪 [GREETING] matched isGreetingOrMenu=true isMedicineSignal=false text="%s"', text);
     clearSelectionState(session);
     if (session.mode === 'awaiting_product_name') {
       return buildMenuMessage();
     }
     if (/^hola\b|^buenas\b|^ey\b|^alo\b/i.test(normalized)) {
-      return buildMenuMessage();
+      const resp = buildMenuMessage();
+      console.log('🧪 [GREETING] returning menu message, session.userCity=%s', session.userCity);
+      return resp;
     }
   }
 
