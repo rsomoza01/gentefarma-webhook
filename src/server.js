@@ -2621,6 +2621,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     }
   }
 
+  console.log('🧪 [POST-SALT-CLEANUP] dedupedCandidates=%s', JSON.stringify(dedupedCandidates));
+
     if (dedupedCandidates.length > 1) {
     const exchangeRate = await getBcvRate();
     const products = await fetchCatalogProducts(2000);
@@ -3612,10 +3614,22 @@ async function searchMedicinesByName(userQuery, options = {}) {
               .map((doc) => {
                 const s = buildCatalogSignal(doc);
                 const m = scoreSignal(s);
-                return { ...m, productTitleFull: doc.productTitleFull || doc.title || '', title: doc.title || '', priceUsd: doc.priceUsd ?? 0, priceBs: doc.priceBs ?? 0 };
+                return { ...m, productTitleFull: doc.productTitleFull || doc.title || '', title: doc.title || '', priceUsd: doc.priceUsd ?? 0, priceBs: doc.priceBs ?? 0, docId: d.id };
+              })
+              .filter((item) => {
+                // Reject products with empty titles or zero/no price — they are not real catalog items
+                const hasTitle = (item.productTitleFull || item.title || '').trim().length > 0;
+                const hasPrice = item.priceUsd > 0;
+                // Also require the fuzzy variant to actually appear in the product title.
+                // "clop" prefix can match random products like "clozapina" that have nothing to do
+                // with the intended medicine. Only accept products whose title contains the variant.
+                const title = (item.productTitleFull || item.title || '').toLowerCase();
+                const titleContainsVariant = title.includes(variant.toLowerCase());
+                return hasTitle && hasPrice && titleContainsVariant;
               })
               .sort((a, b) => b.score - a.score)
               .slice(0, 5);
+            console.log(`🧪 [FUZZY-RESCUE] after filter: ${fuzzyScored.length} valid products, top='${fuzzyScored[0]?.productTitleFull}'`);
             if (fuzzyScored.length > 0) {
               candidateMatches = fuzzyScored;
               break;
