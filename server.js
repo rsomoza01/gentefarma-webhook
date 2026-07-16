@@ -516,13 +516,21 @@ function parseSelectionCommand(text) {
 
 function isSelectionPhrase(value) {
   const text = normalizeText(value);
-  return /\b(opcion|opci[oó]n|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x|opciones|quiero|quisiera|agregar|agrega|seleccionar|selecciona|elegir|elige|escoger|escoje)\b/.test(text) && /\d+/.test(text);
+  // Require STRONG selection keywords: opcion, caja(s), unidad(es), x, numero, nro, agregar con x
+  // "quiero" alone is too generic (matches "quiero saber si disponen de clopidogrel de 75")
+  const hasStrongKeyword = /\b(opcion|opci[oó]n|caja[se]?|unidad(?:es)?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/.test(text) && /\d+/.test(text);
+  // "X" as separator: "3 x 2", "2x1" — X must be adjacent to numbers
+  const hasXPattern = /^\d+\s*x\s*\d+/i.test(text);
+  return hasStrongKeyword || hasXPattern;
 }
 
 
 function isSelectionIntent(value) {
   const text = normalizeText(value);
-  return /\b(opcion|opci[oó]n|opciones|seleccionar|selecciona|agregar|agrega|quiero|quisiera|caja|cajas|unidad|unidades|frascos?|tabletas?|capsulas?|ampollas?|sobres?|x)\b/.test(text) && /\d+/.test(text);
+  // Require STRONG selection keywords (same rationale as isSelectionPhrase)
+  const hasStrongKeyword = /\b(opcion|opci[oó]n|caja[se]?|unidad(?:es)?|frascos?|tabletas?|capsulas?|ampollas?|sobres?)\b/.test(text) && /\d+/.test(text);
+  const hasXPattern = /^\d+\s*x\s*\d+/i.test(text);
+  return hasStrongKeyword || hasXPattern;
 }
 
 
