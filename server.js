@@ -4263,7 +4263,16 @@ function extractMedicineRequests(text) {
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
     // Reject greeting/time false positives like "feliz viernes" before they become medicine candidates
-    if (/\b(feliz\s+viernes|feliz\s+dias|buenos\s+dias)\b/i.test(cleaned)) continue;
+    if (/\b(feliz\s+viernes|feliz\s+dias|buenos?\s+dias|buenas?\s+tardes|buenas?\s+noches)\b/i.test(cleaned)) continue;
+    // Reject segments that are purely conversational: no dosage, no real medicine-like tokens
+    // This catches "hola quiero saber si disponen" (single-segment greeting preamble)
+    if (!/\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|caps?|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|ungüento|sobres?|retad|retard)/i.test(cleaned) && cleaned.length < 15) {
+      // No dosage pattern and short → conversational preamble, reject
+      if (!/\b(losartan|atorvastatin|atorva|nifedipin|clopidrog|clopid|esomeprazol|omeprazol|metform|ibuprofen|paracetamol|acetilsalicil|diclofenac|betacaroteno)\b/i.test(cleaned)) {
+        console.log('🧹 [EXTRACT-MED] Rejected conversational segment: "%s"', segment);
+        continue;
+      }
+    }
     // Skip pure dosage segments (no medicine name): "40 MG", "25 MG", etc.
     if (/^\s*\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|mL|ui|iu)\s*$/i.test(cleaned)) continue;
     if (!/(\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)|(?:mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina))/.test(cleaned) && cleaned.length < 6) continue;
@@ -4307,7 +4316,13 @@ function extractMedicineRequests(text) {
         .replace(/\s+de\s+\d+\s*/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-      const strippedTokens = stripped.split(/\s+/).filter(t => t.length >= 3 && looksLikeMedicineName(t));
+      const strippedTokens = stripped.split(/\s+/).filter(t => {
+        if (t.length < 3) return false;
+        const lowerTok = t.toLowerCase();
+        // Reject salt forms that the dosage strip didn't remove
+        if (SALT_FORMS.has(lowerTok) || lowerTok === 'acido' || lowerTok === 'ácido') return false;
+        return looksLikeMedicineName(t);
+      });
       for (const tok of strippedTokens) {
         if (!results.includes(tok)) {
           results.push(tok);
@@ -4331,7 +4346,9 @@ function extractMedicineRequests(text) {
     }
   }
 
-  return results;
+  // Final cleanup: deduplicate candidates, reject spurious single tokens
+  // (greeting words, salt forms, dosage-only strings that slipped through)
+  return dedupLLMMedicines(results);
 }
 
 function splitMedicineSegments(text) {
