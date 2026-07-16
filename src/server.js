@@ -424,6 +424,13 @@ function parseSelectionCommand(text) {
   const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mg|mcg|g|gr|ml|cc|ui|iu)|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/.test(normalized);
   if (hasDosageOrForm && !hasSelectionWords) return null;
 
+  // If the message has selection words but NO explicit option reference ("opcion",
+  // "numero", etc.), AND has dosage forms (mg, ml, etc.), treat it as a medicine
+  // search, not a selection. E.g. "quiero saber si disponen de clopidrogel de 75 mg"
+  // should not be parsed as selecting option 75.
+  const hasExplicitOptionRef = /\b(opcion|opciones|opci[oó]n|numero|numeros)\b/i.test(normalized);
+  if (hasSelectionWords && hasDosageOrForm && !hasExplicitOptionRef) return null;
+
 
   const parseOptionList = (value) => {
     const matches = String(value || '').match(/\d+/g) || [];
@@ -1620,9 +1627,11 @@ async function routeMessage(phone, text, session, context = {}) {
         touchSession(session);
         clearSelectionState(session);
         return formatSelectionSavedMessage(selected, parsed.quantity, session);
-      } else {
-        return `✏️ No entendí la selección. Escribe *número de opción + cantidad*, por ejemplo: *1* o *2 x 2*.`;
       }
+      // parseSelectionCommand returned null — this is NOT a pure selection command.
+      // The message may be a medicine search ("quiero saber si disponen de clopidrogel de 75 mg").
+      // Do NOT error out; fall through to the normal routing pipeline.
+      // isSelectionPhrase will be cleared by the medicine search handler.
     }
   }
 
