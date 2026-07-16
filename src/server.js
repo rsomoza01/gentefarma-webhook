@@ -675,6 +675,7 @@ async function handleEvent(event, data) {
 
   if (
     normalizedEvent === 'message' ||
+    normalizedEvent === 'Message' ||
     normalizedEvent === 'messages upsert' ||
     normalizedEvent === 'messages' ||
     normalizedEvent === 'upsert'
