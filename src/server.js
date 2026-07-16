@@ -3037,7 +3037,12 @@ async function searchMedicinesByName(userQuery, options = {}) {
     );
     if (signal.ingredient.includes(matchQuery) || ingredientBounded) score += 200;
 
-    if (hasQueryDosage && !dosageExactMatch) score -= strictListMode ? 700 : 500;
+    if (hasQueryDosage && !dosageExactMatch) {
+      // In multi-medicine mode (strictListMode), dosage is critical — penalize heavily
+      // so wrong-dosage products don't appear. In catalog mode (non-strict), still penalize
+      // but less aggressively so near-matches can appear as fallback.
+      score -= strictListMode ? 2000 : 600;
+    }
     if (hasQueryDosage && dosageExactMatch) score += 260;
 
     if (primaryTokens.length > 1) {
@@ -3219,6 +3224,28 @@ async function searchMedicinesByName(userQuery, options = {}) {
       const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
       return priceA - priceB;
     });
+
+  // ── DIAGNOSTIC: log top products for the queried medicine name ────────────────
+  // Helps trace whether the product enters scoredProducts at all, and what score it gets.
+  const _diagQuery = (matchQuery || primaryRoot || queryTokens[0] || '').toLowerCase();
+  if (_diagQuery.length >= 4) {
+    const _diagMatches = scoredProducts
+      .filter((item) => item.productTitleFull && item.productTitleFull.includes(_diagQuery))
+      .slice(0, 5);
+    if (_diagMatches.length > 0) {
+      console.log(`🧪 [SEARCH-DIAG] query='${_diagQuery}' foundInScored=${_diagMatches.length} topTitle='${_diagMatches[0].productTitleFull}' topScore=${_diagMatches[0].score} topRefSim=${_diagMatches[0].referenceSimilarity} topExact=${_diagMatches[0].exactHit}`);
+    } else {
+      // Also check tokenSet (which is normalized/lowercased)
+      const _diagByToken = scoredProducts
+        .filter((item) => item.tokenSet && item.tokenSet.has(_diagQuery))
+        .slice(0, 3);
+      if (_diagByToken.length > 0) {
+        console.log(`🧪 [SEARCH-DIAG] query='${_diagQuery}' NOT in titles but found in tokenSet count=${_diagByToken.length} first='${_diagByToken[0].productTitleFull}'`);
+      } else {
+        console.log(`🧪 [SEARCH-DIAG] query='${_diagQuery}' NOT in scoredProducts at all (total=${scoredProducts.length}) first3Titles=${JSON.stringify(scoredProducts.slice(0,3).map(p => p.productTitleFull))}`);
+      }
+    }
+  }
 
   // ── Greeting denylist (siempre, antes de cualquier búsqueda) ─────────────────
   const GREETING_DENYLIST = new Set([
@@ -3540,10 +3567,13 @@ async function searchMedicinesByName(userQuery, options = {}) {
     // ── Firebase direct fallback: candidateMatches empty after all local search paths.
     // Query Firebase directly using arrayContains on productTitleArray to catch products
     // beyond the 2000-document catalog limit or not indexed in scoredProducts.
+    // NOTE: also fire for queries WITH dosage — matchQuery (dosage-stripped) is the
+    // actual search term, so dosage in the original query shouldn't block Firebase access.
     const qToken = queryTokens[0] || '';
-    const qIsSingleToken = !isVitaminQuery && !hasQueryDosage && queryTokens.length === 1;
+    const qIsSingleToken = !isVitaminQuery && queryTokens.length === 1;
+    console.log(`[FIREBASE-DIRECT] candidateMatches empty, hasQueryDosage=${hasQueryDosage} qToken='${qToken}' matchQuery='${matchQuery}'`);
     if (qIsSingleToken && db) {
-      console.log(`[FIREBASE-DIRECT] candidateMatches empty, querying Firebase for token='${qToken}'...`);
+      console.log(`[FIREBASE-DIRECT] querying Firebase for token='${qToken}'...`);
       try {
         const [pmSnap, ppSnap] = await Promise.all([
           db.collection('products-market').where('productTitleArray', 'array-contains', qToken).limit(20).get(),
@@ -3578,58 +3608,85 @@ async function searchMedicinesByName(userQuery, options = {}) {
   }
 
   if (!candidateMatches.length) {
-    console.log(`🧪 [FINAL-RETURN] candidateMatches empty after all paths (including Firebase fallback), returning no results`);
-    // ── Fuzzy spelling rescue: try adjacent character transpositions on the primary
-    // query token and re-query Firebase. Catches typos like "clopidrogel" (adjacent
-    // swap at position 5: 'r'↔'o') or "atorvastatina"→"atorvastatina" (same letters,
-    // different order). Only attempt for tokens >= 6 chars where exact search found nothing.
+    // ── Fuzzy spelling rescue: when exact/local search finds nothing, try Firebase
+    // with the query as-is (tolerating typos) and with short prefixes.
+    //
+    // KEY FIX: remove the titleContainsVariant check — Firebase's array-contains IS
+    // the filter. Requiring the variant to ALSO appear in the title was double-filtering
+    // and rejecting products whose productTitleArray contains the variant as a token
+    // but the title happens to not include that exact substring (e.g. the product
+    // title is "CLOPIDROGEL 75MG" and the variant is "clopidrogel" — they ARE the same
+    // product, the Levenshtein distance is 0, and we should accept it).
+    //
+    // Strategy:
+    // 1. Try matchQuery (dosage-stripped, e.g. "clopidrogel" from "clopidrogel de 75")
+    //    — this is the actual medicine name, should be found directly if it exists.
+    // 2. Try primaryToken (first query token — same as matchQuery for single-token queries).
+    // 3. Try short prefixes of matchQuery (first 4-5 chars) to catch typos where the
+    //    medicine name is malformed but Firebase still has the product under the typo.
     const primaryToken = queryTokens[0] || '';
-    if (primaryToken.length >= 6 && db) {
-      const tryAdjacentSwaps = (token) =>
-        token.split('').map((_, i, arr) =>
-          i < arr.length - 1 && arr[i] !== arr[i + 1]
-            ? arr.slice(0, i).concat(arr[i + 1], arr[i], arr.slice(i + 2)).join('')
-            : null
-        ).filter(Boolean);
+    const _fuzzyCandidates = [matchQuery, primaryToken].filter(Boolean);
+    // Add short prefixes of matchQuery
+    if (matchQuery && matchQuery.length >= 4) {
+      _fuzzyCandidates.push(matchQuery.slice(0, 4), matchQuery.slice(0, 5));
+    }
+    if (primaryToken !== matchQuery && primaryToken.length >= 4) {
+      _fuzzyCandidates.push(primaryToken.slice(0, 4), primaryToken.slice(0, 5));
+    }
 
-      // Try all adjacent swaps first (distance=2 from original = 1 swap)
-      const swapVariants = tryAdjacentSwaps(primaryToken);
-      // Also try the original token with its first 4+3 chars as prefix fallback
-      const prefixFallback = primaryToken.slice(0, 4);
-      const allVariants = [...swapVariants];
-      if (prefixFallback.length >= 4) allVariants.push(prefixFallback);
-
-      const attempted = new Set();
-      for (const variant of allVariants) {
-        if (attempted.has(variant)) continue;
-        attempted.add(variant);
+    const _uniqueFuzzy = [...new Set(_fuzzyCandidates)];
+    if (_uniqueFuzzy.length && db) {
+      console.log(`🧪 [FUZZY-RESCUE] trying variants: ${JSON.stringify(_uniqueFuzzy)}`);
+      for (const variant of _uniqueFuzzy) {
         try {
           const [pmSnap] = await Promise.all([
             db.collection('products-market').where('productTitleArray', 'array-contains', variant).limit(10).get(),
           ]);
           if (pmSnap.size > 0) {
             const fuzzyMatches = pmSnap.docs.map((d) => d.data());
-            console.log(`🧪 [FUZZY-RESCUE] '${primaryToken}' → '${variant}' found ${pmSnap.size} products`);
+            console.log(`🧪 [FUZZY-RESCUE] variant='${variant}' found ${pmSnap.size} products`);
+            // Accept ALL products returned by Firebase for this variant — they already
+            // passed the array-contains filter. Score them by Levenshtein distance
+            // to the original query so the closest spelling wins.
             const fuzzyScored = fuzzyMatches
               .map((doc) => {
                 const s = buildCatalogSignal(doc);
                 const m = scoreSignal(s);
-                return { ...m, productTitleFull: doc.productTitleFull || doc.title || '', title: doc.title || '', priceUsd: doc.priceUsd ?? 0, priceBs: doc.priceBs ?? 0, docId: d.id };
+                const title = doc.productTitleFull || doc.title || '';
+                // Levenshtein distance between the original query and the product title
+                // (normalized, first token only — the medicine name)
+                const _titleFirstToken = normalizeText(title).split(' ')[0] || '';
+                const _queryFirstToken = normalizeText(query).split(' ')[0] || '';
+                const levDist = _titleFirstToken && _queryFirstToken
+                  ? levenshteinDistance(_queryFirstToken, _titleFirstToken)
+                  : 999;
+                return {
+                  ...m,
+                  productTitleFull: title,
+                  title: doc.title || '',
+                  priceUsd: doc.priceUsd ?? 0,
+                  priceBs: doc.priceBs ?? 0,
+                  docId: d.id,
+                  levDist,
+                  fuzzyVariant: variant
+                };
               })
               .filter((item) => {
                 // Reject products with empty titles or zero/no price — they are not real catalog items
                 const hasTitle = (item.productTitleFull || item.title || '').trim().length > 0;
                 const hasPrice = item.priceUsd > 0;
-                // Also require the fuzzy variant to actually appear in the product title.
-                // "clop" prefix can match random products like "clozapina" that have nothing to do
-                // with the intended medicine. Only accept products whose title contains the variant.
-                const title = (item.productTitleFull || item.title || '').toLowerCase();
-                const titleContainsVariant = title.includes(variant.toLowerCase());
-                return hasTitle && hasPrice && titleContainsVariant;
+                // Reject only if Levenshtein distance is extreme (>4 for the first token).
+                // This allows typos like clopidrogel/clopidogrel (distance=2) through.
+                const tooFar = item.levDist > 4;
+                return hasTitle && hasPrice && !tooFar;
               })
-              .sort((a, b) => b.score - a.score)
+              .sort((a, b) => {
+                // Prefer lower Levenshtein distance, then higher score
+                if (a.levDist !== b.levDist) return a.levDist - b.levDist;
+                return (b.score ?? 0) - (a.score ?? 0);
+              })
               .slice(0, 5);
-            console.log(`🧪 [FUZZY-RESCUE] after filter: ${fuzzyScored.length} valid products, top='${fuzzyScored[0]?.productTitleFull}'`);
+            console.log(`🧪 [FUZZY-RESCUE] after filter: ${fuzzyScored.length} valid, top='${fuzzyScored[0]?.productTitleFull}' levDist=${fuzzyScored[0]?.levDist} variant=${fuzzyScored[0]?.fuzzyVariant}`);
             if (fuzzyScored.length > 0) {
               candidateMatches = fuzzyScored;
               break;
@@ -3639,9 +3696,6 @@ async function searchMedicinesByName(userQuery, options = {}) {
           console.error(`[FUZZY-RESCUE] error: ${e.message}`);
         }
       }
-    }
-    if (!candidateMatches.length) {
-      return { query, queryTokens, exchangeRate, matches: [] };
     }
   }
 
