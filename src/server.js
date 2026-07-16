@@ -4638,6 +4638,8 @@ function extractMedicineRequestsFromSegments(text) {
     const cleaned = normalizeText(piece);
     if (!cleaned) continue;
     if (isGreetingOrMenu(cleaned) || isThanksMessage(cleaned) || /^(listo|resumen)$/i.test(cleaned)) continue;
+    // Reject pure salt forms as standalone medicines (e.g. "potásico", "clorhidrato")
+    if (/^(?:potasico|potásico|clorhidrato|clorhidrico|sodico|sodica|sodio|benzoico|acetico)$/i.test(cleaned)) continue;
     // Reject pure numbers (e.g. "3") — not medicine names
     if (/^\d+$/.test(cleaned)) continue;
     if (!/(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)/.test(cleaned)) continue;
@@ -4661,6 +4663,8 @@ function extractMedicineRequestsFromSegments(text) {
         if (!results.includes(query)) results.push(query);
       }
     } else {
+      // Single-word or multi-word query — also reject pure salt forms
+      if (/^(?:potasico|potásico|clorhidrato|clorhidrico|sodico|sodica|sodio|benzoico|acetico)$/i.test(query)) return results;
       if (!results.includes(query)) results.push(query);
     }
   }
@@ -5638,7 +5642,7 @@ function extractRecipeMedicineLines(value) {
 
   // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
   const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
-  const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido)$/i;
+  const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido|potasico|potásico|potasi)$/i;
   // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
   if (fastTokens.length >= 2 && !/\r?\n/.test(raw)) {
@@ -6097,8 +6101,12 @@ function isLikelyRecipeMedicineCandidate(value) {
   // "retadar" is a common OCR error for "retard" (Bumetin Retard / Bumetin Retadar).
   if (/\b(retad|retard)\b/i.test(normalized)) return false;
   if (isGreetingOrMenu(normalized) || isThanksMessage(normalized) || /^(listo|resumen)$/i.test(normalized)) return false;
-  if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return false;
-  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|stadium|ano nac|año nac|datum|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return false;
+if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return false;
+  if (/\b(unidad|servicio|departamento|especialidad|area|área|clinica|clínica|consultorio|sala|piso|pabellon|pabellón|urgencias|emergencias|hospital|centro|paciente|stadium|ano nac|año nac|birthday|edad|sexo|peso|talla|ci|c\.i\.|cedula|cédula|firma|sello|telefono|teléfono|direccion|dirección|gastroenterologia|gastroenterología)\b/i.test(normalized)) return false;
+  // Reject standalone salt forms (e.g. "potásico", "clorhidrato") — they are pharmaceutical
+  // descriptors, not medicines. The same check exists in extractPrimaryRecipeMedicineQuery
+  // via MED_FORM_TOKENS but we add it here as an extra guard.
+  if (/^(?:potasico|potásico|potasi|clorhidrato|clorhidrico|sodico|sodica|sodio|benzoico|acetico)$/i.test(normalized)) return false;
 
   return Boolean(extractPrimaryRecipeMedicineQuery(raw));
 }
