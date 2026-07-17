@@ -3626,11 +3626,12 @@ const userCoords = options.userCoords || null;
               return tokenize(candidateCore).some((candidateToken) => tokenSimilarity(token, candidateToken) >= 0.76);
             });
 
+        const dosageMatches = !hasQueryDosage || item.dosageExactMatch;
         const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
         // For consultationMode: strict threshold (0.76) — reject low-refSim matches like daflon↔sonda
         const softScore = (item.referenceSimilarity ?? 0) >= 0.76 || item.fullFocusMatch || item.exactHit || item.phraseHit;
 
-        return tokenOverlap && (dosageOverlap || softScore);
+        return tokenOverlap && (dosageOverlap || softScore) && dosageMatches;
       });
       console.log(`🧪 [CONSULTATION-FALLBACK-RESULT] degradedMatches.length=${degradedMatches.length} top=` + JSON.stringify(degradedMatches.slice(0,3).map(i=>({t:i.productTitleFull,s:i.score??0,rs:i.referenceSimilarity??0}))));
 
@@ -3782,6 +3783,7 @@ const userCoords = options.userCoords || null;
         || item.exactHit
         || item.phraseHit;
 
+      const dosageMatches = !hasQueryDosage || item.dosageExactMatch;
       const dosageOverlap = !hasQueryDosage || candidateCore.includes(matchQuery) || candidateCore.includes(dosageLessQuery) || candidateCore.includes(exactRoot);
       // Require BOTH token overlap AND (strictMatchCandidate OR dosageOverlap) — no dosage-alone fallback
       const queryTokensForOverlap = alternativeTokens.filter(t => t.length >= 2);
@@ -3789,7 +3791,7 @@ const userCoords = options.userCoords || null;
         ? candidateCore.includes(queryCore)
         : queryTokensForOverlap.some(token => candidateCore.includes(token));
 
-      return hasTokenOverlap && (strictMatchCandidate || dosageOverlap);
+return hasTokenOverlap && (strictMatchCandidate || dosageOverlap) && dosageMatches;
     });
     console.log(`🧪 [DEGRADED-FALLBACK-RESULT] degradedMatches.length=${degradedMatches.length}`);
     // Reject degraded matches with very low reference similarity — they are spurious
