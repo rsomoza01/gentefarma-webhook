@@ -20,6 +20,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const OCR_PROVIDER = process.env.OCR_PROVIDER || (OPENAI_API_KEY ? 'openai' : 'none');
 const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
+const AUDIO_TRANSCRIPTION_ENABLED = process.env.AUDIO_TRANSCRIPTION_ENABLED !== 'false'; // true by default
 
 // ── LLM Intent Router ──────────────────────────────────────────────────
 const LLM_INTENT_MODEL = process.env.LLM_INTENT_MODEL || 'gpt-4o-mini';
@@ -895,10 +896,11 @@ async function analyzeIncomingMedia(media) {
   const mimeType = String(media.mimeType || media.mimetype || '').toLowerCase();
   const isImage = /^image\//.test(mimeType);
   const isPdf = mimeType.includes('pdf');
-  if (!hasInlineBase64 && !isImage && !isPdf) return null;
+  const isAudio = /^audio\//.test(mimeType) || mimeType.includes('ogg') || mimeType.includes('opus');
+  if (!hasInlineBase64 && !isImage && !isPdf && !isAudio) return null;
 
   console.log(
-    `🖼️ Analizando media: inlineBase64=${hasInlineBase64 ? inlineBuffer.length : 0} url=${media?.url || media?.URL || media?.mediaUrl || media?.directPath || ''}`
+    `🖼️ Analizando media: inlineBase64=${hasInlineBase64 ? inlineBuffer.length : 0} url=${media?.url || media?.URL || media?.mediaUrl || media?.directPath || ''} mimeType=${mimeType} isAudio=${isAudio}`
   );
 
   try {
@@ -920,6 +922,24 @@ async function extractTextFromMedia(media) {
   if (!buffer || !buffer.length) return '';
 
   const mimeType = String(media.mimeType || media.mimetype || '').toLowerCase();
+  const isAudio = /^audio\//.test(mimeType) || mimeType.includes('ogg') || mimeType.includes('opus');
+
+  // ── Audio transcription via Whisper ──────────────────────────────────
+  if (isAudio && AUDIO_TRANSCRIPTION_ENABLED) {
+    console.log('🎤 Audio detectado, iniciando transcripción Whisper...', {
+      mimeType,
+      bufferBytes: buffer.length,
+      hasOpenAIKey: Boolean(OPENAI_API_KEY)
+    });
+    const transcribedText = await transcribeAudio(buffer, mimeType);
+    if (transcribedText) {
+      console.log(`🎤 Transcripción exitosa (${transcribedText.length} chars):`, transcribedText.slice(0, 200));
+      return transcribedText;
+    }
+    console.warn('⚠️ Transcripción de audio sin resultado.');
+    return '';
+  }
+  // ── Image / PDF OCR via Vision ────────────────────────────────────────
   const imageBase64 = buffer.toString('base64');
 
   console.log('🧪 OCR media details:', {
@@ -952,6 +972,68 @@ async function extractTextFromMedia(media) {
 
   console.warn('⚠️ OCR sin resultado. Revisa proveedor/configuración o calidad de la imagen.');
   return '';
+}
+
+// ── Audio transcription via OpenAI Whisper ─────────────────────────────
+async function transcribeAudio(buffer, mimeType) {
+  if (!OPENAI_API_KEY) {
+    console.warn('⚠️ AUDIO_TRANSCRIPTION_ENABLED pero OPENAI_API_KEY no está configurada.');
+    return '';
+  }
+
+  // Determine file extension and MIME type for the API
+  let extension = 'mp3';
+  let apiMimeType = 'audio/mp3';
+  if (mimeType.includes('ogg') || mimeType.includes('opus')) {
+    extension = 'ogg';
+    apiMimeType = 'audio/ogg';
+  } else if (mimeType.includes('wav') || mimeType.includes('wave')) {
+    extension = 'wav';
+    apiMimeType = 'audio/wav';
+  } else if (mimeType.includes('mp3') || mimeType.includes('mpeg')) {
+    extension = 'mp3';
+    apiMimeType = 'audio/mpeg';
+  } else if (mimeType.includes('webm')) {
+    extension = 'webm';
+    apiMimeType = 'audio/webm';
+  }
+
+  // Build a multipart/form-data request manually using axios
+  // Whisper API accepts: file (binary) + model (string) + language (optional)
+  const boundary = `----FormBoundary${Date.now()}`;
+  const headerBuf = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n` +
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.${extension}"\r\nContent-Type: ${apiMimeType}\r\n\r\n`,
+    'utf8'
+  );
+  const footerBuf = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+  const fileBuf = buffer;
+  const bodyBuf = Buffer.concat([headerBuf, fileBuf, footerBuf]);
+
+  try {
+    const response = await axios.post(
+      `${OPENAI_BASE_URL}/audio/transcriptions`,
+      bodyBuf,
+      {
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        timeout: 60000 // 60s for audio transcription
+      }
+    );
+
+    // Whisper response: { "text": "..." }
+    const text = response.data?.text?.trim();
+    return text || '';
+  } catch (error) {
+    const status = error.response?.status;
+    const responseText = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+    console.error(`❌ Error transcripción Whisper (${status || 'no-status'}):`, responseText);
+    return '';
+  }
 }
 
 function bufferFromInlineBase64(value) {
