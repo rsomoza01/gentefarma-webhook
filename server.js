@@ -506,8 +506,15 @@ function parseSelectionCommand(text) {
     return buildResult(options, quantity, normalized);
   }
 
+  // Only treat as pure number list if there are 3+ distinct numbers AND
+  // the numbers are NOT all clearly dosage tokens (e.g. 75, 50, 30, 10 from
+  // "clopidrogel de 75 Losartan potásico de 50 atorvastatina de 30 nifedipina de 10 mg").
+  // Reject if the text contains medicine-like tokens (has letters beyond just numbers).
+  const hasLettersBeyondNumbers = /[a-zA-Z]{3,}/.test(normalized);
   const listOnly = parseOptionList(normalized);
-  if (listOnly.length >= 2) {
+  if (listOnly.length >= 3 && hasLettersBeyondNumbers) {
+    // 3+ numbers in a text that also has words → NOT a selection, skip
+  } else if (listOnly.length >= 2) {
     return buildResult(listOnly, quantity, normalized);
   }
 
@@ -2707,6 +2714,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // estaría vacío, retornar null para que routeMessage use la lógica de selección.
   // Esto cubre el caso en que tanto isViableDirectQuery como medicineSearchIntent
   // fueronfalse por algún motivo pero el texto aún llegó aquí.
+  // FIX: si se detectaron medicinas (reqMeds.length > 0), continuar con la búsqueda
+  // aunque isSelectionPhrase sea true — el texto es una consulta de medicamentos,
+  // no una selección, y parseSelectionCommand podría estar capturando números de dosis.
   if (!options.ocrOnly && !options.strictConsultationMode) {
     const normalized = normalizeText(text);
     if (isSelectionPhrase(normalized)) {
@@ -2716,6 +2726,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
         console.log('🛡️ [SELECTION-GUARD] Selection phrase detected in searchAndBuildCatalogResponse but no candidates — returning null so routeMessage handles it');
         return null;
       }
+      console.log('🛡️ [SELECTION-GUARD] isSelectionPhrase=true but reqMeds.length=%d — continuing with medicine search to avoid dosing-number false positive', reqMeds.length);
     }
   }
 
