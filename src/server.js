@@ -967,12 +967,10 @@ async function extractTextFromMedia(media) {
   return '';
 }
 
-// ── Audio transcription via OpenAI Whisper ─────────────────────────────
+// ── Audio transcription via Whisper (local o OpenAI) ─────────────────
 async function transcribeAudio(buffer, mimeType) {
-  if (!OPENAI_API_KEY) {
-    console.warn('⚠️ AUDIO_TRANSCRIPTION_ENABLED pero OPENAI_API_KEY no está configurada.');
-    return '';
-  }
+  const WHISPER_LOCAL_URL = process.env.WHISPER_LOCAL_URL || '';
+  const WHISPER_API_KEY = process.env.WHISPER_API_KEY || '';
 
   // Determine file extension and MIME type for the API
   let extension = 'mp3';
@@ -991,8 +989,44 @@ async function transcribeAudio(buffer, mimeType) {
     apiMimeType = 'audio/webm';
   }
 
+  // ── Try local Whisper first ───────────────────────────────────────
+  if (WHISPER_LOCAL_URL) {
+    try {
+      console.log(`🎤 Audio detectado, intentando Whisper local: ${WHISPER_LOCAL_URL}`);
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('file', buffer, { filename: `audio.${extension}`, contentType: apiMimeType });
+
+      const headers = { ...form.getHeaders() };
+      if (WHISPER_API_KEY) headers['X-API-Key'] = WHISPER_API_KEY;
+
+      const response = await axios.post(
+        `${WHISPER_LOCAL_URL}/transcribe`,
+        form,
+        { headers, timeout: 120000 }
+      );
+
+      const text = response.data?.text?.trim();
+      if (text) {
+        console.log(`🎤 Transcripción local exitosa: "${text.substring(0, 60)}..."`);
+        return text;
+      }
+    } catch (err) {
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail || err.message;
+      console.warn(`⚠️ Whisper local falló (${status || 'no-status'}): ${detail}. Intentando OpenAI...`);
+    }
+  }
+
+  // ── Fallback a OpenAI Whisper API ─────────────────────────────────
+  if (!OPENAI_API_KEY) {
+    console.warn('⚠️ AUDIO_TRANSCRIPTION_ENABLED pero no hay WHISPER_LOCAL_URL ni OPENAI_API_KEY.');
+    return '';
+  }
+
+  console.log(`🎤 Whisper local no disponible, usando OpenAI API...`);
+
   // Build a multipart/form-data request manually using axios
-  // Whisper API accepts: file (binary) + model (string) + language (optional)
   const boundary = `----FormBoundary${Date.now()}`;
   const headerBuf = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n` +
@@ -1000,8 +1034,7 @@ async function transcribeAudio(buffer, mimeType) {
     'utf8'
   );
   const footerBuf = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
-  const fileBuf = buffer;
-  const bodyBuf = Buffer.concat([headerBuf, fileBuf, footerBuf]);
+  const bodyBuf = Buffer.concat([headerBuf, buffer, footerBuf]);
 
   try {
     const response = await axios.post(
@@ -1018,13 +1051,13 @@ async function transcribeAudio(buffer, mimeType) {
       }
     );
 
-    // Whisper response: { "text": "..." }
     const text = response.data?.text?.trim();
+    if (text) console.log(`🎤 Transcripción OpenAI exitosa: "${text.substring(0, 60)}..."`);
     return text || '';
   } catch (error) {
     const status = error.response?.status;
     const responseText = error.response?.data ? JSON.stringify(error.response.data) : error.message;
-    console.error(`❌ Error transcripción Whisper (${status || 'no-status'}):`, responseText);
+    console.error(`❌ Error transcripción Whisper OpenAI (${status || 'no-status'}):`, responseText);
     return '';
   }
 }

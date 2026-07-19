@@ -1,0 +1,17 @@
+# Whisper local transcription microservice — Render Blueprint
+# Used by gentefarma-webhook for audio → text transcription
+
+services:
+  - type: pserv
+    name: gentefarma-whisper
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    healthCheckPath: /health
+    envVars:
+      - key: WHISPER_MODEL
+        value: small
+      - key: WHISPER_API_KEY
+        sync: false  # Set in Dashboard — shared secret with webhook
