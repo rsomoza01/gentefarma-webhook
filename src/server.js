@@ -1620,7 +1620,13 @@ const LLM_DOSAGE_FORMS = new Set([
     .filter(m => m.length >= 2)
     .map(m => {
       const lower = m.toLowerCase();
-      return { original: m, lower, tokens: lower.split(/\s+/) };
+      // Strip dosage forms so the item keeps the clean medicine name for Step 2
+      const strippedLower = lower
+        .replace(/\b\d+(?:[.,]\d+)?\s*(?:mgr|mgrs|mg|mcg|g|gr|ml|cc|ui|iu|mL|tab|tabs|tabl|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi, ' ')
+        .replace(/\bx\d+\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return { original: m, lower, strippedLower, tokens: lower.split(/\s+/) };
     })
     .filter(item => {
       // Reject if the ENTIRE string is a single dosage form
@@ -1628,9 +1634,17 @@ const LLM_DOSAGE_FORMS = new Set([
         console.log('🧠 [LLM-DEDUP] Rejected dosage form (single): "%s"', item.original);
         return false;
       }
-      // Reject if the string contains any dosage form anywhere (e.g. "candesartan tabl")
-      if (LLM_DOSAGE_FORMS_RE.test(item.lower)) {
-        console.log('🧠 [LLM-DEDUP] Rejected (contains dosage form): "%s"', item.original);
+      // FIX: Strip dosage forms FIRST, then reject only if result is empty.
+      // "candesartan 32 mgr x15 tabl" → strip → "candesartan" (KEEP)
+      // "mgr" alone → strip → "" (REJECT)
+      // "tabl" alone → strip → "" (REJECT)
+      const stripped = item.lower
+        .replace(/\b\d+(?:[.,]\d+)?\s*(?:mgr|mgrs|mg|mcg|g|gr|ml|cc|ui|iu|mL|tab|tabs|tabl|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi, ' ')
+        .replace(/\bx\d+\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!stripped) {
+        console.log('🧠 [LLM-DEDUP] Rejected (stripped to empty): "%s"', item.original);
         return false;
       }
       // Reject pure numbers
@@ -1649,7 +1663,8 @@ const LLM_DOSAGE_FORMS = new Set([
   // → KEEP "esoz".
   const roots = new Map();
   for (const item of normalized) {
-    roots.set(item.lower, getMedicineRoot(item.lower));
+    // Use strippedLower so dosage forms don't pollute the root
+    roots.set(item.lower, getMedicineRoot(item.strippedLower || item.lower));
   }
 
   const sorted = [...normalized].sort((a, b) => b.tokens.length - a.tokens.length);
@@ -1686,7 +1701,7 @@ const LLM_DOSAGE_FORMS = new Set([
     }
   }
 
-  const result = kept.map(i => i.original);
+  const result = kept.map(i => i.strippedLower || i.original);
   console.log('🧠 [LLM-DEDUP] Input=%s → Output=%s',
     JSON.stringify(medicines), JSON.stringify(result));
   return result;
