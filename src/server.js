@@ -1706,9 +1706,25 @@ async function handleLLMIntent(llmResult, phone, text, session, context) {
   switch (intent) {
   case 'medicine_search': {
       // LLM extracted medicines — search directly in Firebase
+      // Extra safety: reject obvious dosage-only strings before dedup
+      // This catches cases where LLM extracts dosage forms as separate medicines
+      const KNOWN_DOSAGE_FORMS = new Set(['mgr','tabl','tabs','tab','x15','mg','mcg','gr','g','ml','cc']);
+      const rawMedicines = medicines || [];
+      const medicinesFiltered = rawMedicines.filter(m => {
+        const lower = String(m || '').toLowerCase().trim();
+        if (KNOWN_DOSAGE_FORMS.has(lower)) {
+          console.log('🧠 [LLM-INTENT] Pre-filter rejected dosage form: "%s"', m);
+          return false;
+        }
+        if (/^x\d+$/i.test(lower)) {
+          console.log('🧠 [LLM-INTENT] Pre-filter rejected quantity pattern: "%s"', m);
+          return false;
+        }
+        return true;
+      });
+      console.log('🧠 [LLM-MEDICINES] raw medicines from LLM: %s filtered=%s', JSON.stringify(rawMedicines), JSON.stringify(medicinesFiltered));
       // Dedup first: remove dosage forms, prefix-subsets, and exact dupes
-      console.log('🧠 [LLM-MEDICINES] raw medicines from LLM: %s', JSON.stringify(medicines));
-      const preExtractedMedicines = dedupLLMMedicines(medicines || []);
+      const preExtractedMedicines = dedupLLMMedicines(medicinesFiltered);
       clearSelectionState(session);
       const searchQuery = preExtractedMedicines.length > 0 ? preExtractedMedicines.join(' ') : text;
       console.log('🧠 [LLM-INTENT] Medicine search — medicines=%s deduped=%s query=%s',
