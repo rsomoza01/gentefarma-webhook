@@ -1611,6 +1611,8 @@ const LLM_DOSAGE_FORMS = new Set([
     // Units / dosage abbreviations that should never be standalone medicines
     'mgr','mg','mcg','gr','g','ml','cc',
   ]);
+  // Regex to detect ANY dosage form anywhere in a candidate string
+  const LLM_DOSAGE_FORMS_RE = /\b(mgr|mg|mcg|g|gr|ml|cc|ui|iu|tab|tabs|tabl|tabletas?|capsulas?|capsules?|cap|caps|ampolla|ampollas|susp|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad|retard|forte|regular|inyectable)\b/i;
 
   // Step 1: normalize and filter out dosage forms / too-short items
   const normalized = medicines
@@ -1623,7 +1625,12 @@ const LLM_DOSAGE_FORMS = new Set([
     .filter(item => {
       // Reject if the ENTIRE string is a single dosage form
       if (item.tokens.length === 1 && LLM_DOSAGE_FORMS.has(item.tokens[0])) {
-        console.log('🧠 [LLM-DEDUP] Rejected dosage form: "%s"', item.original);
+        console.log('🧠 [LLM-DEDUP] Rejected dosage form (single): "%s"', item.original);
+        return false;
+      }
+      // Reject if the string contains any dosage form anywhere (e.g. "candesartan tabl")
+      if (LLM_DOSAGE_FORMS_RE.test(item.lower)) {
+        console.log('🧠 [LLM-DEDUP] Rejected (contains dosage form): "%s"', item.original);
         return false;
       }
       // Reject pure numbers
@@ -4499,6 +4506,9 @@ function extractMedicineRequests(text) {
       // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
       // not a standalone medicine — treat it like a salt form so it never appears alone.
       if (SALT_FORMS.has(lower) || lower === 'acido' || lower === 'ácido') continue;
+      // Reject dosage form / quantity tokens even as single words
+      if (LLM_DOSAGE_FORMS.has(lower)) continue;
+      if (/^x\d+$/i.test(lower)) continue;
       if (looksLikeMedicineName(token)) {
         results.push(token);
         tokensAdded += 1;
@@ -4629,7 +4639,9 @@ function splitSingleLineMedicineList(text) {
   }
 
   // ── Unit patterns ──
-  const UNIT_RE = /^(?:mg|mcg|g|gr|ml|mL|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
+  const UNIT_RE = /^(?:mg|mcg|mgr|g|gr|ml|mL|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
+  // ── Quantity patterns (e.g. "x15" = 15 unidades) — never a medicine name ──
+  const QUANTITY_RE = /^x\d+$/i;
 
   // ── Strong stopwords to strip when extracting medicine name ──
   const STRONG_STOP_RE = /^(?:de|del|la|el|las|los|una|unos|que|y|con|para|por|sin|no|si|un|une)$/i;
@@ -6376,8 +6388,10 @@ function extractMedicineQuery(text) {
     return '';
   }
 
-  // Dosage strip: remove "100 mg", "gotas", etc. from candidate AFTER verb extraction
-  const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mgr|mg|mcg|g|gr|ml|cc|ui|iu|mL|tab|tabs|tabl|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
+  // Dosage strip: remove "100 mg", "gotas", "x15", etc. from candidate AFTER verb extraction
+  const dosageStrip = /\b\d+(?:[.,]\d+)?\s*(?:mgr|mgrs|mg|mcg|g|gr|ml|cc|ui|iu|mL|tab|tabs|tabl|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)\b/gi;
+  // Also strip x15-type quantity patterns (x followed by digits = unidades)
+  const quantityStrip = /\bx\d+\b/gi;
 
   const verbList = [
     'por\\sfavor','me\\spuedes\\sayudar\\scon','me\\sayudas\\scon','necesito','busco','busque','buscame','buscando','quiero',
@@ -6424,7 +6438,7 @@ function extractMedicineQuery(text) {
   }
 
   // Strip dosage from the extracted candidate (not from the original text before verb matching)
-  candidate = candidate.replace(dosageStrip, ' ').replace(/\s+/g, ' ').trim();
+  candidate = candidate.replace(dosageStrip, ' ').replace(quantityStrip, ' ').replace(/\s+/g, ' ').trim();
   // ALSO strip trailing bare dosage that P2A/P2B might leave: "isosorbide 10", "medicine 30"
   candidate = candidate.replace(/\s+\d+(?:\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL))?\s*$/i, ' ').trim();
 
