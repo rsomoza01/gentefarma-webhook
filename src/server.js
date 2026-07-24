@@ -2909,7 +2909,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     const normalizedItem = normalizeText(item);
     if (normalizedItem.length < 3) return false;
     // Reject dosage form tokens searched as standalone medicines
-    if (DOSAGE_FORMS.has(normalizedItem)) return false;
+    // Case-insensitive: normalizeText doesn't lowercase, so compare against lowercase version
+    if (DOSAGE_FORMS.has(normalizedItem.toLowerCase())) return false;
     // TEMP DIAGNOSTIC: log candidate medicines to debug fexofenadina case
     if (normalizedItem.includes('fexofenadina')) {
       console.log('🧪 [FEXOF-DIAG] candidateMedicine item="%s" normalized="%s" passed=true', item, normalizedItem);
