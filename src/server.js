@@ -3036,7 +3036,20 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
       console.log('🧪 [FEXOF-DEDUP] dedupedCandidates=%s rawCandidates=%s', JSON.stringify(dedupedCandidates), JSON.stringify(rawCandidates));
     }
 
+    // ULTRA-GUARD: NEVER search for dosage form abbreviations or quantity patterns.
+    // These can slip through dedupLLMMedicines in cases where the LLM returns
+    // them as separate tokens (e.g. "Candesartan", "mgr", "x15", "tabl").
+    // Reject them BEFORE searchMedicinesByName to prevent:
+    //   - "mgr" → "No disponibles: mgr"
+    //   - "x15" → "No disponibles: x15"
+    //   - "tabl" → spurious "TABL" group with TADAFOX/TONUM/etc. products
+    const QUERY_REJECT_RE = /^(?:mgr|x15)$|^x\d+$|^tabl$|^tab$|^tabs$|^(?:mg|mcg|g|gr|ml|cc|ui|iu)$/i;
     for (const medicineQuery of dedupedCandidates) {
+      const qLower = String(medicineQuery || '').toLowerCase().trim();
+      if (QUERY_REJECT_RE.test(qLower)) {
+        console.log('🛡️ [QUERY-REJECT] Skipped dosage/quantity query: "%s"', medicineQuery);
+        continue;
+      }
       const result = await searchMedicinesByName(medicineQuery, {
         products,
         exchangeRate,
@@ -3052,7 +3065,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
         groups.push(result);
       } else {
         const normalizedMissing = normalizeText(medicineQuery);
-        if (normalizedMissing && !missingMedicineSet.has(normalizedMissing)) {
+        // GUARD: never add dosage form abbreviations to missingMedicines
+        if (normalizedMissing && !missingMedicineSet.has(normalizedMissing) && !QUERY_REJECT_RE.test(normalizedMissing)) {
           missingMedicineSet.add(normalizedMissing);
           missingMedicines.push(medicineQuery);
         }
