@@ -5992,8 +5992,18 @@ function extractRecipeMedicineLines(value) {
 
   const formOrDose = /\b(\d|mg|mcg|g|gr|ml|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina)\b/i;
   const shortBrandLike = /^(?:[a-záéíóúñ][a-záéíóúñ0-9.-]{2,}(?:\s+[a-záéíóúñ0-9().-]{2,}){0,5})$/i;
+  // Dosage form tokens that should NEVER be pushed as standalone medicine candidates
+  const DOSAGE_FORMS_LOCAL = new Set([
+    'cap','caps','capsula','capsulas','capsule','capsules',
+    'susp','suspen','suspension','sol','solucion',
+    'crema','cremas','gel','pomada','ungüento','unguento','ung',
+    'polvo','polvos','jarabe','jar','gotas','gota',
+    'ampolla','ampollas','amp','sobre','sobres','sb',
+    'tab','tabs','tabl','tableta','tabletas',
+    'inyectable','inyect',
+    'mgr','mgrs','mg','mcg','g','gr','ml','cc','ui','iu',
+  ]);
   const candidates = [];
-
   const userQueryVerbPatterns = [
     /\b(tienes?|tiene|tengo|tienen|tener|quiero|quiere|quieren|querer|busco|busca|buscan|buscar|necesito|necesita|necesitan|necesitar|hay|habia|habra|disponible|disponibles|disponibilidad|precio|costo|costar|cuesta|cuestan)\b/i,
     /\b(por\s+favor|me\s+puedes|me\s+ayuda|consulta|consultar|saber|cuanto|cuánto)\b/i
@@ -6013,7 +6023,10 @@ function extractRecipeMedicineLines(value) {
     if (userQueryVerbPatterns.some((p) => p.test(normalized))) return;
     // Reject single-word generic selection tokens (caja, opcion, unidad, etc.)
     // These are not medicine names and should not trigger a catalog search.
-    if (normalized.split(/\s+/).length === 1 && /^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?|unidad(?:es)?)$/i.test(normalized)) return;
+    if (normalized.split(/\\s+/).length === 1 && /^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?|unidad(?:es)?)$/i.test(normalized)) return;
+    // Reject dosage form tokens (TABL, MGR, tabs, mg, x15, etc.) before they become candidates
+    if (DOSAGE_FORMS_LOCAL.has(normalized.toLowerCase())) return;
+    if (/^x\\d+$/i.test(normalized)) return;
     candidates.push(candidate);
   };
 
