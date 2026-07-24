@@ -4343,11 +4343,19 @@ function buildCatalogResponse(result) {
 }
 
 function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines = []) {
+  // ULTRA-GUARD: filter dosage form abbreviations from missingMedicines
+  // This prevents spurious "No disponibles: mgr / x15 / tabl" entries
+  const MISSING_REJECT_RE = /^(?:mgr|x15|tabl|tab|tabs|mg|mcg|g|gr|ml|cc|ui|iu)$|^x\d+$/i;
+  const filteredMissing = (missingMedicines || []).filter(m => {
+    const lower = String(m || '').toLowerCase().trim();
+    return !MISSING_REJECT_RE.test(lower);
+  });
+
   if (!Array.isArray(results) || !results.length) {
-    const missingLines = Array.isArray(missingMedicines) && missingMedicines.length
+    const missingLines = Array.isArray(filteredMissing) && filteredMissing.length
       ? [
           '⚠️ Algunos medicamentos no están disponibles en este momento:',
-          ...missingMedicines.map((item) => `• *${item}*`),
+          ...filteredMissing.map((item) => `• *${item}*`),
           '',
           '¿Otro medicamento? Escríbeme el nombre y realizo la consulta.'
         ]
@@ -4366,9 +4374,9 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
   }
   lines.push('');
 
-  if (Array.isArray(missingMedicines) && missingMedicines.length) {
+  if (Array.isArray(filteredMissing) && filteredMissing.length) {
     lines.push('⚠️ *No disponibles:*');
-    missingMedicines.forEach((item) => {
+    filteredMissing.forEach((item) => {
       lines.push(`• *${item}*`);
     });
     lines.push('');
