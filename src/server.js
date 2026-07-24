@@ -6400,7 +6400,20 @@ function looksLikeMedicineName(value) {
   const tokens = tokenize(text).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   if (!tokens.length) return false;
 
-  const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mgr|mg|mcg|g|gr|ml|cc|ui|iu)|tab|tabs|tabl|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|vit)\b/i.test(lower);
+  // ── Check if any standalone token (not substring) is a dosage form ──────────
+  // Use Set membership on individual tokens to avoid false matches like
+  // "candesartan" matching \btab\b (word boundary between 't' and 'a').
+  const dosageFormTokens = new Set([
+    'mg','mcg','g','gr','ml','cc','ui','iu','mL','mgr','mgrs',
+    'tab','tabs','tabl','tabla','tablas','tableta','tabletas',
+    'capsula','capsulas','cápsula','cápsulas','cap','caps','capsules',
+    'ampolla','ampollas','vial','viales',
+    'suspension','suspensión','susp','jarabe','gotas','crema','gel',
+    'polvo','polvos','unguento','unguentos','sobres','sobresa',
+    'retad','retadar','retard','retardar','retardado',
+    'vit','vitamina','vitamina'
+  ]);
+  const hasDosageOrForm = tokens.some((t) => dosageFormTokens.has(t.toLowerCase()));
   // tokens de conversación genérica → no parecen nombres de productos
   const GENERIC_TOKENS = new Set(['para', 'esta', 'está', 'bien', 'okay', 'ok', 'las', 'los',
     'una', 'unos', 'del', 'que', 'con', 'sin', 'por', 'muy', 'más', 'mas', 'todo', 'así',
