@@ -6268,6 +6268,7 @@ if (/^(dr\.?|dra\.?|doctor|doctora|medico|médico)\b/i.test(raw)) return '';
 
 function looksLikeMedicineName(value) {
   const text = normalizeText(value);
+  const lower = text.toLowerCase(); // used for all Set.has() and regex checks
   if (!text) return false;
   if (isGreetingOrMenu(text) || isThanksMessage(text) || /^(listo|resumen|bot on|bot off|bot status)$/i.test(text)) return false;
 
@@ -6281,9 +6282,9 @@ function looksLikeMedicineName(value) {
   // ── Salt forms are NEVER standalone medicines ──────────────────────────
   const SALT_FORMS_CHECK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro','acido','ácido',
     'mgr','mgrs','tabl','tabs','tab']);
-  if (SALT_FORMS_CHECK.has(text)) return false;
+  if (SALT_FORMS_CHECK.has(lower)) return false;
   // Quantity patterns like "x15" (15 unidades) are not medicines
-  if (/^x\d+$/i.test(text)) return false;
+  if (/^x\d+$/i.test(lower)) return false;
 
   // ── NO-CONSULTA denylist ──────────────────────────────────────────────
   // Mensajes que claramente no son consultas de medicamentos
@@ -6316,7 +6317,7 @@ function looksLikeMedicineName(value) {
   const tokens = tokenize(text).filter((token) => !STOPWORDS.has(token) && token.length > 1);
   if (!tokens.length) return false;
 
-  const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mgr|mg|mcg|g|gr|ml|cc|ui|iu)|tab|tabs|tabl|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|vit)\b/.test(text);
+  const hasDosageOrForm = /\b(\d+(?:[.,]\d+)?\s*(mgr|mg|mcg|g|gr|ml|cc|ui|iu)|tab|tabs|tabl|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?|vitamina|vit)\b/i.test(lower);
   // tokens de conversación genérica → no parecen nombres de productos
   const GENERIC_TOKENS = new Set(['para', 'esta', 'está', 'bien', 'okay', 'ok', 'las', 'los',
     'una', 'unos', 'del', 'que', 'con', 'sin', 'por', 'muy', 'más', 'mas', 'todo', 'así',
