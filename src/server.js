@@ -3005,6 +3005,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     return true;
   }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
 
+  console.log('🩺 [SEARCH-ENTRY] text="%s" preExtracted=%s requested=%s fallback=%s recipe=%s candidateMedicines=%s',
+    String(text).slice(0, 80), JSON.stringify(preExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(recipeLineMedicines), JSON.stringify(candidateMedicines));
+
   console.log('🧪 [CANDIDATE-MEDICINES] ocrOnly=%s preExtracted=%s requestedMedicines=%s fallbackMedicines=%s recipeLineMedicines=%s candidateMedicines=%s',
     ocrOnly, JSON.stringify(preExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(recipeLineMedicines), JSON.stringify(candidateMedicines));
 
