@@ -2875,7 +2875,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     'sobre','sobres','sb',
     'inhalador','aerosol','patch','parches','parche',
     'ovulo','ovulos','ov',
-    'tableta','tabletas','tab','tabs',
+    'tableta','tabletas','tab','tabs','tabl',
     'inyectable','inyect',
   ]);
   // Flatten each recipe line so that multi-medicine OCR strings like
