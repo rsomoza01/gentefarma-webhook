@@ -2917,7 +2917,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // Without this, "acido" passes the length>=3 filter but is not a real medicine,
   // and fires a spurious ACIDO search against Firebase that returns ACIDO FOLICO/etc.
   const normalizedPreExtracted = (preExtracted.length === 1 && typeof preExtracted[0] === 'string' && preExtracted[0].includes(' '))
-    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3 && looksLikeMedicineName(t))
+    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3 && !DOSAGE_QUANTITY_REJECT.test(t) && looksLikeMedicineName(t))
     : preExtracted;
   // EXPLICIT DENYLIST: remove dosage forms and quantity patterns that may have
   // slipped through looksLikeMedicineName() in older deployed versions.
