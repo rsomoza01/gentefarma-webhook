@@ -2827,8 +2827,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // "acido ursodesoxicolico" → ["ursodesoxicolico"] (not ["acido","ursodesoxicolico"]).
   // Without this, "acido" passes the length>=3 filter but is not a real medicine,
   // and fires a spurious ACIDO search against Firebase that returns ACIDO FOLICO/etc.
+  const DOSAGE_QUANTITY_REJECT = /^(?:mgr|mgrs|tabl|tab|tabs|tableta|tabletas|capsula|capsulas|capsule|capsules|cap|caps|susp|suspen|suspension|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mg|mcg|g|gr|ml|cc|ui|iu|x\d+)$/i;
   const normalizedPreExtracted = (preExtracted.length === 1 && typeof preExtracted[0] === 'string' && preExtracted[0].includes(' '))
-    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3 && looksLikeMedicineName(t))
+    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3 && !DOSAGE_QUANTITY_REJECT.test(t) && looksLikeMedicineName(t))
     : preExtracted;
   const requestedMedicines = normalizedPreExtracted.length > 0 ? normalizedPreExtracted : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
@@ -6325,6 +6326,11 @@ function isMenuOption(value) {
 function extractMedicineQuery(text) {
   // DEBUG: log input and output to trace production behavior
   const _dbg_input = String(text ?? '').trim().slice(0, 80);
+  // HARD REJECT: dosage forms and quantity patterns that are NEVER medicine names
+  if (/^(?:mgr|mgrs|x\d+|tabl|tabs?|caps|capsulas?|susp|jarabe|gotas|crema|gel|polvo|sobres?)$/i.test(String(text ?? '').trim())) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => HARD-REJECT (dosage/quantity token)', _dbg_input);
+    return '';
+  }
   const cleaned = normalizeText(text);
   if (!cleaned) {
     console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "" (empty)', _dbg_input, cleaned);
@@ -6452,7 +6458,7 @@ const MED_FORM_TOKENS=new Set([
     return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
   }
   // Salt forms are NEVER standalone medicines — treat them as weak openers
-  const SALT_FORMS_WEAK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
+  const SALT_FORMS_WEAK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro','mgr','mgrs','tabl','tabs','tab']);
   function isSaltForm(token) {
     return SALT_FORMS_WEAK.has(token.toLowerCase());
   }
