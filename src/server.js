@@ -2852,6 +2852,7 @@ function enrichMatchWithProvider(item, userCoords, providersList) {
 }
 
 async function searchAndBuildCatalogResponse(text, session, options = {}, userInfo = {}) {
+  console.log('🚀 [BUILD-V2.2-20250725] ENTRY — mgr/x15/tabl fixes DEPLOYED');
   // Log only when text looks TRUNCATED (possible chunking bug)
   // DISABLED after root cause found in extractStrictConsultationMedicineQuery
   if (!db) {
@@ -2915,6 +2916,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     'ovulo','ovulos','ov',
     'tableta','tabletas','tab','tabs','tabl',
     'inyectable','inyect',
+    'mgr','mgrs',
   ]);
   // Flatten each recipe line so that multi-medicine OCR strings like
   // "ESOZ LEPRIT BUMETIN RETADAR EVIGAX CAP MODERAN SUSP" get split into
@@ -2949,6 +2951,8 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     // Reject dosage form tokens searched as standalone medicines
     // Case-insensitive: normalizeText doesn't lowercase, so compare against lowercase version
     if (DOSAGE_FORMS.has(normalizedItem.toLowerCase())) return false;
+    // Reject quantity patterns like "x15", "x30" — not medicines, just unit counts
+    if (/^x\d+$/i.test(normalizedItem)) return false;
     // TEMP DIAGNOSTIC: log candidate medicines to debug fexofenadina case
     if (normalizedItem.includes('fexofenadina')) {
       console.log('🧪 [FEXOF-DIAG] candidateMedicine item="%s" normalized="%s" passed=true', item, normalizedItem);
