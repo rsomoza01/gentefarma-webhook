@@ -4862,6 +4862,8 @@ function extractMedicineRequestsFromSegments(text) {
       const spaceTokens = cleaned.split(/\s+/).filter((t) => t.length >= 3);
       for (const token of spaceTokens) {
         if (results.includes(token)) continue;
+        // Reject quantity patterns like "x15", "x30" before looksLikeMedicineName check
+        if (/^x\d+$/i.test(token)) continue;
         if (looksLikeMedicineName(token)) {
           results.push(token);
         }
@@ -5852,7 +5854,7 @@ function extractRecipeMedicineLines(value) {
   // }
 
   // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
-  const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|tab|tabs|tabl|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mgr|mgrs)$/i;
+  const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|tab|tabs|tabl|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mgr|mgrs|x\d+)$/i;
   const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido|potasico|potásico|potasi|dinitrato|dinitric)$/i;
   // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
@@ -5861,7 +5863,7 @@ function extractRecipeMedicineLines(value) {
     // Filter out dosage forms (CAP, SUSP, etc.), salt forms (CLORHIDRATO, SULFATO, etc.),
     // unit abbreviations (mgr = miligramos), quantity patterns (x15 = 15 unidades),
     // and pure numeric tokens — they are not standalone medicines
-    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !SALT_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t) && !/^x\d+$/i.test(t) && !/^mgr$/i.test(t));
+    const splitTokens = fastTokens.filter(t => !DOSAGE_FORMS_RE.test(t) && !SALT_FORMS_RE.test(t) && !/^\d+(?:[.,]\d+)?$/.test(t));
     console.log('🧪 [EXTRACT-RECIPE] raw value=%s → FAST-SPLIT tokens=%s (fastTokens=%d)', raw.slice(0, 200), JSON.stringify(splitTokens), fastTokens.length);
     console.log('🧪 [EXTRACT-RECIPE]   DOSAGE_FILTER: mgr=%s x15=%s tabl=%s', DOSAGE_FORMS_RE.test('mgr'), /^x\d+$/i.test('x15'), DOSAGE_FORMS_RE.test('tabl'));
     return splitTokens;
