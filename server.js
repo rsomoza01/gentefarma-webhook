@@ -1580,7 +1580,8 @@ function dedupLLMMedicines(medicines) {
     'ampolla','ampollas','amp','sobre','sobres','sb',
     'retard','retad','retadar','retardo','retardado','retardada',
     'forte','regular',
-    'tableta','tabletas','tab','tabs',
+    'tableta','tabletas','tab','tabs','tabl',
+    'mgr','mgrs',
     'inyectable','inyect',
   ]);
 
@@ -1601,6 +1602,11 @@ function dedupLLMMedicines(medicines) {
       // Reject pure numbers
       if (/^\d+(?:[.,]\d+)?$/.test(item.lower)) {
         console.log('🧠 [LLM-DEDUP] Rejected pure number: "%s"', item.original);
+        return false;
+      }
+      // Reject x15, x30, x5-type quantity patterns (x + digits = package quantity, not medicine)
+      if (/^x\d+$/i.test(item.lower)) {
+        console.log('🧠 [LLM-DEDUP] Rejected quantity pattern: "%s"', item.original);
         return false;
       }
       return true;
