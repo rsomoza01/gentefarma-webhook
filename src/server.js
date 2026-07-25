@@ -3005,9 +3005,6 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     return true;
   }).map((item) => recipeMode ? extractPrimaryRecipeMedicineQuery(item) : item).filter(Boolean);
 
-  console.log('🩺 [SEARCH-ENTRY] text="%s" preExtracted=%s requested=%s fallback=%s recipe=%s candidateMedicines=%s',
-    String(text).slice(0, 80), JSON.stringify(preExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(recipeLineMedicines), JSON.stringify(candidateMedicines));
-
   console.log('🧪 [CANDIDATE-MEDICINES] ocrOnly=%s preExtracted=%s requestedMedicines=%s fallbackMedicines=%s recipeLineMedicines=%s candidateMedicines=%s',
     ocrOnly, JSON.stringify(preExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(recipeLineMedicines), JSON.stringify(candidateMedicines));
 
@@ -3018,6 +3015,27 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // but "esoz" is kept even when "esoz 40 mg" also exists.
   const rawCandidates = [...candidateMedicines];
   const dedupedCandidates = dedupLLMMedicines(candidateMedicines);
+
+  // ULTRA-GUARD #0:强硬过滤 — strip dosage forms from dedupedCandidates
+  // BEFORE any downstream processing. This is the last line of defense
+  // against dosage forms (mgr, x15, tabl, tab, tabs, mg, mcg, g, gr, ml, cc)
+  // that slip through when extractRecipeMedicineLines returns a full
+  // concatenated string instead of splitting on dosage boundaries.
+  const FINAL_REJECT_RE = /^(?:mgr|x15|tabl|tab|tabs|mg|mcg|g|gr|ml|cc|ui|iu)$|^x\d+$/i;
+  const preCount = dedupedCandidates.length;
+  for (let i = dedupedCandidates.length - 1; i >= 0; i--) {
+    const cand = String(dedupedCandidates[i] || '').trim();
+    if (!cand) { dedupedCandidates.splice(i, 1); continue; }
+    const lower = cand.toLowerCase();
+    if (FINAL_REJECT_RE.test(lower)) {
+      console.log('🛡️ [FINAL-GUARD] Removed dosage form from dedupedCandidates: "%s"', cand);
+      dedupedCandidates.splice(i, 1);
+    }
+  }
+  if (dedupedCandidates.length !== preCount) {
+    console.log('🛡️ [FINAL-GUARD] dedupedCandidates AFTER cleanup: %s', JSON.stringify(dedupedCandidates));
+  }
+
   if (dedupedCandidates.length !== rawCandidates.length) {
     const removed = rawCandidates.filter(c => !dedupedCandidates.includes(c));
     console.log('🧹 [PREFIX-DEDUP] REMOVED=%s | RAW=%s | DEDUPED=%s',
@@ -5834,7 +5852,7 @@ function extractRecipeMedicineLines(value) {
   // }
 
   // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
-  const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|tab|tabs|tabl|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
+  const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|tab|tabs|tabl|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mgr|mgrs)$/i;
   const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido|potasico|potásico|potasi|dinitrato|dinitric)$/i;
   // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
