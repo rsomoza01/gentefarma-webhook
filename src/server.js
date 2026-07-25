@@ -1705,15 +1705,28 @@ const LLM_DOSAGE_FORMS = new Set([
   // This is the last line of defense — catches "tabl" / "mgr" / "x15" that
   // passed through dedupLLMMedicines because they weren't stripped by the
   // dosageStrip regex (which only removes dosage forms preceded by numbers).
+  //
+  // IMPORTANT: result items may be multi-token strings like "candesartan tabl"
+  // where dosageStrip removed "32 mgr" and "x15" but left "tabl" attached to
+  // the medicine name. We must split each result into tokens and reject any
+  // token that is a dosage form, then re-join the survivors.
   const DOSAGE_REJECT_RE = /^(?:mgr|mgrs|tabl|tab|tabs|tableta|tabletas|capsula|capsulas|capsule|capsules|cap|caps|susp|suspen|suspension|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mg|mcg|g|gr|ml|cc|ui|iu|x\d+)$/i;
-  const finalResult = result.filter(m => {
-    const lower = String(m || '').toLowerCase().trim();
-    if (DOSAGE_REJECT_RE.test(lower)) {
-      console.log('🛡️ [LLM-DEDUP-FINAL] Rejected dosage/quantity token: "%s"', m);
-      return false;
+  const finalResult = [];
+  for (const item of result) {
+    const tokens = String(item || '').trim().split(/\s+/);
+    const cleanTokens = tokens.filter(t => {
+      const lower = t.toLowerCase();
+      if (DOSAGE_REJECT_RE.test(lower)) {
+        console.log('🛡️ [LLM-DEDUP-FINAL] Rejected dosage/quantity token: "%s" from item: "%s"', t, item);
+        return false;
+      }
+      return true;
+    });
+    // Only add if at least one token survived (never add empty strings)
+    if (cleanTokens.length > 0) {
+      finalResult.push(cleanTokens.join(' '));
     }
-    return true;
-  });
+  }
   console.log('🧠 [LLM-DEDUP] Input=%s → Output=%s (after FINAL GUARD: %s)',
     JSON.stringify(medicines), JSON.stringify(result), JSON.stringify(finalResult));
   return finalResult;
@@ -3059,9 +3072,12 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   for (let i = dedupedCandidates.length - 1; i >= 0; i--) {
     const cand = String(dedupedCandidates[i] || '').trim();
     if (!cand) { dedupedCandidates.splice(i, 1); continue; }
-    const lower = cand.toLowerCase();
-    if (FINAL_REJECT_RE.test(lower)) {
-      console.log('🛡️ [FINAL-GUARD] Removed dosage form from dedupedCandidates: "%s"', cand);
+    // Split multi-token strings (e.g. "candesartan tabl") into individual tokens
+    // and reject if ANY token is a dosage form
+    const tokens = cand.split(/\s+/);
+    const hasDosageToken = tokens.some(t => FINAL_REJECT_RE.test(t.toLowerCase()));
+    if (hasDosageToken) {
+      console.log('🛡️ [FINAL-GUARD] Removed dosage form from dedupedCandidates: "%s" (tokens: %s)', cand, JSON.stringify(tokens));
       dedupedCandidates.splice(i, 1);
     }
   }
