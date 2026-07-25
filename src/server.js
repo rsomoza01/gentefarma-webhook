@@ -1701,10 +1701,22 @@ const LLM_DOSAGE_FORMS = new Set([
     }
   }
 
-  const result = kept.map(i => i.strippedLower || i.original);
-  console.log('🧠 [LLM-DEDUP] Input=%s → Output=%s',
-    JSON.stringify(medicines), JSON.stringify(result));
-  return result;
+  // FINAL GUARD: reject any remaining dosage form or quantity pattern from the result.
+  // This is the last line of defense — catches "tabl" / "mgr" / "x15" that
+  // passed through dedupLLMMedicines because they weren't stripped by the
+  // dosageStrip regex (which only removes dosage forms preceded by numbers).
+  const DOSAGE_REJECT_RE = /^(?:mgr|mgrs|tabl|tab|tabs|tableta|tabletas|capsula|capsulas|capsule|capsules|cap|caps|susp|suspen|suspension|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mg|mcg|g|gr|ml|cc|ui|iu|x\d+)$/i;
+  const finalResult = result.filter(m => {
+    const lower = String(m || '').toLowerCase().trim();
+    if (DOSAGE_REJECT_RE.test(lower)) {
+      console.log('🛡️ [LLM-DEDUP-FINAL] Rejected dosage/quantity token: "%s"', m);
+      return false;
+    }
+    return true;
+  });
+  console.log('🧠 [LLM-DEDUP] Input=%s → Output=%s (after FINAL GUARD: %s)',
+    JSON.stringify(medicines), JSON.stringify(result), JSON.stringify(finalResult));
+  return finalResult;
 }
 
 async function handleLLMIntent(llmResult, phone, text, session, context) {
