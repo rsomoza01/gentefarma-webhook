@@ -2916,8 +2916,10 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // "acido ursodesoxicolico" → ["ursodesoxicolico"] (not ["acido","ursodesoxicolico"]).
   // Without this, "acido" passes the length>=3 filter but is not a real medicine,
   // and fires a spurious ACIDO search against Firebase that returns ACIDO FOLICO/etc.
+  const tokensAfterSplit = preExtracted[0].split(/\s+/);
+  console.log('🚨🔥 [NPE-DIAG] preExtracted="%s" tokensAfterSplit=%s', preExtracted[0], JSON.stringify(tokensAfterSplit));
   const normalizedPreExtracted = (preExtracted.length === 1 && typeof preExtracted[0] === 'string' && preExtracted[0].includes(' '))
-    ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3 && !DOSAGE_QUANTITY_REJECT.test(t) && looksLikeMedicineName(t))
+    ? tokensAfterSplit.filter(t => t.length >= 3 && !DOSAGE_QUANTITY_REJECT.test(t) && looksLikeMedicineName(t))
     : preExtracted;
   // EXPLICIT DENYLIST: remove dosage forms and quantity patterns that may have
   // slipped through looksLikeMedicineName() in older deployed versions.
@@ -2926,7 +2928,6 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const safePreExtracted = Array.isArray(normalizedPreExtracted) ? normalizedPreExtracted.filter(t => !DOSAGE_QUANTITY_REJECT.test(t)) : normalizedPreExtracted;
   const requestedMedicines = safePreExtracted.length > 0 ? safePreExtracted : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
-  // TEMP DIAGNOSTIC: log extraction steps
   console.log('🧪 [FEXOF-DIAG] text="%s" normalizedPreExtracted=%s requestedMedicines=%s fallbackMedicines=%s',
     String(text).slice(0, 60), JSON.stringify(normalizedPreExtracted), JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines));
   const recipeLineMedicines = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(text) : [];
