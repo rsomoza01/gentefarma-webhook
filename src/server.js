@@ -2904,6 +2904,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const consultationMode = Boolean(options.strictConsultationMode);
   const forceExactConsultationToken = Boolean(options.forceExactConsultationToken);
   const preExtracted = Array.isArray(options.preExtractedMedicines) ? options.preExtractedMedicines : [];
+  console.log('🚨🔥[VERSION] bdf91eb FIX ACTIVE — searchAndBuildCatalogResponse — if you see this the NEW code is running!🚨🔥');
   console.log('🧪 [SEARCH-IN] text="%s" preExtracted=%s preExtracted.length=%d', text.substring(0, 80), JSON.stringify(preExtracted), preExtracted.length);
   // Always extract medicine list - even for OCR, we want multi-medicine support.
   // ocrOnly only affects the matching/search behavior, not the extraction.
