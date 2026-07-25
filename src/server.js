@@ -2893,7 +2893,12 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const normalizedPreExtracted = (preExtracted.length === 1 && typeof preExtracted[0] === 'string' && preExtracted[0].includes(' '))
     ? preExtracted[0].split(/\s+/).filter(t => t.length >= 3 && looksLikeMedicineName(t))
     : preExtracted;
-  const requestedMedicines = normalizedPreExtracted.length > 0 ? normalizedPreExtracted : extractMedicineRequests(text);
+  // EXPLICIT DENYLIST: remove dosage forms and quantity patterns that may have
+  // slipped through looksLikeMedicineName() in older deployed versions.
+  // This is a HARD FILTER that cannot be bypassed.
+  const DOSAGE_QUANTITY_REJECT = /^(?:mgr|mgrs|tabl|tab|tabs|tableta|tabletas|capsula|capsulas|capsule|capsules|cap|caps|susp|suspen|suspension|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mg|mcg|g|gr|ml|cc|ui|iu|x\d+)$/i;
+  const safePreExtracted = Array.isArray(normalizedPreExtracted) ? normalizedPreExtracted.filter(t => !DOSAGE_QUANTITY_REJECT.test(t)) : normalizedPreExtracted;
+  const requestedMedicines = safePreExtracted.length > 0 ? safePreExtracted : extractMedicineRequests(text);
   const fallbackMedicines = extractMedicineRequestsFromSegments(text);
   // TEMP DIAGNOSTIC: log extraction steps
   console.log('🧪 [FEXOF-DIAG] text="%s" normalizedPreExtracted=%s requestedMedicines=%s fallbackMedicines=%s',
@@ -2921,16 +2926,21 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // Flatten each recipe line so that multi-medicine OCR strings like
   // "ESOZ LEPRIT BUMETIN RETADAR EVIGAX CAP MODERAN SUSP" get split into
   // individual medicine names instead of extracting only the first token.
+  // HARD FILTER regex — applied to flattenedLines and all downstream arrays
+  const DOSAGE_QUANTITY_HARD = /^(?:mgr|mgrs|tabl|tab|tabs|tableta|tabletas|capsula|capsulas|capsule|capsules|cap|caps|susp|suspen|suspension|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mg|mcg|g|gr|ml|cc|ui|iu|x\d+)$/i;
   const flattenedLines = [];
   for (const line of recipeLineMedicines) {
     const spaceTokens = String(line || '').split(/\s+/).filter((t) => t.length >= 3);
     if (spaceTokens.length > 1) {
       // Multi-token line: split and add each token as a separate line
       for (const token of spaceTokens) {
+        // HARD FILTER: reject dosage forms and quantity patterns
+        if (DOSAGE_QUANTITY_HARD.test(token)) continue;
         if (!flattenedLines.includes(token)) flattenedLines.push(token);
       }
     } else {
-      // Single-token line: keep as-is
+      // Single-token line: keep as-is (but still apply hard filter)
+      if (DOSAGE_QUANTITY_HARD.test(line)) continue;
       if (!flattenedLines.includes(line)) flattenedLines.push(line);
     }
   }
@@ -2953,6 +2963,13 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     if (DOSAGE_FORMS.has(normalizedItem.toLowerCase())) return false;
     // Reject quantity patterns like "x15", "x30" — not medicines, just unit counts
     if (/^x\d+$/i.test(normalizedItem)) return false;
+    // HARD FILTER: reject ANY remaining dosage form or quantity pattern that slipped
+    // through DOSAGE_FORMS Set. This catches abbreviations not in the Set and
+    // tokens like "tabl", "mgr", "x15" that appear in the input text.
+    if (/^(?:mgr|mgrs|tabl|tab|tabs|tableta|tabletas|capsula|capsulas|capsule|capsules|cap|caps|susp|suspen|suspension|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?|mg|mcg|g|gr|ml|cc|ui|iu|x\d+)$/i.test(normalizedItem)) {
+      console.log('🛡️ [HARD-FILTER] Rejected dosage/quantity token: "%s"', normalizedItem);
+      return false;
+    }
     // TEMP DIAGNOSTIC: log candidate medicines to debug fexofenadina case
     if (normalizedItem.includes('fexofenadina')) {
       console.log('🧪 [FEXOF-DIAG] candidateMedicine item="%s" normalized="%s" passed=true', item, normalizedItem);
