@@ -6522,6 +6522,11 @@ function isMenuOption(value) {
 function extractMedicineQuery(text) {
   // DEBUG: log input and output to trace production behavior
   const _dbg_input = String(text ?? '').trim().slice(0, 80);
+  // HARD REJECT: dosage forms and quantity patterns that are NEVER medicine names
+  if (/^(?:mgr|mgrs|x\d+|tabl|tabs?|caps|capsulas?|susp|jarabe|gotas|crema|gel|polvo|sobres?)$/i.test(String(text ?? '').trim())) {
+    console.log('🧪 [DIAG-EMQ] IN="%s" => HARD-REJECT (dosage/quantity token)', _dbg_input);
+    return '';
+  }
   const cleaned = normalizeText(text);
   if (!cleaned) {
     console.log('🧪 [DIAG-EMQ] IN="%s" cleaned="%s" => "" (empty)', _dbg_input, cleaned);
@@ -6653,7 +6658,7 @@ const MED_FORM_TOKENS=new Set([
     return WEAK_OPENER_PREFIXES.some(p => lower.startsWith(p) && lower !== p);
   }
   // Salt forms are NEVER standalone medicines — treat them as weak openers
-  const SALT_FORMS_WEAK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
+  const SALT_FORMS_WEAK = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro','mgr','mgrs','tabl','tabs','tab']);
   function isSaltForm(token) {
     return SALT_FORMS_WEAK.has(token.toLowerCase());
   }
