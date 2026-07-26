@@ -2644,6 +2644,8 @@ function heuristicCheck(response, originalQuery) {
   const isRecipeMode = /\\\b(rx|rp|receta|paciente|belen|arcia|esoz|leprit|bumetin|evigax|moderan|milax|daflon|bargonil)\\\b/i.test(originalQuery || '');
   const medicineEmojiCount = (text.match(/💊/g) || []).length;
   const queryHasMedicine = /\\\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación)\\\b/i.test(originalQuery || '');
+  console.log('🧪 [HEURISTIC-DBG] isRecipeMode=%s medicineEmojiCount=%d queryHasMedicine=%s query="%s"',
+    isRecipeMode, medicineEmojiCount, queryHasMedicine, originalQuery);
   if (!queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode) {
     console.log(`🚨 [VALIDATOR-HEURISTIC] SUSPECT reason="exceso de medicines sin relación al query"`);
     return { ok: false, reason: 'exceso medicines sin relación' };
