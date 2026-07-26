@@ -3330,7 +3330,12 @@ const userCoords = options.userCoords || null;
   const exchangeRate = options.exchangeRate ?? await getBcvRate();
   const products = options.products ?? await fetchCatalogProducts(2000);
   const catalogHealth = summarizeCatalogHealth(products);
-  // TEMP DIAGNOSTIC: check raw Firebase matches for "calaminol"
+  // TEMP DIAGNOSTIC: check raw Firebase matches for missing recipe medicines
+  const MISSING_RECIPE_MEDS = ['bumetin', 'leprit', 'daflon', 'esoz', 'evigax', 'moderan', 'milax', 'bargonil'];
+  const isMissingRecipe = queryTokens.some(t => MISSING_RECIPE_MEDS.includes(t.toLowerCase()));
+  if (isMissingRecipe) {
+    console.log(`🧪 [FIREBASE-RECIPE-DBG] queryTokens=${JSON.stringify(queryTokens)} recipeMode=${recipeMode} strictRef=${strictReferenceThreshold} dosageLessQuery='${dosageLessQuery}' matchTokens=${JSON.stringify(matchTokens)}`);
+  }
   if (queryTokens.includes('calaminol')) {
     const fbResult = await findProductByNormalizedName('calaminol');
     console.log(`🧪 [FIREBASE-CALAMINOL] productsMarket=${fbResult.productsMarket.length} providersProducts=${fbResult.providersProducts.length}`);
@@ -3888,6 +3893,13 @@ const userCoords = options.userCoords || null;
     return { query, queryTokens, exchangeRate, matches: [] };
   }
 
+    // DIAGNOSTIC: log top candidates for missing recipe medicines
+    if (isMissingRecipe) {
+      console.log(`🧪 [RECIPE-DIAG] queryTokens=${JSON.stringify(queryTokens)} strictRef=${strictReferenceThreshold} candidate count=${scoredProducts.length}`);
+      scoredProducts.slice(0, 8).forEach((item, i) => {
+        console.log(`🧪 [RECIPE-DIAG] TOP[${i}] score=${item.score} refSim=${(item.referenceSimilarity||0).toFixed(3)} fullFocus=${item.fullFocusMatch} exactHit=${item.exactHit} phraseHit=${item.phraseHit} title='${item.productTitleFull}' tokens=${JSON.stringify([...item.tokenSet].slice(0,6))}`);
+      });
+    }
   const recipeMatches = scoredProducts.filter((item) => {
       const candidateText = normalizeText([item.productTitleFull, item.titleArrayTextFull, item.ingredient, item.productText, item.title].filter(Boolean).join(' '));
       if (!candidateText) return false;
