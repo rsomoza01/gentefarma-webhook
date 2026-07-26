@@ -5516,11 +5516,33 @@ async function fetchCollectionDocuments(collectionName, limit = 500) {
   if (!db) return [];
 
   try {
-    const snapshot = await db.collection(collectionName).limit(limit).get();
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    // Paginate through ALL documents in the collection, not just the first `limit`.
+    // Use orderBy(__name__) + startAfter to page through all docs.
+    // Each page fetches `limit` docs; keep fetching until we have all docs.
+    const allDocs = [];
+    let lastDoc = null;
+    let hasMore = true;
+    let pageCount = 0;
+
+    while (hasMore) {
+      let query = db.collection(collectionName).orderBy('__name__').limit(limit);
+      if (lastDoc) {
+        query = query.startAfter(lastDoc);
+      }
+      const snapshot = await query.get();
+      pageCount++;
+      if (snapshot.empty || snapshot.docs.length === 0) {
+        hasMore = false;
+      } else {
+        snapshot.docs.forEach((doc) => {
+          allDocs.push({ id: doc.id, ...doc.data() });
+        });
+        lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        hasMore = snapshot.docs.length === limit; // if less than limit, we're done
+      }
+    }
+    console.log(`[fetchCollectionDocuments] ${collectionName}: ${allDocs.length} docs fetched in ${pageCount} page(s)`);
+    return allDocs;
   } catch (error) {
     console.error(`❌ Error leyendo colección ${collectionName}:`, error.message);
     return [];
@@ -5528,11 +5550,11 @@ async function fetchCollectionDocuments(collectionName, limit = 500) {
 }
 
 async function fetchCatalogProducts(limit = 500) {
-  const primary = await fetchCollectionDocuments('products-market', limit);
+  const primary = await fetchCollectionDocuments('products-market', 2000); // 2000 = page size for pagination
   console.log(`[CATALOG-FETCH] products-market count=${primary.length}${primary.length > 0 ? " firstTitles=" + JSON.stringify(primary.slice(0,3).map(d => d.ProductTitle || d.productTitle)) : ''}`);
   if (primary.length) return primary;
 
-  const fallback = await fetchCollectionDocuments('providers-products', limit);
+  const fallback = await fetchCollectionDocuments('providers-products', 2000); // 2000 = page size for pagination
   console.log(`[CATALOG-FETCH] providers-products fallback count=${fallback.length}`);
   if (fallback.length) return fallback;
 
