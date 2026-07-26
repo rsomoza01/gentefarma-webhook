@@ -3334,7 +3334,7 @@ const userCoords = options.userCoords || null;
   const MISSING_RECIPE_MEDS = ['bumetin', 'leprit', 'daflon', 'esoz', 'evigax', 'moderan', 'milax', 'bargonil'];
   const isMissingRecipe = queryTokens.some(t => MISSING_RECIPE_MEDS.includes(t.toLowerCase()));
   if (isMissingRecipe) {
-    console.log(`🧪 [FIREBASE-RECIPE-DBG] queryTokens=${JSON.stringify(queryTokens)} recipeMode=${recipeMode} strictRef=${strictReferenceThreshold} dosageLessQuery='${dosageLessQuery}' matchTokens=${JSON.stringify(matchTokens)}`);
+    console.log(`🧪 [FIREBASE-RECIPE-DBG] queryTokens=${JSON.stringify(queryTokens)} recipeMode=${recipeMode} strictRef=${strictReferenceThreshold} matchTokens=${JSON.stringify(matchTokens)}`);
   }
   if (queryTokens.includes('calaminol')) {
     const fbResult = await findProductByNormalizedName('calaminol');
