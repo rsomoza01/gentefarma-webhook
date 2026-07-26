@@ -261,6 +261,8 @@ function registerOutboundMessageId(messageId) {
   processedInboundMessages.set(`out:${String(messageId).trim()}`, { seenAt: Date.now() });
 }
 
+const PENDING_SELECTION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 function getSession(phone) {
   if (!sessions.has(phone)) {
     sessions.set(phone, {
@@ -268,6 +270,7 @@ function getSession(phone) {
       humanHandoff: false,
       lastSearch: null,
       pendingSelectionResults: null,
+      pendingSelectionResultsAt: null, // timestamp when pending selection was set
       catalogHistory: [],
       selectedProducts: [],
       updatedAt: Date.now(),
@@ -320,6 +323,7 @@ function clearPendingSearch(session) {
 
 function clearSelectionState(session) {
   session.pendingSelectionResults = null;
+  session.pendingSelectionResultsAt = null;
   if (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global') {
     session.mode = 'idle';
   }
@@ -386,8 +390,20 @@ function getLatestCatalogSnapshot(session) {
 }
 
 function resolveSelectionResults(session) {
-  if (Array.isArray(session?.pendingSelectionResults) && session.pendingSelectionResults.length > 0) {
-    return session.pendingSelectionResults;
+  const pendingResults = session?.pendingSelectionResults;
+  const pendingAt = session?.pendingSelectionResultsAt;
+  const isPendingExpired = pendingAt && (Date.now() - pendingAt) > PENDING_SELECTION_TTL_MS;
+
+  if (Array.isArray(pendingResults) && pendingResults.length > 0 && !isPendingExpired) {
+    return pendingResults;
+  }
+
+  // Expired or empty — clear stale state
+  if (isPendingExpired) {
+    console.log(`[PENDING-SELECTION] expired after ${PENDING_SELECTION_TTL_MS / 1000}s, clearing. was set at ${new Date(pendingAt).toISOString()}`);
+    session.pendingSelectionResults = null;
+    session.pendingSelectionResultsAt = null;
+    session.mode = 'idle';
   }
 
   const latestSnapshot = getLatestCatalogSnapshot(session);
@@ -1886,6 +1902,7 @@ async function routeMessage(phone, text, session, context = {}) {
       const parsed = parseSelectionCommand(normalized);
       if (parsed) {
         session.pendingSelectionResults = snapshot.options;
+        session.pendingSelectionResultsAt = Date.now();
         session.mode = 'awaiting_choice';
         touchSession(session);
         // Process selection immediately — do NOT fall through to extractMedicineQuery
@@ -2215,6 +2232,7 @@ async function routeMessage(phone, text, session, context = {}) {
     }
 
     session.pendingSelectionResults = Array.isArray(snapshot.options) ? snapshot.options : null;
+    session.pendingSelectionResultsAt = Date.now();
     session.mode = session.pendingSelectionResults && session.pendingSelectionResults.length ? 'awaiting_choice_global' : 'awaiting_product_name';
     touchSession(session);
     return snapshot.message || '🔎 *Lista anterior*\n\nBusca nuevamente el medicamento para volver a mostrar opciones.';
@@ -2438,6 +2456,7 @@ async function routeMessage(phone, text, session, context = {}) {
         if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
           results = snapshot.options;
           session.pendingSelectionResults = results;
+          session.pendingSelectionResultsAt = Date.now();
           session.mode = 'awaiting_choice';
           touchSession(session);
         }
@@ -2562,6 +2581,7 @@ async function routeMessage(phone, text, session, context = {}) {
         if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
           results = snapshot.options;
           session.pendingSelectionResults = results;
+          session.pendingSelectionResultsAt = Date.now();
           session.mode = 'awaiting_choice_global';
           touchSession(session);
         }
@@ -2606,6 +2626,7 @@ async function routeMessage(phone, text, session, context = {}) {
         if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
           results = snapshot.options;
           session.pendingSelectionResults = results;
+          session.pendingSelectionResultsAt = Date.now();
           session.mode = 'awaiting_choice_global';
           touchSession(session);
         }
@@ -2636,6 +2657,7 @@ async function routeMessage(phone, text, session, context = {}) {
       const snapshot = getLatestCatalogSnapshot(session);
       if (snapshot && Array.isArray(snapshot.options) && snapshot.options.length > 0) {
         session.pendingSelectionResults = snapshot.options;
+        session.pendingSelectionResultsAt = Date.now();
         session.mode = 'awaiting_choice_global';
         touchSession(session);
         // Re-route al bloque awaiting_choice_global
@@ -2696,6 +2718,7 @@ async function routeMessage(phone, text, session, context = {}) {
     }
 
     session.pendingSelectionResults = searchResult.matches;
+    session.pendingSelectionResultsAt = Date.now();
     session.mode = 'awaiting_choice';
     touchSession(session);
 
@@ -3383,6 +3406,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
       }
       session.lastSearch = groups[0] || null;
       session.pendingSelectionResults = flattenedOptions.length ? flattenedOptions : null;
+      session.pendingSelectionResultsAt = Date.now();
       session.mode = flattenedOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
       // Only save a catalog snapshot when there are actual selectable options.
       // Saving when flattenedOptions is empty (all medicines unavailable) would persist
@@ -3440,6 +3464,7 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
 
   session.lastSearch = result;
   session.pendingSelectionResults = result.matches;
+  session.pendingSelectionResultsAt = Date.now();
   session.mode = 'idle';
   touchSession(session);
   rememberCatalogSnapshot(session, result.matches, result.query || singleQuery, buildSearchDiagnosticMessage(result, singleQuery));
