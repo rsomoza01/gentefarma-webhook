@@ -1309,3 +1309,96 @@ routeMessage(phone, text, session, context):
 | `preExtractedMedicines` | OCR block o extractMedicineRequests | Medicines pre-extraídas para evitar re-extracción;van directo a `dedupeStrings` → candidateMedicines |
 | `queryDosageSignatures` | Single-medicine path (línea 3233) | Pasa las dosages del texto original ("32mg") a `searchMedicinesByName` para dosage penalty |
 | `forceExactConsultationToken` | consultationMode path (línea 3093) | Activa matching exacto en token set |
+
+---
+
+## 21. Diagnóstico de "No disponibles" — Herramientas
+
+### 21.1 Endpoint `/firebase-check`
+
+**URL:** `GET https://gentefarma-webhook.onrender.com/firebase-check?q=medicine_name`
+
+**Qué hace:** Escaneo completo de `products-market` y `providers-products` (los 2000 primeros docs de cada uno) comparando contra el nombre normalizado del medicamento. No usa `array-contains` (que requiere índice y es case-sensitive) — usa `includes()` plain.
+
+**Respuesta:**
+```json
+{
+  "query": "bumetin",
+  "normalized": "bumetin",
+  "productsMarket": [
+    {
+      "id": "...",
+      "ProductTitle": "BUMETIN RETADAR 300 MG",
+      "productTitleArray": ["bumetin", "retadar", "300", "mg"],
+      "StatusId": "A",
+      "ProviderId": "15"
+    }
+  ],
+  "providersProducts": []
+}
+```
+
+**Logs en Render:**
+```
+🧪 [FIREBASE-CHECK] q='bumetin' normalized='bumetin'
+🧪 [FIREBASE-CHECK] products-market=1 providers-products=0
+🧪 [FIREBASE-CHECK] PM[0]: 'BUMETIN RETADAR 300 MG' array=["bumetin","retadar","300","mg"]
+```
+
+### 21.2 Logs de diagnóstico para las 8 medicines de receta
+
+| Medicine | Log tag | Existe en Firebase? |
+|---|---|---|
+| ESOZ | `[DIAG-ESOZ-QUERY]` | ¿? |
+| LEPRIT | `[DIAG-LEPRIT-QUERY]` | ¿? |
+| BUMETIN | `[DIAG-BUMETIN-QUERY]` | ¿? |
+| EVIGAX | (ya encontrado) | ✅ |
+| MODERAN | `[MODERAN-QUERY]` | ✅ (1 match) |
+| MILAX | (ya encontrado) | ✅ |
+| DAFLON | `[DAFLON-QUERY]` | ¿? (Firebase=0) |
+| BARGONIL | (ya encontrado) | ✅ |
+
+### 21.3 Hipótesis del bug "No disponibles"
+
+```
+Observación: bumetin YA devuelve products-market=0 providers-products=0
+en el log [FIREBASE-DIRECT] del multi-loop.
+
+Esto indica que:
+1. "bumetin" no está en los primeros 2000 docs de products-market
+2. array-contains sobre 'bumetin' en productTitleArray → 0 resultados
+
+PERO Roberto asegura que el producto EXISTE en Firebase.
+Posibilidades:
+a) El producto existe en un proyecto Firebase DIFFERENTE al que usa el bot
+b) El producto existe pero su productTitleArray NO contiene "bumetin"
+   (ej: ["bumetin-retadar", "300mg"] en lugar de ["bumetin", "retadar", "300", "mg"])
+c) El producto está en un documento >2000 (índice de paginación)
+d) El producto existe con un nombre muy diferente
+   (ej: "BUMETIN RETADAR 300MG COMPRIMIDOS" no contiene "bumetin" como substring)
+```
+
+### 21.4 Verificación directa
+
+```bash
+# Roberto, ejecuta estos comandos después del deploy:
+curl "https://gentefarma-webhook.onrender.com/firebase-check?q=bumetin"
+curl "https://gentefarma-webhook.onrender.com/firebase-check?q=leprit"
+curl "https://gentefarma-webhook.onrender.com/firebase-check?q=esoz"
+curl "https://gentefarma-webhook.onrender.com/firebase-check?q=daflon"
+```
+
+Si todos devuelven `productsMarket: []` → los productos NO están en Firebase.
+Si alguno devuelve resultados → el bug es del matching, no de Firebase.
+
+---
+
+## 22. Flujo futuro: cómo diagnosticar medicines "No disponibles"
+
+1. Buscar el medicine en `/firebase-check?q=medicine_name`
+2. Si existe en Firebase:
+   - Verificar `productTitleArray` — ¿contiene el token tal como lo busca el bot?
+   - Verificar `StatusId === "A"` — productos inactivos se ignoran
+3. Si NO existe en Firebase:
+   - El producto debe agregarse a Firebase (por fuera del bot)
+   - O el bot tiene un bug de matching vs. el título real en Firebase
