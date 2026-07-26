@@ -3680,7 +3680,7 @@ const userCoords = options.userCoords || null;
       const missingModifiers = modifierTokens.filter(mod => !productAllText.includes(mod.toLowerCase()));
       if (missingModifiers.length > 0) {
         score -= strictListMode ? 950 : 750;
-        console.log(`🧪 [MODIFIER-PENALTY] product='${signal.productTitleFull}' missingModifiers=${JSON.stringify(missingModifiers)} scorePenalty=-${strictListMode ? 950 : 750} newScore=${score}`);
+        // console.log(`🧪 [MODIFIER-PENALTY] product='${signal.productTitleFull}' missingModifiers=${JSON.stringify(missingModifiers)} scorePenalty=-${strictListMode ? 950 : 750} newScore=${score}`);
       } else {
         // Bonus: product has all modifiers → reward for exact modifier match
         score += modifierTokens.length * 80;
