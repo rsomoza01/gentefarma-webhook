@@ -648,27 +648,42 @@ app.get('/firebase-raw', async (req, res) => {
     // First: try to get the specific bumetin document by ID
     const targetDoc = await db.collection('products-market').doc('05_7703763861002').get();
     const targetData = targetDoc.exists ? targetDoc.data() : null;
-    // Now scan all products-market
-    const snap = await db.collection('products-market').limit(500).get();
+    // Now scan all products-market with high limit to cover all docs
+    const snap = await db.collection('products-market').limit(2000).get();
     const matched = [];
+    const noTitleCount = { total: 0, withBumetin: 0 };
     snap.docs.forEach((d) => {
-      const rawTitle = d.data().ProductTitle || d.data().productTitle || '(no title field)';
+      const raw = d.data();
+      const rawTitle = raw.ProductTitle || raw.productTitle || '(no title field)';
       const title = rawTitle.toLowerCase();
+      if (title === '(no title field)') {
+        noTitleCount.total += 1;
+        if (raw.productTitleArray && raw.productTitleArray.some && raw.productTitleArray.some(a => String(a).toLowerCase().includes(q))) {
+          noTitleCount.withBumetin += 1;
+        }
+      }
       if (title.includes(q)) {
-        matched.push({ id: d.id, ProductTitle: rawTitle, match: title.includes(q) });
+        matched.push({ id: d.id, ProductTitle: rawTitle, productTitleArray: raw.productTitleArray, match: title.includes(q) });
       }
     });
-    // Also try providers-products collection
-    const snap2 = await db.collection('providers-products').limit(500).get();
-    const matched2 = [];
-    snap2.docs.forEach((d) => {
-      const rawTitle = d.data().productTitle || d.data().ProductTitle || '(no title field)';
-      const title = rawTitle.toLowerCase();
-      if (title.includes(q)) {
-        matched2.push({ id: d.id, productTitle: rawTitle });
-      }
+    // Also try with orderBy and limit to cover more docs
+    const snapOrdered = await db.collection('products-market').orderBy('__name__').limit(2000).get();
+    let orderedMatched = 0;
+    snapOrdered.docs.forEach((d) => {
+      const raw = d.data();
+      const rawTitle = (raw.ProductTitle || raw.productTitle || '').toLowerCase();
+      if (rawTitle.includes(q)) orderedMatched++;
     });
-    res.json({ q, productsMarketScanned: snap.size, productsMarketMatched: matched.length, providersProductsScanned: snap2.size, providersProductsMatched: matched2.length, samples: matched.slice(0,3), targetDoc: targetDoc.exists ? { id: targetDoc.id, ProductTitle: targetDoc.data().ProductTitle, productTitleArray: targetDoc.data().productTitleArray } : null });
+    res.json({ 
+      q, 
+      productsMarketScanned: snap.size, 
+      productsMarketMatched: matched.length, 
+      orderedScanned: snapOrdered.size,
+      orderedMatchedForQ: orderedMatched,
+      noTitleDocs: noTitleCount,
+      samples: matched.slice(0, 3), 
+      targetDoc: targetDoc.exists ? { id: targetDoc.id, ProductTitle: targetDoc.data().ProductTitle, productTitleArray: targetDoc.data().productTitleArray } : null 
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
