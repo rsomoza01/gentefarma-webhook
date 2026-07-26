@@ -5977,7 +5977,7 @@ function extractRecipeMedicineLines(value) {
   // }
 
   // ── ALWAYS SPLIT multi-token single-line input into individual medicine tokens ─
-  const DOSAGE_FORMS_RE = /^(?:cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
+  const DOSAGE_FORMS_RE = /^(?:mg|mcg|g|gr|ml|cc|ui|iu|cap|caps|susp|suspen|suspension|tableta|tabletas|capsula|capsulas|capsule|capsules|jarabe|gotas|crema|gel|polvo|polvos|unguento|sobres?|ampolla|ampollas|vial|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/i;
   const SALT_FORMS_RE = /^(?:clorhidrato|cloruro|besilato|sulfato|fosfato|acetato|tartrato|malato|fumarato|succinato|bromuro|ioduro|nitrato|tiocianato|acido|ácido|potasico|potásico|potasi|dinitrato|dinitric)$/i;
   // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
   const fastTokens = raw.trim().split(/\s+/).filter((t) => t.length > 1);
@@ -6044,8 +6044,11 @@ function extractRecipeMedicineLines(value) {
         refinedLines.push(lineFixed);
       }
     } else if (dosages.length === 1) {
-      // Single dosage — keep the whole line (it's a single medicine)
-      refinedLines.push(lineFixed);
+      // Single dosage — strip dosage suffix so we search by medicine name only
+      // e.g. "BUMETIN RETADAR 300 MG" → "BUMETIN RETADAR"
+      const d0 = dosages[0];
+      const medicineOnly = lineFixed.slice(0, d0.start).trim();
+      if (medicineOnly) refinedLines.push(medicineOnly);
     } else {
       // Multiple dosages — pair each dosage with the medicine name before it.
       // Segment i = text BEFORE dosage_i (from prev_end or 0) + " " + dosage_i
