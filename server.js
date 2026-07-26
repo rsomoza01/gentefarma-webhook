@@ -1941,7 +1941,7 @@ async function routeMessage(phone, text, session, context = {}) {
     clearSelectionState(session);
     const searchQuery = consultationQuery || text;
     console.log('🧪 [DIAG-ROUTE] consultationQuery=%s strictConsultationQuery=%s directMedicineQuery=%s searchQuery=%s text=%s', JSON.stringify(consultationQuery), JSON.stringify(strictConsultationQuery), JSON.stringify(directMedicineQuery), JSON.stringify(searchQuery), JSON.stringify(text));
-    const catalogResult = await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
+    const catalogResult = await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText, strictConsultationMode: true, recipeMode: true, preExtractedMedicines: extractedMedicineRequests }, { phone, pushName });
     if (catalogResult !== null) return catalogResult;
   }
 
@@ -2009,7 +2009,7 @@ async function routeMessage(phone, text, session, context = {}) {
       const n = normalizeText(item);
       return n.length >= 3 && !/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(n) && !/^\d+$/.test(n);
     });
-    const catalogResult = await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true, preExtractedMedicines: preExt }, { phone, pushName });
+    const catalogResult = await searchAndBuildCatalogResponse(strictConsultationQuery || directMedicineQuery || text, session, { hasOcrText, strictConsultationMode: true, recipeMode: true, preExtractedMedicines: preExt }, { phone, pushName });
     if (catalogResult !== null) return catalogResult;
   }
 
@@ -3813,7 +3813,9 @@ const userCoords = options.userCoords || null;
     return { query, queryTokens, exchangeRate, matches: [] };
   }
 
-  if (consultationMode && primaryTokens.length > 0) {
+  // Skip consultationGate in recipeMode — extracted recipe medicine names may not be
+  // exact substrings of the product title (e.g. "bumetin" vs "BUMETIN RETADAR 300 MG")
+  if (consultationMode && primaryTokens.length > 0 && !recipeMode) {
     const q = primaryTokens[0];
     const beforeCount = scoredProducts.length;
     console.log(`[CONSULTATION-GATE] mode=${consultationMode} primaryTokens=${JSON.stringify(primaryTokens)} q='${q}' beforeCount=${beforeCount}`);
@@ -3822,12 +3824,12 @@ const userCoords = options.userCoords || null;
       console.log(`[CONSULTATION-GATE] BEFORE[${i}] title='${item.productTitleFull}' tokenSet=${JSON.stringify([...item.tokenSet].slice(0, 10))} ingredient='${item.ingredient}'`);
     });
     scoredProducts = scoredProducts.filter((item) => {
-      // 1) Match exacto en tokenSet o title/ingredient
+      // 1) Match exacto en tokenSet o title/ingredient (case-insensitive for substring checks)
       if (
         item.tokenSet.has(q)
-        || item.productTitleFull === q || item.productTitleFull.startsWith(q + ' ') || item.productTitleFull.endsWith(' ' + q) || item.productTitleFull.includes(' ' + q + ' ')
-        || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.includes(' ' + q + ' ')
-        || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.includes(' ' + q + ' ')
+        || item.productTitleFull === q || item.productTitleFull.startsWith(q + ' ') || item.productTitleFull.endsWith(' ' + q) || item.productTitleFull.toLowerCase().includes(' ' + q + ' ')
+        || item.titleArrayTextFull === q || item.titleArrayTextFull.startsWith(q + ' ') || item.titleArrayTextFull.endsWith(' ' + q) || item.titleArrayTextFull.toLowerCase().includes(' ' + q + ' ')
+        || item.ingredient === q || item.ingredient.startsWith(q + ' ') || item.ingredient.endsWith(' ' + q) || item.ingredient.toLowerCase().includes(' ' + q + ' ')
       ) return true;
       // 1a) Substring-in-token for brand-name tokens: when "FEXOFENADINA" query token is embedded
       // inside a brand token like "FEXORAT", the exact token check fails. Catch it here.
