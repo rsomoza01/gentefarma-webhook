@@ -645,29 +645,16 @@ app.get('/test-search', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (!q) return res.json({ error: 'Provide ?q=medicine_name' });
   try {
-    // Inline the core search logic (simplified version)
-    const normalized = normalizeText(q);
-    const tokens = tokenize(normalized).filter((t) => !STOPWORDS.has(t) && t.length > 1);
-    console.log(`🧪 [TEST-SEARCH] q='${q}' normalized='${normalized}' tokens=${JSON.stringify(tokens)}`);
     const products = await fetchCatalogProducts(2000);
-    const matchTokens = tokens.filter((t) => !/^(\d+(?:[.,]?\d+)?)$/.test(t) && !/^(mg|mcg|g|gr|ml|cc|ui|iu|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|polvos|unguento|unguentos|sobres?|retad(?:ar|or)?|retard(?:ar|ado|ada)?)$/.test(t));
-    const matchQuery = matchTokens.join(' ');
-    const qLower = matchQuery.toLowerCase();
-    console.log(`🧪 [TEST-SEARCH] matchQuery='${matchQuery}' qLower='${qLower}' products=${products.length}`);
-    const results = [];
-    for (const doc of products.slice(0, 100)) {
-      const pt = (doc.ProductTitle || doc.productTitle || '').toLowerCase();
-      const arr = Array.isArray(doc.productTitleArray) ? doc.productTitleArray.map(String) : [];
-      const arrLower = arr.map((a) => a.toLowerCase());
-      const inArray = arrLower.includes(qLower);
-      const inTitle = pt.includes(qLower);
-      if (inArray || inTitle) {
-        results.push({ id: doc.id, ProductTitle: doc.ProductTitle || doc.productTitle, inArray, inTitle, productTitleArray: doc.productTitleArray });
-      }
-    }
-    console.log(`🧪 [TEST-SEARCH] results for '${qLower}': ${results.length} matches`);
-    results.slice(0, 5).forEach((r) => console.log(`  → ${r.ProductTitle}`));
-    res.json({ q, normalized, matchQuery, productsScanned: products.length, matchCount: results.length, matches: results.slice(0, 5) });
+    // Check: what fields does the cached product have?
+    const sample = products[0];
+    res.json({
+      q,
+      totalProducts: products.length,
+      sampleKeys: sample ? Object.keys(sample) : [],
+      sampleProductTitle: sample?.ProductTitle || sample?.productTitle,
+      sampleProductTitleArray: sample?.productTitleArray,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
