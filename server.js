@@ -4219,11 +4219,12 @@ return hasTokenOverlap && (strictMatchCandidate || dosageOverlap) && dosageMatch
     const saltFormTokens = new Set(['clorhidrato','cloruro','sulfato','fosfato','acetato','tartrato','malato','bromuro','ioduro','nitrato','besilato','succinato','fumarato','malonato','tiocianato','glucosamina','lisina','ornitina']);
     const qToken = (queryTokens.find((t) => !saltFormTokens.has(t) && !/^\d+$/.test(t) && t.length >= 4) || queryTokens[0] || '');
     if (qToken.length >= 4) {
-      console.log(`[FIREBASE-DIRECT] candidateMatches=${candidateMatches.length} (< 3), querying Firebase arrayContains for token='${qToken}'...`);
-      try {
-        const [pmSnap, ppSnap] = await Promise.all([
-          db.collection('products-market').where('productTitleArray', 'array-contains', qToken).limit(20).get(),
-          db.collection('providers-products').where('productTitleArray', 'array-contains', qToken).limit(20).get(),
+        const qTokenLower = qToken.toLowerCase();
+        console.log(`[FIREBASE-DIRECT] candidateMatches=${candidateMatches.length} (< 3), querying Firebase arrayContains for token='${qToken}' (lower='${qTokenLower}')...`);
+        try {
+          const [pmSnap, ppSnap] = await Promise.all([
+            db.collection('products-market').where('productTitleArray', 'array-contains', qTokenLower).limit(20).get(),
+            db.collection('providers-products').where('productTitleArray', 'array-contains', qTokenLower).limit(20).get(),
         ]);
         const firebaseDirectMatches = [...pmSnap.docs, ...ppSnap.docs].map((d) => d.data());
         console.log(`[FIREBASE-DIRECT] products-market=${pmSnap.size} providers-products=${ppSnap.size}`);
@@ -4367,11 +4368,12 @@ return hasTokenOverlap && (strictMatchCandidate || dosageOverlap) && dosageMatch
     return item.tokenSet && (item.tokenSet.has(queryToken) || (item.productTitleFull && targetRe.test(item.productTitleFull)));
   });
   if (!currentTopHasTarget && isSingleTokenQuery && db) {
-    console.log(`[FIREBASE-DIRECT] token='${queryToken}' catalog limited, querying Firebase arrayContains...`);
+    const queryTokenLower = queryToken.toLowerCase();
+    console.log(`[FIREBASE-DIRECT] token='${queryToken}' catalog limited, querying Firebase arrayContains (lower='${queryTokenLower}')...`);
     try {
       const [pmSnap, ppSnap] = await Promise.all([
-        db.collection('products-market').where('productTitleArray', 'array-contains', queryToken).limit(20).get(),
-        db.collection('providers-products').where('productTitleArray', 'array-contains', queryToken).limit(20).get(),
+        db.collection('products-market').where('productTitleArray', 'array-contains', queryTokenLower).limit(20).get(),
+        db.collection('providers-products').where('productTitleArray', 'array-contains', queryTokenLower).limit(20).get(),
       ]);
       const firebaseDirectMatches = [...pmSnap.docs, ...ppSnap.docs].map((d) => d.data());
       console.log(`[FIREBASE-DIRECT] products-market=${pmSnap.size} providers-products=${ppSnap.size}`);
@@ -5456,8 +5458,13 @@ async function findProductByNormalizedName(name) {
     ]);
     const matches = (snap) => snap.docs.filter((d) => {
       const t = normalizeText(d.data().ProductTitle || d.data().productTitle || '');
-      const arr = Array.isArray(d.data().productTitleArray) ? d.data().productTitleArray.map(normalizeText) : [];
-      return t.includes(normalized) || arr.some((a) => a.includes(normalized));
+      const normArr = Array.isArray(d.data().productTitleArray) ? d.data().productTitleArray.map(normalizeText) : [];
+      // EXACT match on productTitleArray tokens — prevents substring false positives like "bumetin" → "ALBUMIN"
+      // normalizeText does NOT lowercase, so we must explicitly compare case-insensitively
+      const allTokens = normalized.split(/\s+/);
+      const tokenMatch = allTokens.some((tok) => normArr.some((a) => a.toLowerCase() === tok.toLowerCase()));
+      // Also keep loose ProductTitle includes for safety
+      return tokenMatch || t.includes(normalized);
     }).map((d) => ({ id: d.id, ProductTitle: d.data().ProductTitle || d.data().productTitle, productTitleArray: d.data().productTitleArray }));
     return { productsMarket: matches(pmSnap), providersProducts: matches(ppSnap) };
   } catch (e) {
