@@ -1402,3 +1402,58 @@ Si alguno devuelve resultados → el bug es del matching, no de Firebase.
 3. Si NO existe en Firebase:
    - El producto debe agregarse a Firebase (por fuera del bot)
    - O el bot tiene un bug de matching vs. el título real en Firebase
+
+---
+
+## 23. Bug: "No disponibles" para productos que SÍ existen en Firebase
+
+### 23.1 Root cause: case-sensitivity
+
+**Problema:** `productTitleArray` en Firebase guarda tokens en **minúscula** (`["esoz", "esomeprazol", "20", "mg", ...]`). El bot extraía tokens del OCR en **mayúscula** (`"ESOZ 40 MG"` → token `"ESOZ"`). Firestore `array-contains` es **case-sensitive**, entonces:
+
+```
+array-contains "ESOZ"  ❌ NO MATCH (token en Firebase es "esoz")
+array-contains "esoz"  ✅ MATCH
+```
+
+**Evidencia:**
+- `/firebase-check?q=esoz` → 1 match exacto con `===`
+- Productos como "bumetin" → 0 matches exactos (no existen en Firebase)
+- Productos como "esoz" → SÍ existen pero el bot decía "No disponible" por el bug
+
+### 23.2 Fixes aplicados (commit `69fb248`)
+
+**1. `findProductByNormalizedName`** — cambio de `includes()` a `===` con `toLowerCase()`:
+```javascript
+// ANTES ( substring match → falsos positivos con "bumetin"→"ALBUMIN" )
+arr.some((a) => a.includes(normalized))
+
+// DESPUÉS ( exact token match, case-insensitive )
+normArr.some((a) => a.toLowerCase() === tok.toLowerCase())
+```
+
+**2. `FIREBASE-DIRECT`** — `array-contains` con `.toLowerCase()`:
+```javascript
+// ANTES
+db.collection('products-market').where('productTitleArray', 'array-contains', qToken)
+
+// DESPUÉS
+db.collection('products-market').where('productTitleArray', 'array-contains', qToken.toLowerCase())
+```
+(Aplicado en ambas ubicaciones de FIREBASE-DIRECT: línea ~4225 y ~4373)
+
+### 23.3 Productos真实性
+
+| Medicina | ¿Existe en Firebase? | Causa "No disponible" |
+|---|---|---|
+| ESOZ 40 MG | ✅ SÍ | Bug case-sensitivity (ARREGLADO) |
+| LEPRIT 25 MG | ❌ NO | Genuinamente no existe |
+| DAFLON 500 MG | ❌ NO | Genuinamente no existe |
+| BUMETIN | ❌ NO | Genuinamente no existe |
+
+### 23.4 Lección
+
+> **`normalizeText()` de Gentefarma NO lowercasing.** Cualquier comparación de tokens con `===` sin `.toLowerCase()` va a fallar si el input viene en mayúscula (OCR, WhatsApp) y Firebase guarda en minúscula.
+
+**Regla:** Cuando compares tokens contra `productTitleArray` o cualquier campo de Firebase, SIEMPRE usar `.toLowerCase()` en ambas partes del comparison.
+
