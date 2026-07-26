@@ -2562,6 +2562,221 @@ async function routeMessage(phone, text, session, context = {}) {
   return buildDefaultFallbackMessage(session);
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// RESPONSE VALIDATOR — Hybrid (Heurísticas + LLM ultra-liviano)
+// Costo: heurísticas = 0 tokens; LLM solo en casos dudosos (~100 tokens/prompt)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── STEP 1: HEURÍSTICAS (cero costo) ────────────────────────────────────────
+
+// Mensajes fijos que el bot NUNCA debe rechazar (respuestas know-to-be-good)
+const KNOWN_GOOD_PREFIXES = [
+  '👤 *Atención de Gentefarma*',
+  '🏥 *GENTEFARMA*',
+  '✅ *Agregado a tu selección*',
+  '✅ Ciudad configurada',
+  '⚠️ No encontré',
+  '⚠️ La opción',
+  '⚠️ Primero debes ver',
+  '🧾 Tu carrito actual',
+  'En breve, uno de nuestros',
+  'Uno de nuestros colaboradores',
+  'Realizamos deliveries',
+  'Gracias por su interés',
+  'Con gusto',
+  'Lo siento, no tengo información',
+  'No tengo información',
+  'Estoy aquí para ayudarte',
+  'Escribe el número',
+  'Escribe *LISTO*',
+  'Escribe LISTO',
+  'escríbeme el nombre',
+];
+
+// Patrones que indican respuesta obviously mala
+const RESPONSE_RED_FLAGS = [
+  // Caracteres rotos / encoding issues
+  { pattern: /[�]/,                           reason: 'caracteres rotos (�)' },
+  { pattern: /\\u00e2\\u20ac\\u201c/,           reason: 'encoding roto (�)' },
+  { pattern: /\\u00e2\\u20ac\\u201d/,           reason: 'encoding roto (citaciones)' },
+  // Precious / scam language
+  { pattern: /\b(100%\s*(?:efectiv|garantiz|cur|precio\s+magico|remedio\s+milagroso|cur[oa]\s+garantiz))/i, reason: 'lenguaje guaristine / scam' },
+  { pattern: /\b(precio\s+magico|remedio\s+milagroso|cur[oa]\s+garantiz)/i, reason: 'lenguaje guaristine' },
+  // Hallucinated medical claims
+  { pattern: /\b(Efectividad\s+100%|Este\s+medicamento\s+cur[oa]|Garantizo\s+que\s+funciona)/i, reason: 'afirmaciones médicas inventadas' },
+  // Massive price hallucinations (bs > 50M por un comprimido)
+  { pattern: /Bs\s+[\d.]{7,}\b/,               reason: 'precio absurdo en Bs' },
+  // Response is absurdly short for a catalog (less than 3 lines)
+  { pattern: /^[^\\n]*$/,                       reason: 'respuesta de una sola linea' },
+];
+
+// Cantidad maxima de "💊" en una respuesta de catalogo normal
+const MAX_MEDICINE_ITEMS = 20;
+
+// Numero maximo de lineas en una respuesta de catalogo normal
+const MAX_CATALOG_LINES = 80;
+
+function heuristicCheck(response, originalQuery) {
+  const text = response || '';
+
+  // 1. Si es una respuesta fija conocida → APPROVE
+  for (const prefix of KNOWN_GOOD_PREFIXES) {
+    if (text.startsWith(prefix)) {
+      return { ok: true, reason: 'known-good prefix' };
+    }
+  }
+
+  // 2. Buscar red flags
+  for (const { pattern, reason } of RESPONSE_RED_FLAGS) {
+    if (pattern.test(text)) {
+      console.log(`🚨 [VALIDATOR-HEURISTIC] REJECT reason="${reason}" pattern=${pattern.toString()}`);
+      return { ok: false, reason: `red_flag: ${reason}` };
+    }
+  }
+
+  // 3. Si la respuesta tiene medicines (💊) pero el query original NO era de medicines
+  // y la respuesta tiene más de 5 💊 → sospecha de hallucination
+  const medicineEmojiCount = (text.match(/💊/g) || []).length;
+  const queryHasMedicine = /\\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación)/i.test(originalQuery || '');
+  if (!queryHasMedicine && medicineEmojiCount > 8) {
+    console.log(`🚨 [VALIDATOR-HEURISTIC] SUSPECT reason="exceso de medicines sin relación al query"`);
+    return { ok: false, reason: 'exceso medicines sin relación' };
+  }
+
+  // 4. Si la respuesta tiene笔钱 emojis o symbols sospechosos
+  const suspiciousSymbols = (text.match(/[№§®™©¤¦¢¥₱₲₡₢₣₤₥₦₧₨₩₪₫₭₮₯₰₱₲]/g) || []).length;
+  if (suspiciousSymbols > 3) {
+    return { ok: false, reason: 'simbolos monetarios sospechosos' };
+  }
+
+  // 5. Si la respuesta excede Max lines para catalogo → WARNING (no reject)
+  const lines = text.split('\\n').filter(l => l.trim());
+  if (lines.length > MAX_CATALOG_LINES * 2) {
+    console.log(`🚨 [VALIDATOR-HEURISTIC] SUSPECT reason="respuesta excessively larga (${lines.length} lines)"`);
+    return { ok: false, reason: 'respuesta demasiado larga' };
+  }
+
+  return { ok: true, reason: 'passed_heuristics' };
+}
+
+// ── STEP 2: LLM ULTRA-LIGHT (solo en casos dudosos) ─────────────────────────
+
+const OPENAI_LLM_REASONING_MODEL = 'gpt-4o-mini';
+
+// Prompt minimalista: ~100 tokens
+const LLM_VALIDATION_PROMPT = `Eres un revisor de calidad de un bot de farmacia. Evalúa si la respuesta es COHERENTE para la consulta del usuario.
+
+Reglas:
+1. La respuesta debe mencionar medicamentos RELEVANTES a la consulta
+2. NO debe inventar medicamentos, precios o información médica
+3. El tono debe ser profesional y apropiado
+4. Los precios deben ser razonables (no millones de Bs por un comprimido)
+
+Responde SOLO con una palabra:
+- "OK" si la respuesta es coherente y puede enviarse
+- "REVISAR" si hay problemas de relevancia, alucinaciones, tono inapropiado o precios absurdos
+
+CONSULTA: "{query}"
+RESPUESTA: "{response}"
+EVALUACIÓN:`;
+
+async function llmValidate(response, query) {
+  const text = response || '';
+  // No enviar más de 500 chars al LLM (costo y velocidad)
+  const truncatedResponse = text.length > 500 ? text.slice(0, 500) + '...[truncado]' : text;
+  const truncatedQuery = (query || '').slice(0, 100);
+
+  const prompt = LLM_VALIDATION_PROMPT
+    .replace('{query}', truncatedQuery.replace(/"/g, '\\"'))
+    .replace('{response}', truncatedResponse.replace(/"/g, '\\"'));
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_SECONDARY || ''}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_LLM_REASONING_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 5,
+        temperature: 0,
+      }),
+    });
+
+    if (!res.ok) {
+      console.log(`🚨 [VALIDATOR-LLM] HTTP error ${res.status} — allowing response (fail-open)`);
+      return { ok: true, reason: 'llm_error_fail_open' };
+    }
+
+    const data = await res.json();
+    const reply = (data.choices?.[0]?.message?.content || '').trim().toUpperCase();
+
+    if (reply === 'OK') {
+      console.log(`✅ [VALIDATOR-LLM] APPROVE`);
+      return { ok: true, reason: 'llm_approved' };
+    } else if (reply === 'REVISAR') {
+      console.log(`🚨 [VALIDATOR-LLM] REJECT`);
+      return { ok: false, reason: 'llm_rejected' };
+    } else {
+      console.log(`⚠️ [VALIDATOR-LLM] unexpected reply="${reply}" — allowing (fail-open)`);
+      return { ok: true, reason: 'llm_unexpected_fail_open' };
+    }
+  } catch (err) {
+    console.log(`🚨 [VALIDATOR-LLM] exception="${err.message}" — allowing response (fail-open)`);
+    return { ok: true, reason: 'llm_exception_fail_open' };
+  }
+}
+
+// ── MAIN WRAPPER ──────────────────────────────────────────────────────────────
+
+// Solo validamos respuestas de catálogo (las que pueden tener medicines 💊)
+function isCatalogResponse(response) {
+  return Boolean(response && response.includes('💊'));
+}
+
+// Validación completa híbrida: heurísticas → (opcional LLM si dudoso)
+// Retorna { ok, reason, useFallback, fallbackMessage }
+async function validateResponseHybrid(response, originalQuery, session) {
+  const CHECK_LLM = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_SECONDARY;
+
+  // FAST PATH: heurísticas primero (costo 0, ~1ms)
+  const h = heuristicCheck(response, originalQuery);
+  console.log(`🚨 [VALIDATOR] heuristic ok=%s reason="%s"`, h.ok, h.reason);
+
+  if (h.ok) {
+    // Heurísticas aprobaron → APPROVE sin LLM
+    return { ok: true, useFallback: false };
+  }
+
+  // Heurísticas rechazaron → intentar LLM solo si hay API key
+  if (!CHECK_LLM) {
+    console.log(`🚨 [VALIDATOR] no LLM key, using fallback (heuristic reject)`);
+    return {
+      ok: false,
+      useFallback: true,
+      fallbackMessage: '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.',
+    };
+  }
+
+  // LLM como segunda opinión
+  if (isCatalogResponse(response)) {
+    console.log(`🚨 [VALIDATOR] running LLM check on catalog response...`);
+    const llm = await llmValidate(response, originalQuery);
+    if (llm.ok) {
+      return { ok: true, useFallback: false };
+    }
+  }
+
+  // Rechazado por heurísticas + (LLM si hubo)
+  return {
+    ok: false,
+    useFallback: true,
+    fallbackMessage: '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.',
+  };
+}
+
 function buildMenuMessage() {
   return `🏥 *GENTEFARMA*\n\n¡Hola! Soy *Robi*, el asistente virtual de Gentefarma. 🤖👋\n\nEstoy aquí para ayudarte a encontrar el medicamento que necesitas de forma rápida y sencilla.\n\n👉 Escríbeme el nombre del medicamento que estás buscando y te digo si está disponible.\n\nEjemplos:\n*losartán 50mg* ·\n*amoxicilina 500mg* ·\n*ibuprofeno 400mg*`;
 }
@@ -4271,7 +4486,16 @@ function buildCatalogResponse(result) {
   lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
   lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
 
-  return lines.join('\n').trim();
+  const response = lines.join('\n').trim();
+
+  // ── HEURISTIC GUARD (zero cost) ─────────────────────────────────────────
+  const h = heuristicCheck(response, result.query || '');
+  if (!h.ok) {
+    console.log(`🚨 [VALIDATOR] buildCatalogResponse HEURISTIC REJECT reason="${h.reason}" query="${result.query || ''}"`);
+    return '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.';
+  }
+
+  return response;
 }
 
 function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines = []) {
@@ -4433,7 +4657,18 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
   lines.push('🛒 ¿Otro medicamento? Escríbeme el nombre y lo agrego a tu lista.');
   lines.push('✅ Cuando termines, escribe *LISTO* y te muestro el resumen.');
 
-  return lines.join('\n').trim();
+  const response = lines.join('\n').trim();
+
+  // ── HEURISTIC GUARD (zero cost) ─────────────────────────────────────────
+  // Use first result's query as representative for multi-catalog validation
+  const representativeQuery = results?.[0]?.query || flatOptions?.[0]?.title || '';
+  const h = heuristicCheck(response, representativeQuery);
+  if (!h.ok) {
+    console.log(`🚨 [VALIDATOR] buildMultiCatalogResponse HEURISTIC REJECT reason="${h.reason}" query="${representativeQuery}"`);
+    return '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.';
+  }
+
+  return response;
 }
 
 function extractMedicineRequests(text) {
