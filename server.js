@@ -3276,8 +3276,14 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   // so we can reference the complete candidateMedicinesRaw array.
   console.log('🧪 [DEDUP] requestedMedicines=%s fallbackMedicines=%s flattenedLines=%s llmFallbackMeds=%s --> deduped=%s',
     JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(flattenedLines), JSON.stringify(llmFallbackMeds), JSON.stringify(candidateMedicinesRaw));
+  const numberRe = /^\d+(?:[.,]\d+)?$/;
   const candidateMedicines = candidateMedicinesRaw.filter((item) => {
     const normalizedItem = normalizeText(item);
+    // Reject pure numbers (e.g. "40", "50") — they'd match ALL products and corrupt results
+    if (numberRe.test(normalizedItem)) {
+      console.log('🧹 [NUMERIC-REJECT] rejected pure number candidate=\'%s\' normalized=\'%s\'', item, normalizedItem);
+      return false;
+    }
     const itemTokens = normalizedItem.split(/\s+/).filter(Boolean);
     if (itemTokens.length >= 7) return false;
     // For 4-6 token strings: detect if it's a corrupted OCR merge of 2+ distinct
