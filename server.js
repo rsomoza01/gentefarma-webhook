@@ -3093,6 +3093,9 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     }
   }
 
+  // 🚨 DIAGNOSTIC: log flattenedLines to trace prescription OCR extraction
+  console.log('🧪 [FLAT-LINES] recipeLineMedicines=%s flattenedLines=%s', JSON.stringify(recipeLineMedicines), JSON.stringify(flattenedLines));
+
   // LLM fallback: only activate when all three regex passes returned nothing
   const llmFallbackMeds = (requestedMedicines.length === 0 && fallbackMedicines.length === 0 && flattenedLines.length === 0)
     ? await extractMedicinesWithLLMFallback(text, session)
@@ -3103,36 +3106,14 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
     ...fallbackMedicines,
     ...flattenedLines,
     ...llmFallbackMeds
-  ]).filter((item) => {
-    const normalizedItem = normalizeText(item);
-    if (normalizedItem.length < 3) return false;
-    // Reject dosage form tokens searched as standalone medicines
-    if (DOSAGE_FORMS.has(normalizedItem)) return false;
-    // TEMP DIAGNOSTIC: log candidate medicines to debug fexofenadina case
-    if (normalizedItem.includes('fexofenadina')) {
-      console.log('🧪 [FEXOF-DIAG] candidateMedicine item="%s" normalized="%s" passed=true', item, normalizedItem);
-    }
-    // Reject generic single-word selection tokens that are not medicine names
-    if (/^(?:caja[se]?|opcion(?:es)?|unidad(?:es)?)$/i.test(normalizedItem)) return false;
-    if (/^(?:seleccionar|selecciona|elegir|elige|escoger|escoje|agregar|agrega|mostrar|mostra|muestra)$/i.test(normalizedItem)) return false;
-    if (/^(?:listo|resumen)$/i.test(normalizedItem)) return false;
-    if (/^(?:si|no|si|nose)$/i.test(normalizedItem)) return false;
-    if (/^(?:por|favor)$/i.test(normalizedItem)) return false;
-    if (/^\d+$/.test(normalizedItem)) return false; // reject pure numbers like "3", "10"
-    // Reject pure dosage strings: "10mg", "40mg", "100mg", "5mg", etc.
-    if (/^\d+\s*(?:mg|mcg|g|gr|ml|cc|ui|iu|mL)$/i.test(normalizedItem)) return false;
-    if (/\b(belen|belén|arcia|paciente|stadium|ano nac|año nac|gastroenterologia|gastroenterología)\b/i.test(normalizedItem)) return false;
-    if (recipeMode) return isLikelyRecipeMedicineCandidate(item);
-    if (/\b(paciente)\b/i.test(normalizedItem)) return false;
-    if (/\b(nombre)\b/i.test(normalizedItem)) return false;
-    if (/\b(apellido)\b/i.test(normalizedItem)) return false;
-    return Boolean(normalizedItem);
-  });
+  ]);
 
   // ── REJECT concatenated multi-medicine OCR fragments ───────────────────────
   // These are corrupted OCR merges of 2+ medicines that also appear as
   // standalone candidates in the same list. Check AFTER raw list is built
   // so we can reference the complete candidateMedicinesRaw array.
+  console.log('🧪 [DEDUP] requestedMedicines=%s fallbackMedicines=%s flattenedLines=%s llmFallbackMeds=%s --> deduped=%s',
+    JSON.stringify(requestedMedicines), JSON.stringify(fallbackMedicines), JSON.stringify(flattenedLines), JSON.stringify(llmFallbackMeds), JSON.stringify(candidateMedicinesRaw));
   const candidateMedicines = candidateMedicinesRaw.filter((item) => {
     const normalizedItem = normalizeText(item);
     const itemTokens = normalizedItem.split(/\s+/).filter(Boolean);
