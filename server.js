@@ -658,7 +658,17 @@ app.get('/firebase-raw', async (req, res) => {
         matched.push({ id: d.id, ProductTitle: rawTitle, match: title.includes(q) });
       }
     });
-    res.json({ q, totalScanned: snap.size, matchedCount: matched.length, samples: matched.slice(0, 3), targetDoc: targetDoc.exists ? { id: targetDoc.id, data: targetData } : null });
+    // Also try providers-products collection
+    const snap2 = await db.collection('providers-products').limit(500).get();
+    const matched2 = [];
+    snap2.docs.forEach((d) => {
+      const rawTitle = d.data().productTitle || d.data().ProductTitle || '(no title field)';
+      const title = rawTitle.toLowerCase();
+      if (title.includes(q)) {
+        matched2.push({ id: d.id, productTitle: rawTitle });
+      }
+    });
+    res.json({ q, productsMarketScanned: snap.size, productsMarketMatched: matched.length, providersProductsScanned: snap2.size, providersProductsMatched: matched2.length, samples: matched.slice(0,3), targetDoc: targetDoc.exists ? { id: targetDoc.id, ProductTitle: targetDoc.data().ProductTitle, productTitleArray: targetDoc.data().productTitleArray } : null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
