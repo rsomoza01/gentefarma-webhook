@@ -1896,6 +1896,13 @@ async function routeMessage(phone, text, session, context = {}) {
     consultationIsMedicine
   );
   const hasOcrText = Boolean(context?.hasOcrText);
+  // CONSUME hasOcrText from session context so the OCR block does NOT re-run for
+  // subsequent text messages (e.g. "Ciudad Bolívar" after prescription OCR).
+  // Without this, context.hasOcrText stays true and the next text message enters
+  // the OCR block with rawOcr = "Ciudad Bolívar", producing empty preExtractedMedicines
+  // and recipeMode=false, causing individual medicine searches (bumetin, esoz, etc.)
+  // to fail with recipeMode=false.
+  if (context) context.hasOcrText = false;
   const ocrSearchText = normalizeText(context?.ocrSearchText || '');
   const rawOcrText = String(context?.rawOcrText || '');
   const recipeSourceText = rawOcrText || ocrSearchText;
@@ -2119,6 +2126,13 @@ async function routeMessage(phone, text, session, context = {}) {
 
   // When a new OCR image arrives, ALWAYS process it as OCR — even if the previous
   // message left pendingSelectionResults. The user is asking about a NEW image.
+  // IMPORTANT: Clear hasOcrText from session context FIRST so that if the OCR block
+  // returns early (prescription found), subsequent text messages from the same user
+  // DON'T re-enter this block with stale rawOcr (e.g. "Ciudad Bolívar" being
+  // searched as if it were a medicine name with empty preExtractedMedicines).
+  if (context && context.hasOcrText) {
+    context.hasOcrText = false;
+  }
   if (hasOcrText) {
     clearSelectionState(session);
     // Try prescription format first (has RP: section with multiple drugs).
