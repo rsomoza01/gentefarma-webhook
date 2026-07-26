@@ -640,7 +640,6 @@ app.get('/', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Fetch ALL docs using pagination (like fetchCollectionDocuments does)
 app.get('/firebase-raw', async (req, res) => {
   const q = (req.query.q || '').trim().toLowerCase();
   if (!q) return res.json({ error: 'Provide ?q=medicine_name' });
@@ -5472,8 +5471,37 @@ function shortenText(value, maxLength = 52) {
 // ----------------------------------------------------
 // Firestore helpers
 // ----------------------------------------------------
+// In-memory cache for catalog documents — avoids re-fetching 8835 docs from Firebase on every request
+// TTL: 5 minutes (300000ms)
+const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
+const catalogCache = {
+  'products-market': { docs: null, fetchedAt: 0 },
+  'providers-products': { docs: null, fetchedAt: 0 },
+};
+
+function isCacheValid(collectionName) {
+  const entry = catalogCache[collectionName];
+  return entry && entry.docs !== null && (Date.now() - entry.fetchedAt) < CATALOG_CACHE_TTL_MS;
+}
+
+function getCachedDocs(collectionName) {
+  if (!isCacheValid(collectionName)) return null;
+  const age = Math.round((Date.now() - catalogCache[collectionName].fetchedAt) / 1000);
+  console.log(`[CATALOG-CACHE] HIT  ${collectionName}: ${catalogCache[collectionName].docs.length} docs (${age}s old)`);
+  return catalogCache[collectionName].docs;
+}
+
+function setCachedDocs(collectionName, docs) {
+  catalogCache[collectionName] = { docs, fetchedAt: Date.now() };
+  console.log(`[CATALOG-CACHE] SET  ${collectionName}: ${docs.length} docs cached for ${CATALOG_CACHE_TTL_MS / 1000}s`);
+}
+
 async function fetchCollectionDocuments(collectionName, limit = 500) {
   if (!db) return [];
+
+  // Check cache first
+  const cached = getCachedDocs(collectionName);
+  if (cached) return cached;
 
   try {
     // Paginate through ALL documents in the collection, not just the first `limit`.
@@ -5502,6 +5530,7 @@ async function fetchCollectionDocuments(collectionName, limit = 500) {
       }
     }
     console.log(`[fetchCollectionDocuments] ${collectionName}: ${allDocs.length} docs fetched in ${pageCount} page(s)`);
+    setCachedDocs(collectionName, allDocs);
     return allDocs;
   } catch (error) {
     console.error(`❌ Error leyendo colección ${collectionName}:`, error.message);
