@@ -644,8 +644,21 @@ app.get('/firebase-check', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (!q) return res.json({ error: 'Provide ?q=medicine_name' });
   const normalized = normalizeText(q);
+  const qLower = q.toLowerCase();
   console.log(`🧪 [FIREBASE-CHECK] q='${q}' normalized='${normalized}'`);
   try {
+    // First: use Firestore array-contains (case-SENSITIVE, exact match)
+    const [acPmSnap, acPpSnap] = await Promise.all([
+      db.collection('products-market').where('productTitleArray', 'array-contains', qLower).limit(20).get(),
+      db.collection('providers-products').where('productTitleArray', 'array-contains', qLower).limit(20).get(),
+    ]);
+    const arrayContainsResults = {
+      productsMarket: acPmSnap.docs.map((d) => ({ id: d.id, ProductTitle: d.data().ProductTitle, productTitleArray: d.data().productTitleArray })),
+      providersProducts: acPpSnap.docs.map((d) => ({ id: d.id, ProductTitle: d.data().productTitle, productTitleArray: d.data().productTitleArray })),
+    };
+    console.log(`🧪 [FIREBASE-CHECK] array-contains qLower='${qLower}' => productsMarket=${acPmSnap.size} providersProducts=${acPpSnap.size}`);
+
+    // Second: full scan with exact token match (case-insensitive)
     const [pmSnap, ppSnap] = await Promise.all([
       db.collection('products-market').limit(2000).get(),
       db.collection('providers-products').limit(2000).get(),
@@ -667,10 +680,9 @@ app.get('/firebase-check', async (req, res) => {
         results.providersProducts.push({ id: d.id, productTitle: data.productTitle, productTitleArray: data.productTitleArray, provider: data.provider });
       }
     });
-    console.log(`🧪 [FIREBASE-CHECK] products-market=${results.productsMarket.length} providers-products=${results.providersProducts.length}`);
-    results.productsMarket.forEach((p, i) => console.log(`🧪 [FIREBASE-CHECK] PM[${i}]: '${p.ProductTitle}' array=${JSON.stringify(p.productTitleArray)}`));
-    results.providersProducts.forEach((p, i) => console.log(`🧪 [FIREBASE-CHECK] PP[${i}]: '${p.productTitle}' array=${JSON.stringify(p.productTitleArray)}`));
-    res.json({ query: q, normalized, ...results });
+    console.log(`🧪 [FIREBASE-CHECK] full-scan => products-market=${results.productsMarket.length} providers-products=${results.providersProducts.length}`);
+    const response = { query: q, normalized, arrayContainsResults, fullScanResults: results };
+    res.json(response);
   } catch (e) {
     console.error(`🧪 [FIREBASE-CHECK] error: ${e.message}`);
     res.status(500).json({ error: e.message });
