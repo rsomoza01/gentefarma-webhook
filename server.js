@@ -640,6 +640,25 @@ app.get('/', (req, res) => {
   res.status(200).send('OK');
 });
 
+// Simple diagnostic: just test ProductTitle toLowerCase().includes()
+app.get('/firebase-raw', async (req, res) => {
+  const q = (req.query.q || '').trim().toLowerCase();
+  if (!q) return res.json({ error: 'Provide ?q=medicine_name' });
+  try {
+    const snap = await db.collection('products-market').limit(500).get();
+    const matched = [];
+    snap.docs.forEach((d) => {
+      const title = (d.data().ProductTitle || '').toLowerCase();
+      if (title.includes(q)) {
+        matched.push({ id: d.id, ProductTitle: d.data().ProductTitle, match: title.includes(q) });
+      }
+    });
+    res.json({ q, totalScanned: snap.size, matchedCount: matched.length, samples: matched.slice(0, 3) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/firebase-check', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (!q) return res.json({ error: 'Provide ?q=medicine_name' });
