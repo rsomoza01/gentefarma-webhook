@@ -3126,13 +3126,22 @@ function getProviderById(providerId, providersList) {
 }
 
 function enrichMatchWithProvider(item, userCoords, providersList) {
-  if (!userCoords || !item?.doc?.ProviderId) return item;
-  const provider = getProviderById(item.doc.ProviderId, providersList);
-  if (!provider?.location) return item;
-  const { latitude, longitude } = provider.location;
-  if (latitude == null || longitude == null) return item;
-  const distancia = haversineDistance(userCoords.lat, userCoords.lng, latitude, longitude);
-  return { ...item, provider, distancia };
+  // Always enrich with provider info if ProviderId is available, even without userCoords.
+  // This ensures providerName is always shown (distance requires userCoords).
+  const provider = (item?.doc?.ProviderId && providersList?.length)
+    ? getProviderById(item.doc.ProviderId, providersList)
+    : null;
+  if (!provider) return item;
+
+  const enriched = { ...item, provider };
+  // Only compute distance if userCoords is available
+  if (userCoords?.lat != null && userCoords?.lng != null && provider?.location) {
+    const { latitude, longitude } = provider.location;
+    if (latitude != null && longitude != null) {
+      enriched.distancia = haversineDistance(userCoords.lat, userCoords.lng, latitude, longitude);
+    }
+  }
+  return enriched;
 }
 
 async function searchAndBuildCatalogResponse(text, session, options = {}, userInfo = {}) {
@@ -4528,32 +4537,38 @@ return hasTokenOverlap && (strictMatchCandidate || dosageOverlap) && dosageMatch
     // If filteredByModifier is empty, keep original (don't suppress all results)
   }
 
-  // ── GEOLOCATION: Load providers and filter by distance ─────────────────
+  // ── GEOLOCATION: Load providers for provider name enrichment + distance calc ────
+  // Always fetch providers (for providerName), but distance filtering/sorting needs userCoords
   const radioKm = options.radioKm ?? DEFAULT_RADIO_KM;
   let providersList = [];
-  if (userCoords) {
+  if (db) {
     providersList = await fetchProviders();
-    console.log(`[GEO] userCoords=${JSON.stringify(userCoords)} providers=${providersList.length} radio=${radioKm}km`);
+    console.log(`[GEO] userCoords=${userCoords ? JSON.stringify(userCoords) : 'null'} providers=${providersList.length} radio=${radioKm}km`);
   }
 
   // ── ENRICH + FILTER + SORT matches ──────────────────────────────────────
   let geoMatches = finalMatches;
-  if (userCoords && providersList.length > 0) {
-    // Enrich each match with provider info and distance
+  if (providersList.length > 0) {
+    // Always enrich with provider name (even without userCoords)
     geoMatches = finalMatches
-      .map((item) => enrichMatchWithProvider(item, userCoords, providersList))
-      .filter((item) => {
-        if (item.distancia == null) return true; // keep if no provider found
-        return item.distancia <= radioKm;
-      })
-      .sort((a, b) => {
-        // Primary sort: distance (asc). Items without distance go last.
-        const distA = a.distancia ?? Infinity;
-        const distB = b.distancia ?? Infinity;
-        if (distA !== distB) return distA - distB;
-        // Secondary sort: score (desc) for same distance
-        return (b.score || 0) - (a.score || 0);
-      });
+      .map((item) => enrichMatchWithProvider(item, userCoords, providersList));
+
+    // Only filter by distance if userCoords is available
+    if (userCoords && providersList.length > 0) {
+      geoMatches = geoMatches
+        .filter((item) => {
+          if (item.distancia == null) return true;
+          return item.distancia <= radioKm;
+        })
+        .sort((a, b) => {
+          // Primary sort: distance (asc). Items without distance go last.
+          const distA = a.distancia ?? Infinity;
+          const distB = b.distancia ?? Infinity;
+          if (distA !== distB) return distA - distB;
+          // Secondary sort: score (desc) for same distance
+          return (b.score || 0) - (a.score || 0);
+        });
+    }
 
     const filteredOut = finalMatches.length - geoMatches.length;
     if (filteredOut > 0) {
@@ -4781,7 +4796,15 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
     const groupTitle = shortenText(String(group.groupTitle || key || 'MEDICAMENTO').toUpperCase(), 52);
     lines.push(`*${groupTitle}*`);
 
-    (group.matches || []).forEach((item) => {
+    // Sort matches within each group by price USD ascending (cheapest first)
+    const sortedMatches = [...(group.matches || [])].sort((a, b) => {
+      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      if (priceA !== priceB) return priceA - priceB;
+      return (b.score || 0) - (a.score || 0);
+    });
+
+    sortedMatches.forEach((item) => {
       const name = shortenText(item.title || 'Medicamento', 52);
       const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
       const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
