@@ -3853,6 +3853,12 @@ const userCoords = options.userCoords || null;
     })
     // DIAGNOSTIC: find all products whose tokenSet contains 'calaminol'
     .map((item, idx) => {
+      // DIAGNOSTIC: track bumetin/leprit/esoz products through scoring pipeline
+      const MEDS_TO_TRACK = ['bumetin', 'leprit', 'esoz'];
+      const itemMed = MEDS_TO_TRACK.find(m => item.tokenSet && item.tokenSet.has(m));
+      if (itemMed) {
+        console.log(`[OCR-SCORE-DBG] ${itemMed} idx=${idx} score=${item.score} refSim=${item.referenceSimilarity} exactHit=${item.exactHit} fullFocusMatch=${item.fullFocusMatch} phraseHit=${item.phraseHit} title='${item.productTitleFull}' tokenSet=${JSON.stringify([...item.tokenSet].slice(0,15))}`);
+      }
       if (item.tokenSet && (item.tokenSet.has('calaminol') || (item.productTitleFull && /calaminol/i.test(item.productTitleFull)))) {
         console.log(`[TOKEN-DIAG] idx=${idx} score=${item.score} productTitleFull='${item.productTitleFull}' tokenSetHasCalaminol=${item.tokenSet.has('calaminol')} arrayTokens=${JSON.stringify(item.arrayTokens || [])} titleTokens=${JSON.stringify(item.titleTokens || [])}`);
       }
