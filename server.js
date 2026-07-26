@@ -640,75 +640,35 @@ app.get('/', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Simple diagnostic: just test ProductTitle toLowerCase().includes()
+// Fetch ALL docs using pagination (like fetchCollectionDocuments does)
 app.get('/firebase-raw', async (req, res) => {
   const q = (req.query.q || '').trim().toLowerCase();
   if (!q) return res.json({ error: 'Provide ?q=medicine_name' });
   try {
-    // First: try to get the specific bumetin document by ID
-    const targetDoc = await db.collection('products-market').doc('05_7703763861002').get();
-    const targetData = targetDoc.exists ? targetDoc.data() : null;
-    // Now scan all products-market with high limit to cover all docs
-    const snap = await db.collection('products-market').limit(2000).get();
-    const matched = [];
-    const noTitleCount = { total: 0, withBumetin: 0 };
-    snap.docs.forEach((d) => {
-      const raw = d.data();
-      const rawTitle = raw.ProductTitle || raw.productTitle || '(no title field)';
-      const title = rawTitle.toLowerCase();
-      if (title === '(no title field)') {
-        noTitleCount.total += 1;
-        if (raw.productTitleArray && raw.productTitleArray.some && raw.productTitleArray.some(a => String(a).toLowerCase().includes(q))) {
-          noTitleCount.withBumetin += 1;
-        }
+    const allDocs = [];
+    let lastDoc = null;
+    let hasMore = true;
+    let pageCount = 0;
+    const PAGE_SIZE = 2000;
+    while (hasMore) {
+      let query = db.collection('products-market').orderBy('__name__').limit(PAGE_SIZE);
+      if (lastDoc) query = query.startAfter(lastDoc);
+      const snap = await query.get();
+      pageCount++;
+      if (snap.empty || snap.docs.length === 0) {
+        hasMore = false;
+      } else {
+        snap.docs.forEach((d) => allDocs.push({ id: d.id, ...d.data() }));
+        lastDoc = snap.docs[snap.docs.length - 1];
+        hasMore = snap.docs.length === PAGE_SIZE;
       }
-      if (title.includes(q)) {
-        matched.push({ id: d.id, ProductTitle: rawTitle, productTitleArray: raw.productTitleArray, match: title.includes(q) });
-      }
-    });
-    // Also try with orderBy and limit to cover more docs
-    const snapOrdered = await db.collection('products-market').orderBy('__name__').limit(2000).get();
-    let orderedMatched = 0;
-    snapOrdered.docs.forEach((d) => {
-      const raw = d.data();
-      const rawTitle = (raw.ProductTitle || raw.productTitle || '').toLowerCase();
-      if (rawTitle.includes(q)) orderedMatched++;
-    });
-    // Check if there are more docs beyond 2000
-    const lastDoc = snapOrdered.docs[snapOrdered.docs.length - 1];
-    const moreSnap = lastDoc ? await db.collection('products-market').orderBy('__name__').startAfter(lastDoc).limit(2000).get() : null;
-    let moreMatched = 0;
-    let moreTotal = moreSnap ? moreSnap.size : 0;
-    if (moreSnap) {
-      moreSnap.docs.forEach((d) => {
-        const raw = d.data();
-        const rawTitle = (raw.ProductTitle || raw.productTitle || '').toLowerCase();
-        if (rawTitle.includes(q)) moreMatched++;
-      });
     }
-    // Also scan providers-products
-    const snap2 = await db.collection('providers-products').limit(2000).get();
-    let ppMatched = 0;
-    snap2.docs.forEach((d) => {
-      const raw = d.data();
-      const rawTitle = (raw.productTitle || raw.ProductTitle || '').toLowerCase();
-      const arr = raw.productTitleArray || [];
-      if (rawTitle.includes(q) || arr.some(a => String(a).toLowerCase().includes(q))) ppMatched++;
+    const matched = allDocs.filter((doc) => {
+      const rawTitle = (doc.ProductTitle || doc.productTitle || '').toLowerCase();
+      const arr = doc.productTitleArray || [];
+      return rawTitle.includes(q) || arr.some((a) => String(a).toLowerCase() === q);
     });
-    res.json({
-      q,
-      productsMarketScanned: snap.size,
-      productsMarketMatched: matched.length,
-      orderedScanned: snapOrdered.size,
-      orderedMatchedForQ: orderedMatched,
-      moreTotal,
-      moreMatched,
-      providersProductsScanned: snap2.size,
-      providersProductsMatched: ppMatched,
-      noTitleDocs: noTitleCount,
-      samples: matched.slice(0, 3),
-      targetDoc: targetDoc.exists ? { id: targetDoc.id, ProductTitle: targetDoc.data().ProductTitle, productTitleArray: targetDoc.data().productTitleArray } : null
-    });
+    res.json({ q, totalDocs: allDocs.length, pagesFetched: pageCount, matchedCount: matched.length, samples: matched.slice(0, 3).map((d) => ({ id: d.id, ProductTitle: d.ProductTitle || d.productTitle, productTitleArray: d.productTitleArray })) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
