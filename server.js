@@ -5474,15 +5474,17 @@ async function findProductByNormalizedName(name) {
       db.collection('products-market').limit(2000).get(),
       db.collection('providers-products').limit(2000).get(),
     ]);
-    const matches = (snap) => snap.docs.filter((d) => {
+      const matches = (snap) => snap.docs.filter((d) => {
       const t = normalizeText(d.data().ProductTitle || d.data().productTitle || '');
       const normArr = Array.isArray(d.data().productTitleArray) ? d.data().productTitleArray.map(normalizeText) : [];
       // EXACT match on productTitleArray tokens — prevents substring false positives like "bumetin" → "ALBUMIN"
-      // normalizeText does NOT lowercase, so we must explicitly compare case-insensitively
+      // Use toLowerCase() on BOTH sides since normalizeText does NOT lowercase
+      // and Firebase may store tokens in any case (upper, lower, mixed)
       const allTokens = normalized.split(/\s+/);
+      const qLower = normalized.toLowerCase();
       const tokenMatch = allTokens.some((tok) => normArr.some((a) => a.toLowerCase() === tok.toLowerCase()));
-      // Also keep loose ProductTitle includes for safety
-      return tokenMatch || t.includes(normalized);
+      // Also keep loose ProductTitle includes (case-insensitive)
+      return tokenMatch || t.toLowerCase().includes(qLower);
     }).map((d) => ({ id: d.id, ProductTitle: d.data().ProductTitle || d.data().productTitle, productTitleArray: d.data().productTitleArray }));
     return { productsMarket: matches(pmSnap), providersProducts: matches(ppSnap) };
   } catch (e) {
