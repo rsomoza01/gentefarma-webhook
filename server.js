@@ -646,15 +646,19 @@ app.get('/test-search', async (req, res) => {
   if (!q) return res.json({ error: 'Provide ?q=medicine_name' });
   try {
     const products = await fetchCatalogProducts(2000);
-    // Check: what fields does the cached product have?
-    const sample = products[0];
-    res.json({
-      q,
-      totalProducts: products.length,
-      sampleKeys: sample ? Object.keys(sample) : [],
-      sampleProductTitle: sample?.ProductTitle || sample?.productTitle,
-      sampleProductTitleArray: sample?.productTitleArray,
-    });
+    const qLower = q.toLowerCase();
+    const results = [];
+    for (const doc of products) {
+      const pt = (doc.ProductTitle || doc.productTitle || '').toLowerCase();
+      const arr = Array.isArray(doc.productTitleArray) ? doc.productTitleArray.map(String) : [];
+      const arrLower = arr.map((a) => a.toLowerCase());
+      if (arrLower.includes(qLower) || pt.includes(qLower)) {
+        results.push({ id: doc.id, ProductTitle: doc.ProductTitle, productTitleArray: doc.productTitleArray });
+      }
+    }
+    console.log(`🧪 [TEST-SEARCH] q='${q}' qLower='${qLower}' scanned=${products.length} matched=${results.length}`);
+    results.slice(0, 5).forEach((r) => console.log(`  → ${r.ProductTitle} | array=${JSON.stringify(r.productTitleArray)}`));
+    res.json({ q, totalProducts: products.length, matchCount: results.length, matches: results.slice(0, 5) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
