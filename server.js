@@ -1760,7 +1760,7 @@ async function handleLLMIntent(llmResult, phone, text, session, context) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
-  console.log('🧪 [ROUTE] text="%s" userCity="%s" mode="%s"', text, session.userCity, session.mode);
+  console.log('🧪 [ROUTE] text="%s" userCity="%s" mode="%s" isNewOrder=%s', text, session.userCity, session.mode, isNewOrderNotification(normalized));
   // ── ULTRA-EARLY-SELECTION-GUARD ────────────────────────────────────────
   // Before ANY extraction, detect if the message is purely a selection phrase.
   // If session has pending selection results (from a prior catalog), handle it
@@ -2883,6 +2883,11 @@ function buildOrderSentMessage() {
 
 function isNewOrderNotification(value) {
   const text = normalizeText(value);
+  // Anti-nuisance: exclude prescription-like text (has RP: or PACIENTE: or numbered medicine list)
+  // These trigger when the user sends a recipe/prescription image, not a real order notification.
+  if (/\b(rx|rp|receta)\b/i.test(text) && /paciente|belen|arcia/i.test(text)) {
+    return false;
+  }
   return /\bnuevo\s+pedido\s+gentefarma\b/.test(text)
     && /\bresumen\s+del\s+pedido\b/.test(text)
     && /\bmonto\s+total\s+general\b/.test(text);
