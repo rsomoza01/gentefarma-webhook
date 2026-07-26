@@ -2642,7 +2642,7 @@ function heuristicCheck(response, originalQuery) {
   // y la respuesta tiene más de 5 💊 → sospecha de hallucination
   // EXCEPCIÓN: modo receta (OCR de receta médica) puede tener muchos medicines legítimos
   const originalQ = originalQuery || '';
-  const isRecipeMode = /\\\b(rx|rp|receta|paciente|belen|arcia|esoz|leprit|bumetin|evigax|moderan|milax|daflon|bargonil)\\\b/i.test(originalQ);
+  const isRecipeMode = /\b(rx|rp|receta|paciente|belen|arcia|esoz|leprit|bumetin|evigax|moderan|milax|daflon|bargonil)\b/i.test(originalQ);
   const medicineEmojiCount = (text.match(/💊/g) || []).length;
   const queryHasMedicine = /\\\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación)\\\b/i.test(originalQ);
   console.log('🧪 [HEURISTIC-DBG] isRecipeMode=%s medicineEmojiCount=%d queryHasMedicine=%s query="%s" rawHex=%s',
