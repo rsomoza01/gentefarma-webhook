@@ -4611,8 +4611,14 @@ return hasTokenOverlap && (strictMatchCandidate || dosageOverlap) && dosageMatch
     };
   }
 
-  const top3titles = geoMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
+    const top3titles = geoMatches.slice(0, 3).map((m, i) => `(#${i} '${m.productTitleFull}' score=${m.score} exactHit=${m.exactHit})`).join(' ');
   console.log(`🧪 [SMN-RETURN] query='${query}' geoMatches.length=${geoMatches.length} topMatches.length=${topMatches.length} top3=[${top3titles}] consultationMode=${consultationMode}`);
+  // DIAGNOSTIC: log top 5 scoredProducts for first token match
+  const MISSING_RECIPE_MEDS_DIAG = ['bumetin', 'leprit', 'daflon', 'esoz', 'evigax', 'moderan', 'milax', 'bargonil'];
+  if (queryTokens.some(t => MISSING_RECIPE_MEDS_DIAG.includes(t.toLowerCase()))) {
+    const top5 = scoredProducts.slice(0, 5).map((m, i) => ({ title: m.productTitleFull, score: m.score, exactHit: m.exactHit, tokenSetHasQuery: m.tokenSet ? m.tokenSet.has(queryTokens[0]) : false, arrayTokens: m.arrayTokens?.slice(0, 5) }));
+    console.log(`🧪 [SMN-DIAG] query='${query}' token='${queryTokens[0]}' scoredProducts[0-4]=%j`, top5);
+  }
   return {
     query,
     queryTokens,
