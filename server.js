@@ -640,6 +640,43 @@ app.get('/', (req, res) => {
   res.status(200).send('OK');
 });
 
+app.get('/firebase-check', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json({ error: 'Provide ?q=medicine_name' });
+  const normalized = normalizeText(q);
+  console.log(`🧪 [FIREBASE-CHECK] q='${q}' normalized='${normalized}'`);
+  try {
+    const [pmSnap, ppSnap] = await Promise.all([
+      db.collection('products-market').limit(2000).get(),
+      db.collection('providers-products').limit(2000).get(),
+    ]);
+    const results = { productsMarket: [], providersProducts: [] };
+    pmSnap.docs.forEach((d) => {
+      const data = d.data();
+      const title = normalizeText(data.ProductTitle || '');
+      const arr = Array.isArray(data.productTitleArray) ? data.productTitleArray.map(normalizeText) : [];
+      if (title.includes(normalized) || arr.some((a) => a.includes(normalized) || normalized.includes(a))) {
+        results.productsMarket.push({ id: d.id, ProductTitle: data.ProductTitle, productTitleArray: data.productTitleArray, StatusId: data.StatusId, ProviderId: data.ProviderId });
+      }
+    });
+    ppSnap.docs.forEach((d) => {
+      const data = d.data();
+      const title = normalizeText(data.productTitle || '');
+      const arr = Array.isArray(data.productTitleArray) ? data.productTitleArray.map(normalizeText) : [];
+      if (title.includes(normalized) || arr.some((a) => a.includes(normalized) || normalized.includes(a))) {
+        results.providersProducts.push({ id: d.id, productTitle: data.productTitle, productTitleArray: data.productTitleArray, provider: data.provider });
+      }
+    });
+    console.log(`🧪 [FIREBASE-CHECK] products-market=${results.productsMarket.length} providers-products=${results.providersProducts.length}`);
+    results.productsMarket.forEach((p, i) => console.log(`🧪 [FIREBASE-CHECK] PM[${i}]: '${p.ProductTitle}' array=${JSON.stringify(p.productTitleArray)}`));
+    results.providersProducts.forEach((p, i) => console.log(`🧪 [FIREBASE-CHECK] PP[${i}]: '${p.productTitle}' array=${JSON.stringify(p.productTitleArray)}`));
+    res.json({ query: q, normalized, ...results });
+  } catch (e) {
+    console.error(`🧪 [FIREBASE-CHECK] error: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -4099,6 +4136,18 @@ const userCoords = options.userCoords || null;
     } else {
       console.log(`[DEGRADED-DAFLON] NOT FOUND in scoredProducts (checked tokenSet for 'daflon')`);
     }
+    // Async diagnostic: query both collections for ESOZ, LEPRIT, and BUMETIN
+    ['esoz', 'leprit', 'bumetin'].forEach((med) => {
+      findProductByNormalizedName(med).then((result) => {
+        console.log(`[DIAG-${med.toUpperCase()}-QUERY] productsMarket=${result.productsMarket.length} providersProducts=${result.providersProducts.length} error=${result.error || 'none'}`);
+        if (result.productsMarket.length > 0) {
+          result.productsMarket.slice(0, 5).forEach((p, i) => console.log(`[DIAG-${med.toUpperCase()}-QUERY] PM[${i}]: '${p.ProductTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
+        }
+        if (result.providersProducts.length > 0) {
+          result.providersProducts.slice(0, 5).forEach((p, i) => console.log(`[DIAG-${med.toUpperCase()}-QUERY] PP[${i}]: '${p.productTitle}' productTitleArray=${JSON.stringify(p.productTitleArray)}`));
+        }
+      });
+    });
     // Diagnostic: find FEXORAT and FEXOFENADINA entries in scoredProducts
     const fexoratIdx = scoredProducts.findIndex((item) => item.tokenSet && (item.tokenSet.has('fexorat') || (item.productTitleFull && /fexorat/i.test(item.productTitleFull))));
     const fexofenadinaStandaloneIdx = scoredProducts.findIndex((item) => item.tokenSet && (item.tokenSet.has('fexofenadina') && !item.tokenSet.has('fexorat') && !item.tokenSet.has('rinolast') && !item.tokenSet.has('suspension') && (item.productTitleFull && /^(?!.*\().*fexofenadina\s*180\s*mg/i.test(item.productTitleFull))));
