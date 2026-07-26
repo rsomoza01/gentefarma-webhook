@@ -1959,6 +1959,10 @@ async function routeMessage(phone, text, session, context = {}) {
     return null;
   }
 
+  // 🚨 DIAGNOSTIC: log ALL early-return conditions for this text
+  console.log('🧪 [EARLY-CHECKS] text="%s" isNewOrderNotification=%s isDemoReservation=%s isDeliveryQuestion=%s isOrderSentConfirmation=%s isHowToOrderQuestion=%s',
+    text, isNewOrderNotification(normalized), isDemoReservation(normalized), isDeliveryQuestion(normalized), isOrderSentConfirmation(normalized), isHowToOrderQuestion(normalized));
+
   if (isNewOrderNotification(normalized)) {
     return buildOrderNotificationReply();
   }
