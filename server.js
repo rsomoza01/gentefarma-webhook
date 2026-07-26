@@ -1810,7 +1810,8 @@ async function routeMessage(phone, text, session, context = {}) {
   // If user has not set their city yet, intercept medicine searches and ask for it.
   // Store pending query so we retry it after city is detected.
   // Also handle the case where session.userCity is the STRING 'null' (malformed).
-  if (!session.userCity || session.userCity === 'null' || session.userCity === 'undefined') {
+  // SKIP city gate for OCR messages — the OCR block handles city internally.
+  if ((!session.userCity || session.userCity === 'null' || session.userCity === 'undefined') && !hasOcrText) {
     // Check if user is responding to a city question (pendingCityRetry is set)
     if (session.pendingCityRetry) {
       const cityInfo = detectCityFromText(text);
