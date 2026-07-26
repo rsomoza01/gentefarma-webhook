@@ -674,6 +674,18 @@ app.get('/firebase-raw', async (req, res) => {
       const rawTitle = (raw.ProductTitle || raw.productTitle || '').toLowerCase();
       if (rawTitle.includes(q)) orderedMatched++;
     });
+    // Check if there are more docs beyond 2000
+    const lastDoc = snapOrdered.docs[snapOrdered.docs.length - 1];
+    const moreSnap = lastDoc ? await db.collection('products-market').orderBy('__name__').startAfter(lastDoc).limit(2000).get() : null;
+    let moreMatched = 0;
+    let moreTotal = moreSnap ? moreSnap.size : 0;
+    if (moreSnap) {
+      moreSnap.docs.forEach((d) => {
+        const raw = d.data();
+        const rawTitle = (raw.ProductTitle || raw.productTitle || '').toLowerCase();
+        if (rawTitle.includes(q)) moreMatched++;
+      });
+    }
     // Also scan providers-products
     const snap2 = await db.collection('providers-products').limit(2000).get();
     let ppMatched = 0;
@@ -689,6 +701,8 @@ app.get('/firebase-raw', async (req, res) => {
       productsMarketMatched: matched.length,
       orderedScanned: snapOrdered.size,
       orderedMatchedForQ: orderedMatched,
+      moreTotal,
+      moreMatched,
       providersProductsScanned: snap2.size,
       providersProductsMatched: ppMatched,
       noTitleDocs: noTitleCount,
