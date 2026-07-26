@@ -2624,7 +2624,7 @@ function buildMoreInfoMessage() {
 }
 
 function buildOrderNotificationReply() {
-  return 'En breve, uno de nuestros colaboradores de Gentefarma se pondrá en contacto contigo para tramitarlo. 😊';
+  return '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.';
 }
 
 function buildDefaultFallbackMessage(session) {
