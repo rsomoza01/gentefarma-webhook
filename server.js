@@ -3898,6 +3898,12 @@ const userCoords = options.userCoords || null;
       return item;
     })
     .sort((a, b) => {
+      // PRIMARY: sort by price USD ascending (cheapest first)
+      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
+      if (priceA !== priceB) return priceA - priceB;
+
+      // SECONDARY tiebreakers: relevance signals
       const vitaminA = a.vitaminHit ? 1 : 0;
       const vitaminB = b.vitaminHit ? 1 : 0;
       if (vitaminA !== vitaminB) return vitaminB - vitaminA;
@@ -3912,11 +3918,7 @@ const userCoords = options.userCoords || null;
 
       const scoreA = a.score ?? 0;
       const scoreB = b.score ?? 0;
-      if (scoreA !== scoreB) return scoreB - scoreA;
-
-      const priceA = a.priceUsd ?? Number.MAX_SAFE_INTEGER;
-      const priceB = b.priceUsd ?? Number.MAX_SAFE_INTEGER;
-      return priceA - priceB;
+      return scoreB - scoreA;
     });
 
   // ── Greeting denylist (siempre, antes de cualquier búsqueda) ─────────────────
