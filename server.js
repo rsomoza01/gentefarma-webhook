@@ -655,7 +655,7 @@ app.get('/firebase-check', async (req, res) => {
       const data = d.data();
       const title = normalizeText(data.ProductTitle || '');
       const arr = Array.isArray(data.productTitleArray) ? data.productTitleArray.map(normalizeText) : [];
-      if (title.includes(normalized) || arr.some((a) => a.includes(normalized) || normalized.includes(a))) {
+      if (title.toLowerCase().includes(normalized.toLowerCase()) || arr.some((a) => a.toLowerCase() === normalized.toLowerCase())) {
         results.productsMarket.push({ id: d.id, ProductTitle: data.ProductTitle, productTitleArray: data.productTitleArray, StatusId: data.StatusId, ProviderId: data.ProviderId });
       }
     });
@@ -663,7 +663,7 @@ app.get('/firebase-check', async (req, res) => {
       const data = d.data();
       const title = normalizeText(data.productTitle || '');
       const arr = Array.isArray(data.productTitleArray) ? data.productTitleArray.map(normalizeText) : [];
-      if (title.includes(normalized) || arr.some((a) => a.includes(normalized) || normalized.includes(a))) {
+      if (title.toLowerCase().includes(normalized.toLowerCase()) || arr.some((a) => a.toLowerCase() === normalized.toLowerCase())) {
         results.providersProducts.push({ id: d.id, productTitle: data.productTitle, productTitleArray: data.productTitleArray, provider: data.provider });
       }
     });
