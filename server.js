@@ -1760,7 +1760,11 @@ async function handleLLMIntent(llmResult, phone, text, session, context) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
-  console.log('🧪 [ROUTE] text="%s" userCity="%s" mode="%s" isNewOrder=%s', text, session.userCity, session.mode, isNewOrderNotification(normalized));
+  // Define hasOcrText early so the city gate can reference it.
+  // CONSUME it from context immediately to prevent re-entry on follow-up text messages.
+  const hasOcrText = Boolean(context?.hasOcrText);
+  if (context) context.hasOcrText = false;
+  console.log('🧪 [ROUTE] text="%s" userCity="%s" mode="%s" isNewOrder=%s hasOcrText=%s', text.substring(0,80), session.userCity, session.mode, isNewOrderNotification(normalized), hasOcrText);
   // ── ULTRA-EARLY-SELECTION-GUARD ────────────────────────────────────────
   // Before ANY extraction, detect if the message is purely a selection phrase.
   // If session has pending selection results (from a prior catalog), handle it
@@ -1896,14 +1900,7 @@ async function routeMessage(phone, text, session, context = {}) {
     looksLikeMedicineName(normalized) ||
     consultationIsMedicine
   );
-  const hasOcrText = Boolean(context?.hasOcrText);
-  // CONSUME hasOcrText from session context so the OCR block does NOT re-run for
-  // subsequent text messages (e.g. "Ciudad Bolívar" after prescription OCR).
-  // Without this, context.hasOcrText stays true and the next text message enters
-  // the OCR block with rawOcr = "Ciudad Bolívar", producing empty preExtractedMedicines
-  // and recipeMode=false, causing individual medicine searches (bumetin, esoz, etc.)
-  // to fail with recipeMode=false.
-  if (context) context.hasOcrText = false;
+  // hasOcrText already defined at top of routeMessage and consumed from context.
   const ocrSearchText = normalizeText(context?.ocrSearchText || '');
   const rawOcrText = String(context?.rawOcrText || '');
   const recipeSourceText = rawOcrText || ocrSearchText;
