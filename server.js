@@ -674,15 +674,26 @@ app.get('/firebase-raw', async (req, res) => {
       const rawTitle = (raw.ProductTitle || raw.productTitle || '').toLowerCase();
       if (rawTitle.includes(q)) orderedMatched++;
     });
-    res.json({ 
-      q, 
-      productsMarketScanned: snap.size, 
-      productsMarketMatched: matched.length, 
+    // Also scan providers-products
+    const snap2 = await db.collection('providers-products').limit(2000).get();
+    let ppMatched = 0;
+    snap2.docs.forEach((d) => {
+      const raw = d.data();
+      const rawTitle = (raw.productTitle || raw.ProductTitle || '').toLowerCase();
+      const arr = raw.productTitleArray || [];
+      if (rawTitle.includes(q) || arr.some(a => String(a).toLowerCase().includes(q))) ppMatched++;
+    });
+    res.json({
+      q,
+      productsMarketScanned: snap.size,
+      productsMarketMatched: matched.length,
       orderedScanned: snapOrdered.size,
       orderedMatchedForQ: orderedMatched,
+      providersProductsScanned: snap2.size,
+      providersProductsMatched: ppMatched,
       noTitleDocs: noTitleCount,
-      samples: matched.slice(0, 3), 
-      targetDoc: targetDoc.exists ? { id: targetDoc.id, ProductTitle: targetDoc.data().ProductTitle, productTitleArray: targetDoc.data().productTitleArray } : null 
+      samples: matched.slice(0, 3),
+      targetDoc: targetDoc.exists ? { id: targetDoc.id, ProductTitle: targetDoc.data().ProductTitle, productTitleArray: targetDoc.data().productTitleArray } : null
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
