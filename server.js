@@ -2176,14 +2176,35 @@ async function routeMessage(phone, text, session, context = {}) {
       searchQuery
     });
     const allRecipeMedicinesList = typeof extractRecipeMedicineLines === 'function' ? extractRecipeMedicineLines(allRecipeMedicines || rawOcr) : [];
+    // Store recipe medicines in session so the signal block can use them
+    // without re-extracting from the follow-up text message (e.g. "Ciudad Bolívar").
+    if (allRecipeMedicinesList.length > 0) {
+      session.pendingRecipeMedicines = allRecipeMedicinesList;
+    }
     const catalogResult_ocr = await searchAndBuildCatalogResponse(searchQuery, session, { hasOcrText: true, ocrOnly: true, recipeMode: true, preExtractedMedicines: allRecipeMedicinesList }, { phone, pushName });
     if (catalogResult_ocr !== null) return catalogResult_ocr;
   }
 
+  // If we have pending recipe medicines from an OCR prescription, use them directly
+  // instead of calling searchAndBuildCatalogResponse which would re-extract from
+  // the follow-up text (e.g. "Ciudad Bolívar" would produce empty/wrong candidates).
   if (hasMedicineSearchSignal && (session.mode === 'awaiting_choice' || session.mode === 'awaiting_choice_global')) {
-    clearSelectionState(session);
-    const catalogResult = await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText }, { phone, pushName });
-    if (catalogResult !== null) return catalogResult;
+    if (Array.isArray(session.pendingRecipeMedicines) && session.pendingRecipeMedicines.length > 0) {
+      console.log('🧪 [OCR-REUSE] Using stored pendingRecipeMedicines=%s instead of re-extracting from text="%s"',
+        JSON.stringify(session.pendingRecipeMedicines), text);
+      const catalogResult = await searchAndBuildCatalogResponse(text, session, {
+        hasOcrText: false,
+        recipeMode: true,
+        preExtractedMedicines: session.pendingRecipeMedicines
+      }, { phone, pushName });
+      // Clear pending medicines after use
+      delete session.pendingRecipeMedicines;
+      if (catalogResult !== null) return catalogResult;
+    } else {
+      clearSelectionState(session);
+      const catalogResult = await searchAndBuildCatalogResponse(recipeSourceText || text, session, { hasOcrText }, { phone, pushName });
+      if (catalogResult !== null) return catalogResult;
+    }
   }
 
   // Skip selection block if real medicine names were detected in the text (dose numbers
