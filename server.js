@@ -2640,9 +2640,11 @@ function heuristicCheck(response, originalQuery) {
 
   // 3. Si la respuesta tiene medicines (💊) pero el query original NO era de medicines
   // y la respuesta tiene más de 5 💊 → sospecha de hallucination
+  // EXCEPCIÓN: modo receta (OCR de receta médica) puede tener muchos medicines legítimos
+  const isRecipeMode = /\\\b(rx|rp|receta|paciente|belen|arcia|esoz|leprit|bumetin|evigax|moderan|milax|daflon|bargonil)\\\b/i.test(originalQuery || '');
   const medicineEmojiCount = (text.match(/💊/g) || []).length;
-  const queryHasMedicine = /\\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación)/i.test(originalQuery || '');
-  if (!queryHasMedicine && medicineEmojiCount > 8) {
+  const queryHasMedicine = /\\\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación)\\\b/i.test(originalQuery || '');
+  if (!queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode) {
     console.log(`🚨 [VALIDATOR-HEURISTIC] SUSPECT reason="exceso de medicines sin relación al query"`);
     return { ok: false, reason: 'exceso medicines sin relación' };
   }
