@@ -135,7 +135,18 @@ if ((!session.userCity || session.userCity === 'null' || session.userCity === 'u
 }
 ```
 
+### Bug: "disponen de X" no entra al city gate (fix 2026-07-27, `df835df`)
+
+**Síntoma:** Consulta "Hola quiero saber si disponen de clopidrogel..." caía directamente al fallback "Uno de nuestros colaboradores te atenderá en breve" en lugar de pedir la ciudad.
+
+**Root cause:** "disponen" no estaba en `verbList` de `extractMedicineQuery` (línea 6940), por lo que el regex no capturaba nada para frases de disponibilidad. Adicionalmente, "disponen" está en `GENERIC_TOKENS` de `looksLikeMedicineName` (línea 6902), causando que ambas `extractMedicineQuery` y `looksLikeMedicineName` retornaran vacío/false. El city gate NO se activaba porque `looksLikeMedicine` era falsy.
+
+**Fix (`df835df`):** Agregar `(?<!\\w)disponen\\b` a `verbList`. Ahora `extractMedicineQuery("...disponen de clopidrogel...")` captura "saber si disponen de clopidrogel..." y `looksLikeMedicine` es truthy → el city gate pide la ciudad correctamente.
+
+**Línea afectada:** `server.js:6943` — se agregó `'(?<!\\\\w)disponen\\\\b'` a `verbList`.
+
 ### El bug de la receta OCR (encontrado 2026-07-26)
+
 Cuando `userCity=null` y llega una receta OCR → `looksLikeMedicine` era truthy → el city gate guardaba `pendingCityRetry` y respondía "indícame tu ciudad" **ANTES** de que el OCR block se ejecutara.
 
 **Fix:** `&& !hasOcrText` en el condition del city gate.
