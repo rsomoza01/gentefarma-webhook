@@ -105,8 +105,34 @@ if ((!session.userCity || session.userCity === 'null' || session.userCity === 'u
 
 ### Comportamiento
 1. `pendingCityRetry` está set → texto es respuesta de ciudad → `detectCityFromText`
+   - Ciudad detectada → guardar `userCity` → `routeMessage(pending.text)` recursivo
+   - **Ciudad NO detectada + es un saludo** → limpiar `pendingCityRetry` y dejar pasar (el greeting handler lo procesa)
+   - **Ciudad NO detectada + no es saludo** → pedir ciudad nuevamente
 2. `detectCityFromText(text)` → ciudad detectada → guardar `userCity` → `routeMessage(pending.text)` recursivo
 3. `looksLikeMedicine` → guardar `pendingCityRetry` → **pedir ciudad** (NO buscar)
+
+### Bug: "indícame tu ciudad" para mensajes de saludo (fix 2026-07-27)
+
+**Síntoma:** Cuando `pendingCityRetry` está activo (usuario envió un nombre de medicina sin tener ciudad configurada) y el usuario responde con un saludo ("hola", "buenas", etc.), el bot volvía a mostrar "indícame tu ciudad" en lugar de procesar el saludo.
+
+**Root cause:** En el branch `if (session.pendingCityRetry)`, cuando `detectCityFromText` retornaba `null` para un saludo, el código iba directo al `else` que pedía la ciudad — sin verificar si el mensaje era un saludo.
+
+**Fix (`032e6ee`):** Agregar `isGreetingOrMenu` check antes de pedir ciudad. Si es un saludo, limpiar `pendingCityRetry` y dejar pasar al greeting handler.
+
+```javascript
+// ANTES (bug):
+} else {
+  return 'Para buscar farmacias cerca de ti, indícame tu ciudad: ...';
+}
+
+// DESPUÉS (fix):
+} else if (isGreetingOrMenu(normalized)) {
+  session.pendingCityRetry = null;
+  touchSession(session);
+} else {
+  return 'Para buscar farmacias cerca de ti, indícame tu ciudad: ...';
+}
+```
 
 ### El bug de la receta OCR (encontrado 2026-07-26)
 Cuando `userCity=null` y llega una receta OCR → `looksLikeMedicine` era truthy → el city gate guardaba `pendingCityRetry` y respondía "indícame tu ciudad" **ANTES** de que el OCR block se ejecutara.
