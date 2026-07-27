@@ -312,8 +312,33 @@ function touchSession(session) {
 }
 
 function ensureSelectedProducts(session) {
-  if (!session.selectedProducts) session.selectedProducts = [];
+  if (!Array.isArray(session.selectedProducts)) session.selectedProducts = [];
   return session.selectedProducts;
+}
+
+function persistSelectedProducts(phone, items) {
+  if (!db) return;
+  try {
+    db.collection('cart-sessions').doc(String(phone)).set({
+      items,
+      updatedAt: Date.now()
+    }, { merge: true });
+  } catch (e) {
+    console.error('[CART-PERSIST] failed to persist cart:', e.message);
+  }
+}
+
+async function restoreSelectedProducts(phone) {
+  if (!db) return [];
+  try {
+    const doc = await db.collection('cart-sessions').doc(String(phone)).get();
+    if (doc.exists && doc.data().items) {
+      return doc.data().items;
+    }
+  } catch (e) {
+    console.error('[CART-RESTORE] failed to restore cart:', e.message);
+  }
+  return [];
 }
 
 function clearPendingSearch(session) {
@@ -578,10 +603,22 @@ function formatSelectionSavedMessage(item, quantity, session) {
   ].join('\n');
 }
 
-function buildSelectedProductsSummary(session) {
-  const items = ensureSelectedProducts(session);
+async function buildSelectedProductsSummary(session, phone) {
+  let items = ensureSelectedProducts(session);
+
+  // If in-memory cart is empty but phone is available, try to restore from Firestore
+  if (!items.length && phone) {
+    const restored = await restoreSelectedProducts(phone);
+    if (restored.length > 0) {
+      items = restored;
+      session.selectedProducts = items;
+      console.log(`[CART-RESTORE] restored ${items.length} items from Firestore for phone=${phone}`);
+    }
+  }
+
+  console.log(`🧪 [SUMMARY] listo called — selectedProducts.length=${items.length} session.mode=${session.mode} humanHandoff=${session.humanHandoff} phone=${phone} restored=${!items.length && phone ? 'yes' : 'no'}`);
   if (!items.length) {
-    return '🧾 Aún no has agregado medicamentos a tu pedido.';
+    return '🧾 Aún no has agregado medicamentos a tu pedido. Busca un medicamento y selecciona una opción.';
   }
 
   const { totalUsd, totalBs } = getCartTotals(session);
@@ -610,7 +647,7 @@ function buildSelectedProductsSummary(session) {
   return lines.join('\n').trim();
 }
 
-function addItemToCart(session, item, quantity) {
+function addItemToCart(session, item, quantity, phone) {
   const cart = ensureSelectedProducts(session);
   const existingIndex = cart.findIndex((x) => normalizeText(x.title) === normalizeText(item.title));
   const cartItem = {
@@ -633,10 +670,12 @@ function addItemToCart(session, item, quantity) {
     cart[existingIndex].basePriceBs = item.basePriceBs;
     cart[existingIndex].feeRate = item.feeRate;
     cart[existingIndex].feeAmountUsd = item.feeAmountUsd;
-    return cart[existingIndex];
+  } else {
+    cart.push(cartItem);
   }
 
-  cart.push(cartItem);
+  // Persist to Firestore so cart survives process restarts
+  if (phone) persistSelectedProducts(phone, cart);
   return cartItem;
 }
 
@@ -1856,7 +1895,7 @@ async function handleLLMIntent(llmResult, phone, text, session, context) {
       return buildHumanAgentMessage();
 
     case 'summary':
-      return buildSelectedProductsSummary(session);
+      return await buildSelectedProductsSummary(session, phone);
 
     case 'selection':
       // Let the existing selection pipeline handle it (parseSelectionCommand etc.)
@@ -1910,7 +1949,7 @@ async function routeMessage(phone, text, session, context = {}) {
         if (!selected) {
           return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
         }
-        addItemToCart(session, selected, parsed.quantity);
+        addItemToCart(session, selected, parsed.quantity, phone);
         touchSession(session);
         clearSelectionState(session);
         return formatSelectionSavedMessage(selected, parsed.quantity, session);
@@ -2141,8 +2180,8 @@ async function routeMessage(phone, text, session, context = {}) {
     if (catalogResult !== null) return catalogResult;
   }
 
-  if (/^(listo|resumen)\b/.test(normalized)) {
-    return buildSelectedProductsSummary(session);
+  if (/^(resumen|listo)\b/.test(normalized)) {
+    return await buildSelectedProductsSummary(session, phone);
   }
 
   // ── CITY EARLY DETECTION ─────────────────────────────────────────────────
@@ -2347,7 +2386,7 @@ async function routeMessage(phone, text, session, context = {}) {
         continue;
       }
 
-      addItemToCart(session, selected, quantity);
+      addItemToCart(session, selected, quantity, phone);
       pushSelectionHistory(session, selected, quantity);
       selectedItems.push({ selected, quantity });
     }
@@ -2414,7 +2453,7 @@ async function routeMessage(phone, text, session, context = {}) {
         continue;
       }
 
-      addItemToCart(session, selected, quantity);
+      addItemToCart(session, selected, quantity, phone);
       pushSelectionHistory(session, selected, quantity);
       selectedItems.push({ selected, quantity });
     }
@@ -2466,7 +2505,7 @@ async function routeMessage(phone, text, session, context = {}) {
         return `⚠️ La opción *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
       }
 
-      addItemToCart(session, selected, selectionCandidate.quantity);
+      addItemToCart(session, selected, selectionCandidate.quantity, phone);
       touchSession(session);
       clearSelectionState(session);
 
@@ -2489,7 +2528,7 @@ async function routeMessage(phone, text, session, context = {}) {
         return `⚠️ La opción global *${selectionCandidate.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
       }
 
-      addItemToCart(session, selected, selectionCandidate.quantity);
+      addItemToCart(session, selected, selectionCandidate.quantity, phone);
       touchSession(session);
       clearSelectionState(session);
 
@@ -2545,7 +2584,7 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   if (/^(resumen|listo)\b/.test(normalized)) {
-    return buildSelectedProductsSummary(session);
+    return await buildSelectedProductsSummary(session, phone);
   }
 
   if (session.mode === 'awaiting_choice') {
@@ -2591,7 +2630,7 @@ async function routeMessage(phone, text, session, context = {}) {
         return `⚠️ La opción *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
       }
 
-      addItemToCart(session, selected, parsed.quantity);
+      addItemToCart(session, selected, parsed.quantity, phone);
       touchSession(session);
       clearSelectionState(session);
 
@@ -2636,7 +2675,7 @@ async function routeMessage(phone, text, session, context = {}) {
         return `⚠️ La opción global *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
       }
 
-      addItemToCart(session, selected, parsed.quantity);
+      addItemToCart(session, selected, parsed.quantity, phone);
       touchSession(session);
       clearSelectionState(session);
 
@@ -2665,7 +2704,7 @@ async function routeMessage(phone, text, session, context = {}) {
         if (!selected) {
           return `⚠️ La opción global *${parsed.option}* no está disponible. Escribe *LISTO* o busca otro medicamento.`;
         }
-        addItemToCart(session, selected, parsed.quantity);
+        addItemToCart(session, selected, parsed.quantity, phone);
         touchSession(session);
         clearSelectionState(session);
         return formatSelectionSavedMessage(selected, parsed.quantity, session);
