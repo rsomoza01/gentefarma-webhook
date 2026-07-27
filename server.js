@@ -6766,7 +6766,7 @@ function isMedicineConsultationPhrase(value) {
   const text = normalizeText(value);
   if (!text) return false;
 
-  const consultIntent = /\b(comprar|comprarlo|consigo|consigue|conseguir|encuentro|encuentra|precio|costo|cuanto|cuánto|donde|dónde)\b/.test(text);
+  const consultIntent = /\b(comprar|comprarlo|consigo|consigue|conseguir|encuentro|encuentra|precio|costo|cuanto|cuánto|donde|dónde|disponen|disponibilidad)\b/.test(text);
   if (!consultIntent) return false;
 
   const extraction = extractMedicineQuery(text);
