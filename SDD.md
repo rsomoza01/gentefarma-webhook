@@ -143,7 +143,17 @@ if ((!session.userCity || session.userCity === 'null' || session.userCity === 'u
 
 **Fix (`df835df`):** Agregar `(?<!\\w)disponen\\b` a `verbList`. Ahora `extractMedicineQuery("...disponen de clopidrogel...")` captura "saber si disponen de clopidrogel..." y `looksLikeMedicine` es truthy → el city gate pide la ciudad correctamente.
 
-**Línea afectada:** `server.js:6943` — se agregó `'(?<!\\\\w)disponen\\\\b'` a `verbList`.
+**Línea afectada:** `server.js:6943` — se agregó `'(?<!\w)disponen\b'` a `verbList`.
+
+### Bug: "disponen de X" no entra al catalog search — `consultIntent` sin "disponen" (fix 2026-07-27, `b0fa75f`)
+
+**Síntoma:** Consulta "Hola quiero saber si disponen de clopidrogel..." entraba al city gate, pedía la ciudad correctamente (fix `df835df`), pero al responder con "Ciudad Bolívar" caía al fallback "Uno de nuestros colaboradores te atenderá en breve" en lugar de mostrar el catálogo.
+
+**Root cause:** `isMedicineConsultationPhrase()` (línea 6765) requiere keywords de intención (`comprar`, `precio`, `dónde`, etc.) en su regex `consultIntent`. Aunque `extractMedicineQuery` capturaba correctamente "saber si disponen de clopidrogel...", el regex `consultIntent` NO contenía "disponen" ni "disponibilidad". Por tanto `consultationIsMedicine` retornaba `false` y el flujo NUNCA entraba al bloque `if (consultationIsMedicine)` → `searchAndBuildCatalogResponse`. El flujo llegaba hasta el fallback de agente humano.
+
+**Fix (`b0fa75f`):** Agregar `disponen` y `disponibilidad` al regex `consultIntent` en `isMedicineConsultationPhrase`. Ahora las consultas de disponibilidad activan el pipeline de búsqueda en catálogo.
+
+**Línea afectada:** `server.js:6769` — se agregó `disponen|disponibilidad` al regex `consultIntent`.
 
 ### El bug de la receta OCR (encontrado 2026-07-26)
 
