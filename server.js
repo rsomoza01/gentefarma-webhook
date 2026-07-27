@@ -2003,8 +2003,14 @@ async function routeMessage(phone, text, session, context = {}) {
         console.log(`[CITY] Detected='${cityInfo.city}' coords=${JSON.stringify(cityInfo.coords)} — retrying pending query`);
         // Retry the pending medicine query (recursive call with same phone/session)
         return await routeMessage(phone, pending.text, session, pending.context);
+      } else if (isGreetingOrMenu(normalized)) {
+        // User sent a greeting while pendingCityRetry was set — let it pass through
+        // to the greeting handler instead of asking for city again. Clear the stale
+        // pending retry so the greeting block can process normally.
+        session.pendingCityRetry = null;
+        touchSession(session);
       } else {
-        // No city detected, ask again
+        // No city detected and not a greeting — ask again
         return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
       }
     }
