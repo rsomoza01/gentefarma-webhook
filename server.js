@@ -2005,8 +2005,9 @@ async function routeMessage(phone, text, session, context = {}) {
         return await routeMessage(phone, pending.text, session, pending.context);
       } else if (isGreetingOrMenu(normalized)) {
         // User sent a greeting while pendingCityRetry was set — let it pass through
-        // to the greeting handler instead of asking for city again. Clear the stale
-        // pending retry so the greeting block can process normally.
+        // to the greeting handler. Preserve the pending query so it can be resumed
+        // once the user provides their city.
+        session.savedPendingQuery = session.pendingCityRetry;
         session.pendingCityRetry = null;
         touchSession(session);
       } else {
@@ -2027,6 +2028,13 @@ async function routeMessage(phone, text, session, context = {}) {
         const pending = session.pendingCityRetry;
         session.pendingCityRetry = null;
         return await routeMessage(phone, pending.text, session, pending.context);
+      } else if (session.savedPendingQuery) {
+        // A greeting had preserved the pending query — restore and retry it now
+        const pending = session.savedPendingQuery;
+        session.savedPendingQuery = null;
+        session.pendingCityRetry = pending;
+        touchSession(session);
+        return await routeMessage(phone, pending.text, session, pending.context || {});
       }
       return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
     }
