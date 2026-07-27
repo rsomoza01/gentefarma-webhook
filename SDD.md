@@ -2,7 +2,8 @@
 
 > **Propósito:** Documentar la arquitectura, flujos y dependencias críticas del bot para que cada fix no dañe lo que funciona.
 > **Archivo fuente:** `server.js` (~6859 líneas, single-file Node.js/Express webhook)
-> **Última revisión:** 2026-07-26
+> **Última revisión:** 2026-07-27
+> **Render service ID:** `srv-d8id7pq8qa3s73eavhqg`
 
 ---
 
