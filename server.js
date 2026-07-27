@@ -317,14 +317,20 @@ function ensureSelectedProducts(session) {
 }
 
 function persistSelectedProducts(phone, items) {
-  if (!db) return;
+  if (!db) {
+    console.error('[CART-PERSIST] db is null — Firestore not initialized');
+    return;
+  }
   try {
+    // Fire-and-forget: don't await — this runs after the response is sent
     db.collection('cart-sessions').doc(String(phone)).set({
       items,
       updatedAt: Date.now()
-    }, { merge: true });
+    }, { merge: true }).catch(e => {
+      console.error('[CART-PERSIST] Firestore write failed:', e.message);
+    });
   } catch (e) {
-    console.error('[CART-PERSIST] failed to persist cart:', e.message);
+    console.error('[CART-PERSIST] exception:', e.message);
   }
 }
 
@@ -675,7 +681,12 @@ function addItemToCart(session, item, quantity, phone) {
   }
 
   // Persist to Firestore so cart survives process restarts
-  if (phone) persistSelectedProducts(phone, cart);
+  if (phone) {
+    console.log(`[CART] persisting ${cart.length} items for phone=${phone}`);
+    persistSelectedProducts(phone, cart);
+  } else {
+    console.error('[CART] phone not available — cannot persist cart');
+  }
   return cartItem;
 }
 
