@@ -277,6 +277,7 @@ function getSession(phone) {
       userCity: null,     // ciudad del usuario ej: "ciudad bolivar"
       userCoords: null,   // { lat, lng } del usuario
       pendingCityRetry: null, // { text, options, context } — para reintentar tras detectar ciudad
+      messageCount: 0,    // contador de mensajes del usuario — primer mensaje fuerza LLM
     });
   }
   return sessions.get(phone);
@@ -1932,7 +1933,27 @@ async function handleLLMIntent(llmResult, phone, text, session, context) {
 // ----------------------------------------------------
 async function routeMessage(phone, text, session, context = {}) {
   const normalized = normalizeText(text);
-  // Define hasOcrText early so the city gate can reference it.
+  // ── MESSAGE COUNTER ────────────────────────────────────────────────────
+  // Track first message per session to force LLM intent classification.
+  // Uses _routeDepth to avoid counting recursive city-gate retries as new messages
+  // (those calls re-enter routeMessage for the SAME user query after city is saved).
+  // _routeDepth is null when no call is in progress (previous call finished).
+  const wasTopLevel = !session._routeDepth;
+  if (wasTopLevel) {
+    session.messageCount = (session.messageCount || 0) + 1;
+    session._routeDepth = 0;
+  }
+  session._routeDepth += 1;
+  const isFirstUserMessage = session.messageCount === 1;
+  // Cleanup: decrement _routeDepth on every exit (including recursive returns).
+  // Top-level calls decrement back to null; recursive calls decrement parent.
+  const cleanupRouteDepth = () => {
+    session._routeDepth -= 1;
+    // If this was a top-level call (wasTopLevel), reset _routeDepth to null
+    // so the NEXT top-level call is correctly detected as new (wasTopLevel=true).
+    if (wasTopLevel) session._routeDepth = null;
+  };
+  // ── Define hasOcrText early so the city gate can reference it.
   // CONSUME it from context immediately to prevent re-entry on follow-up text messages.
   const hasOcrText = Boolean(context?.hasOcrText);
   if (context) context.hasOcrText = false;
@@ -2067,8 +2088,11 @@ async function routeMessage(phone, text, session, context = {}) {
   // by the LLM as 'human' — 'disponen de X' is a medicine search, not a human
   // request. Skip LLM intent classification for these queries so the regex
   // pipeline (which correctly recognizes them) handles them instead.
+  // EXCEPTION: always run LLM on the FIRST message of each session — the user's
+  // opening query is high-value and must not risk a regex false-positive that
+  // sends them to a human agent.
   const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad)\b/i;
-  const shouldBypassLLM = LLM_BYPASS_AVAILABILITY_RE.test(text);
+  const shouldBypassLLM = !isFirstUserMessage && LLM_BYPASS_AVAILABILITY_RE.test(text);
 
   // ── LLM INTENT ROUTER ──────────────────────────────────────────────────
   // Phase 1 of the intelligent agent: use LLM to classify intent BEFORE regex.
@@ -2243,6 +2267,7 @@ async function routeMessage(phone, text, session, context = {}) {
       if (session.pendingCityRetry) {
         const pending = session.pendingCityRetry;
         session.pendingCityRetry = null;
+        cleanupRouteDepth();
         return await routeMessage(phone, pending.text, session, pending.context);
       }
       return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
@@ -2811,6 +2836,7 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   return buildDefaultFallbackMessage(session);
+  cleanupRouteDepth();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -5024,6 +5050,7 @@ function extractMedicineRequests(text) {
     const SALT_FORMS = new Set(['potasico','potásico','sodico','sódico','clorhidrato','maleato','besilato','sulfato','nitrato','fosfato','acetato','diclorhidrato','bromuro']);
     const spaceTokens = cleaned.split(/\s+/).filter((t) => t.length >= 3);
     let tokensAdded = 0;
+    const CONTEXT_STOP_TOKENS = new Set(['si','disponen','de','dispongo','del']);
     for (const token of spaceTokens) {
       if (results.includes(token)) continue;
       const lower = token.toLowerCase();
@@ -5031,6 +5058,9 @@ function extractMedicineRequests(text) {
       // "acido" / "ácido" is a chemical class prefix (e.g. "ácido ursodesoxicólico"),
       // not a standalone medicine — treat it like a salt form so it never appears alone.
       if (SALT_FORMS.has(lower) || lower === 'acido' || lower === 'ácido') continue;
+      // Reject Spanish context/stop tokens that slipped through looksLikeMedicineName
+      // These are conversational fragments that should NEVER be searched as medicines.
+      if (CONTEXT_STOP_TOKENS.has(lower)) continue;
       if (looksLikeMedicineName(token)) {
         results.push(token);
         tokensAdded += 1;
