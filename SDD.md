@@ -155,6 +155,17 @@ if ((!session.userCity || session.userCity === 'null' || session.userCity === 'u
 
 **Línea afectada:** `server.js:6769` — se agregó `disponen|disponibilidad` al regex `consultIntent`.
 
+### Bug: LLM classified "disponen de X" as 'human' intent — bypass pre-check (fix 2026-07-27, `a8fdb5f`)
+
+**Síntoma:** Incluso después de agregar 'disponen' a `verbList` y `consultIntent`, la consulta "Hola quiero saber si disponen de clopidrogel..." seguía cayendo al fallback "Uno de nuestros colaboradores te atenderá en breve".
+
+**Root cause:** El LLM intent classifier (`classifyIntentWithLLM`) corre ANTES del city gate y del regex pipeline (línea 2059 en `routeMessage`). Si el LLM interpretaba "disponen" como intención `'human'` (alta confianza), `handleLLMIntent` llamaba `enableHumanHandoff(session)` → `buildHumanAgentMessage()` y el flujo retornaba ANTES de pasar por cualquier otra lógica. El city gate, `consultIntent`, y `searchAndBuildCatalogResponse` nunca se ejecutaban.
+
+**Fix (`a8fdb5f`):** Agregar PRE-LLM BYPASS con regex `\b(?:disponen|disponibilidad)\b` que detecta queries de disponibilidad ANTES de llamar al LLM. Si el regex matchea, se salta `classifyIntentWithLLM` y se deja el flujo al regex pipeline (que ya maneja correctamente estas consultas).
+
+**Línea afectada:** `server.js:2054-2082` — se agregó `LLM_BYPASS_AVAILABILITY_RE` y condición `!shouldBypassLLM` antes de llamar al LLM.
+
+
 ### El bug de la receta OCR (encontrado 2026-07-26)
 
 Cuando `userCity=null` y llega una receta OCR → `looksLikeMedicine` era truthy → el city gate guardaba `pendingCityRetry` y respondía "indícame tu ciudad" **ANTES** de que el OCR block se ejecutara.
