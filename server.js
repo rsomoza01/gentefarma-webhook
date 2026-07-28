@@ -1938,7 +1938,9 @@ async function routeMessage(phone, text, session, context = {}) {
   // Uses _routeDepth to avoid counting recursive city-gate retries as new messages
   // (those calls re-enter routeMessage for the SAME user query after city is saved).
   // _routeDepth is null when no call is in progress (previous call finished).
-  const wasTopLevel = !session._routeDepth;
+  // IMPORTANT: _routeDepth=0 is FALSY in JS, so we must check == null explicitly.
+  // Using !_routeDepth would treat _routeDepth=0 as "top level" (BUG).
+  const wasTopLevel = session._routeDepth == null;
   if (wasTopLevel) {
     session.messageCount = (session.messageCount || 0) + 1;
     session._routeDepth = 0;
@@ -1951,6 +1953,7 @@ async function routeMessage(phone, text, session, context = {}) {
     session._routeDepth -= 1;
     // If this was a top-level call (wasTopLevel), reset _routeDepth to null
     // so the NEXT top-level call is correctly detected as new (wasTopLevel=true).
+    // Must use == null check — _routeDepth=0 is falsy.
     if (wasTopLevel) session._routeDepth = null;
   };
   // ── Define hasOcrText early so the city gate can reference it.
