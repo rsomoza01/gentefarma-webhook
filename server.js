@@ -2077,6 +2077,8 @@ async function routeMessage(phone, text, session, context = {}) {
     console.log('🧪 [CITY-GATE] text="%s" looksLikeMedicine="%s" pendingCityRetry=%s', text, looksLikeMedicine, session.pendingCityRetry ? 'set' : 'null');
     if (looksLikeMedicine) {
       // Ask user to set their city first
+      // Only show this message when the bot has positively identified a medicine query
+      // (text extracted a non-empty medicine name or dosage pattern).
       session.pendingCityRetry = { text, context };
       touchSession(session);
       return 'Para buscar farmacias cerca de ti, indícame tu ciudad: *Ciudad Bolívar*, *Caracas*, *Caja Seca* o *Zaraza*.';
