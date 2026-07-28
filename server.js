@@ -2024,17 +2024,29 @@ async function routeMessage(phone, text, session, context = {}) {
       session.userCoords = cityInfo.coords;
       touchSession(session);
       console.log(`[CITY] Direct detect from city gate: '${cityInfo.city}'`);
+      // Retry pendingCityRetry first (highest priority — was set during a medicine query)
       if (session.pendingCityRetry) {
         const pending = session.pendingCityRetry;
         session.pendingCityRetry = null;
+        touchSession(session);
         return await routeMessage(phone, pending.text, session, pending.context);
-      } else if (session.savedPendingQuery) {
-        // A greeting had preserved the pending query — restore and retry it now
+      }
+      // savedPendingQuery: a greeting had preserved the pending query — restore and retry it
+      if (session.savedPendingQuery) {
         const pending = session.savedPendingQuery;
         session.savedPendingQuery = null;
         session.pendingCityRetry = pending;
         touchSession(session);
         return await routeMessage(phone, pending.text, session, pending.context || {});
+      }
+      // No pending query — city was set directly. Still retry the current text
+      // (it might be a medicine query that bypassed pendingCityRetry due to a
+      // looksLikeMedicine false-positive, e.g. "quiero saber si disponen de X").
+      // Only retry if the text actually looks like a medicine query.
+      const looksLikeMedicineNow = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
+      if (looksLikeMedicineNow) {
+        touchSession(session);
+        return await routeMessage(phone, text, session, context || {});
       }
       return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
     }
