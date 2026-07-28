@@ -2030,6 +2030,7 @@ async function routeMessage(phone, text, session, context = {}) {
         touchSession(session);
         console.log(`[CITY] Detected='${cityInfo.city}' coords=${JSON.stringify(cityInfo.coords)} — retrying pending query`);
         // Retry the pending medicine query (recursive call with same phone/session)
+        cleanupRouteDepth();
         return await routeMessage(phone, pending.text, session, pending.context);
       } else if (isGreetingOrMenu(normalized)) {
         // User sent a greeting while pendingCityRetry was set — let it pass through
@@ -2057,6 +2058,7 @@ async function routeMessage(phone, text, session, context = {}) {
         const pending = session.pendingCityRetry;
         session.pendingCityRetry = null;
         touchSession(session);
+        cleanupRouteDepth();
         return await routeMessage(phone, pending.text, session, pending.context);
       }
       // savedPendingQuery: a greeting had preserved the pending query — restore and retry it
@@ -2065,6 +2067,7 @@ async function routeMessage(phone, text, session, context = {}) {
         session.savedPendingQuery = null;
         session.pendingCityRetry = pending;
         touchSession(session);
+        cleanupRouteDepth();
         return await routeMessage(phone, pending.text, session, pending.context || {});
       }
       // No pending query — city was set directly. Still retry the current text
@@ -2074,6 +2077,7 @@ async function routeMessage(phone, text, session, context = {}) {
       const looksLikeMedicineNow = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
       if (looksLikeMedicineNow) {
         touchSession(session);
+        cleanupRouteDepth();
         return await routeMessage(phone, text, session, context || {});
       }
       return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
@@ -2305,6 +2309,7 @@ async function routeMessage(phone, text, session, context = {}) {
         if (session.pendingCityRetry) {
           const pending = session.pendingCityRetry;
           session.pendingCityRetry = null;
+          cleanupRouteDepth();
           return await routeMessage(phone, pending.text, session, pending.context);
         }
         return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
@@ -2844,8 +2849,8 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildCatalogResponse(searchResult);
   }
 
-  return buildDefaultFallbackMessage(session);
   cleanupRouteDepth();
+  return buildDefaultFallbackMessage(session);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
