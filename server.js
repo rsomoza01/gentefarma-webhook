@@ -2092,15 +2092,15 @@ async function routeMessage(phone, text, session, context = {}) {
     // Non-medicine queries (small talk, etc.) pass through without city gate
   }
 
-  // ── PRE-LLM BYPASS: medicine availability queries must NEVER be classified
+  // PRE-LLM BYPASS: medicine availability queries must NEVER be classified
   // by the LLM as 'human' — 'disponen de X' is a medicine search, not a human
   // request. Skip LLM intent classification for these queries so the regex
   // pipeline (which correctly recognizes them) handles them instead.
-  // EXCEPTION: always run LLM on the FIRST message of each session — the user's
-  // opening query is high-value and must not risk a regex false-positive that
-  // sends them to a human agent.
+  // NOTE: This bypass MUST apply even on the first message. The LLM consistently
+  // misclassifies "disponen" as 'human' intent, which causes the "colaboradores"
+  // fallback. The regex pipeline correctly routes these to the city gate → catalog.
   const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad)\b/i;
-  const shouldBypassLLM = !isFirstUserMessage && LLM_BYPASS_AVAILABILITY_RE.test(text);
+  const shouldBypassLLM = LLM_BYPASS_AVAILABILITY_RE.test(text);
 
   // ── LLM INTENT ROUTER ──────────────────────────────────────────────────
   // Phase 1 of the intelligent agent: use LLM to classify intent BEFORE regex.
