@@ -1951,15 +1951,9 @@ async function routeMessage(phone, text, session, context = {}) {
   // The _routeDepth <= 1 check excludes recursive calls where we just re-entered
   // with _routeDepth going from 0 → 1 for the recursive call's frame.
   const isFirstUserMessage = session.messageCount === 1 && session._routeDepth <= 1;
-  // Cleanup: decrement _routeDepth on every exit (including recursive returns).
-  // Top-level calls decrement back to null; recursive calls decrement parent.
-  const cleanupRouteDepth = () => {
-    session._routeDepth -= 1;
-    // If this was a top-level call (wasTopLevel), reset _routeDepth to null
-    // so the NEXT top-level call is correctly detected as new (wasTopLevel=true).
-    // Must use == null check — _routeDepth=0 is falsy.
-    if (wasTopLevel) session._routeDepth = null;
-  };
+  // ── try/finally ensures _routeDepth is ALWAYS decremented, even on early returns.
+  // This replaces manual cleanupRouteDepth() calls that were easy to miss.
+  try {
   // ── Define hasOcrText early so the city gate can reference it.
   // CONSUME it from context immediately to prevent re-entry on follow-up text messages.
   const hasOcrText = Boolean(context?.hasOcrText);
@@ -2030,7 +2024,8 @@ async function routeMessage(phone, text, session, context = {}) {
         touchSession(session);
         console.log(`[CITY] Detected='${cityInfo.city}' coords=${JSON.stringify(cityInfo.coords)} — retrying pending query`);
         // Retry the pending medicine query (recursive call with same phone/session)
-        cleanupRouteDepth();
+        // Do NOT cleanupRouteDepth before recursive call — _routeDepth naturally
+        // increments on re-entry, preventing double-counting of messageCount.
         return await routeMessage(phone, pending.text, session, pending.context);
       } else if (isGreetingOrMenu(normalized)) {
         // User sent a greeting while pendingCityRetry was set — let it pass through
@@ -2058,7 +2053,7 @@ async function routeMessage(phone, text, session, context = {}) {
         const pending = session.pendingCityRetry;
         session.pendingCityRetry = null;
         touchSession(session);
-        cleanupRouteDepth();
+        // Do NOT cleanupRouteDepth — re-entry increments _routeDepth naturally.
         return await routeMessage(phone, pending.text, session, pending.context);
       }
       // savedPendingQuery: a greeting had preserved the pending query — restore and retry it
@@ -2067,7 +2062,7 @@ async function routeMessage(phone, text, session, context = {}) {
         session.savedPendingQuery = null;
         session.pendingCityRetry = pending;
         touchSession(session);
-        cleanupRouteDepth();
+        // Do NOT cleanupRouteDepth — re-entry increments _routeDepth naturally.
         return await routeMessage(phone, pending.text, session, pending.context || {});
       }
       // No pending query — city was set directly. Still retry the current text
@@ -2077,7 +2072,7 @@ async function routeMessage(phone, text, session, context = {}) {
       const looksLikeMedicineNow = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
       if (looksLikeMedicineNow) {
         touchSession(session);
-        cleanupRouteDepth();
+        // Do NOT cleanupRouteDepth — re-entry increments _routeDepth naturally.
         return await routeMessage(phone, text, session, context || {});
       }
       return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
@@ -2280,7 +2275,7 @@ async function routeMessage(phone, text, session, context = {}) {
       if (session.pendingCityRetry) {
         const pending = session.pendingCityRetry;
         session.pendingCityRetry = null;
-        cleanupRouteDepth();
+        // Do NOT cleanupRouteDepth — re-entry increments _routeDepth naturally.
         return await routeMessage(phone, pending.text, session, pending.context);
       }
       return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
@@ -2309,7 +2304,7 @@ async function routeMessage(phone, text, session, context = {}) {
         if (session.pendingCityRetry) {
           const pending = session.pendingCityRetry;
           session.pendingCityRetry = null;
-          cleanupRouteDepth();
+          // Do NOT cleanupRouteDepth — re-entry increments _routeDepth naturally.
           return await routeMessage(phone, pending.text, session, pending.context);
         }
         return `✅ Ciudad configurada: *${cityInfo.city}*. Ahora busca el medicamento que necesitas.`;
@@ -2849,8 +2844,15 @@ async function routeMessage(phone, text, session, context = {}) {
     return buildCatalogResponse(searchResult);
   }
 
-  cleanupRouteDepth();
   return buildDefaultFallbackMessage(session);
+  } finally {
+    // ── ROUTE DEPTH CLEANUP ──────────────────────────────────────────────
+    // Always decrement _routeDepth on every exit (including early returns and errors).
+    // Top-level calls reset _routeDepth to null so the NEXT message is correctly
+    // detected as a new top-level call.
+    session._routeDepth -= 1;
+    if (wasTopLevel) session._routeDepth = null;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
