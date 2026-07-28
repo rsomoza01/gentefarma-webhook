@@ -2,7 +2,7 @@
 
 > **Propósito:** Documentar la arquitectura, flujos y dependencias críticas del bot para que cada fix no dañe lo que funciona.
 > **Archivo fuente:** `server.js` (~6859 líneas, single-file Node.js/Express webhook)
-> **Última revisión:** 2026-07-27
+> **Última revisión:** 2026-07-28
 > **Render service ID:** `srv-d8id7pq8qa3s73eavhqg`
 
 ---
@@ -109,7 +109,11 @@ if ((!session.userCity || session.userCity === 'null' || session.userCity === 'u
    - Ciudad detectada → guardar `userCity` → `routeMessage(pending.text)` recursivo
    - **Ciudad NO detectada + es un saludo** → limpiar `pendingCityRetry` y dejar pasar (el greeting handler lo procesa)
    - **Ciudad NO detectada + no es saludo** → pedir ciudad nuevamente
-2. `detectCityFromText(text)` → ciudad detectada → guardar `userCity` → `routeMessage(pending.text)` recursivo
+2. `detectCityFromText(text)` → ciudad detectada → guardar `userCity`
+   - Si `pendingCityRetry` set → `routeMessage(pending.text)` recursivo
+   - Si `savedPendingQuery` set → restaurar `pendingCityRetry` y `routeMessage(pending.text)`
+   - Si texto actual parece medicina (`looksLikeMedicineNow`) → `routeMessage(phone, text)` recursivo
+   - Si no → retornar "✅ Ciudad configurada..."
 3. `looksLikeMedicine` → guardar `pendingCityRetry` → **pedir ciudad** (NO buscar)
 
 ### Bug: "indícame tu ciudad" para mensajes de saludo (fix 2026-07-27)
@@ -164,6 +168,28 @@ if ((!session.userCity || session.userCity === 'null' || session.userCity === 'u
 **Fix (`a8fdb5f`):** Agregar PRE-LLM BYPASS con regex `\b(?:disponen|disponibilidad)\b` que detecta queries de disponibilidad ANTES de llamar al LLM. Si el regex matchea, se salta `classifyIntentWithLLM` y se deja el flujo al regex pipeline (que ya maneja correctamente estas consultas).
 
 **Línea afectada:** `server.js:2054-2082` — se agregó `LLM_BYPASS_AVAILABILITY_RE` y condición `!shouldBypassLLM` antes de llamar al LLM.
+
+### Bug: Ciudad guardada pero búsqueda pendiente no se reintentaba (fix 2026-07-28, `fac1803`)
+
+**Síntoma:** Después de que el bot pide la ciudad ("indícame tu ciudad...") y el usuario responde con "Ciudad Bolívar", el bot confirma la ciudad pero no muestra los resultados del catálogo. El usuario veía "✅ Ciudad configurada..." y luego tenía que escribir nuevamente la consulta de medicamento.
+
+**Root cause:** En el city gate (línea 2022-2039), después de guardar la ciudad:
+1. Si `pendingCityRetry` estaba null (porque `looksLikeMedicine` retornó false para "quiero saber si disposition..."), el flujo no reintentaba la búsqueda original
+2. Si `savedPendingQuery` también era null (porque el greeting block no se había activado), el flujo solo retornaba "✅ Ciudad configurada..." sin reintentar nada
+3. La consulta de disponibilidad se perdía y el usuario debía escribirla de nuevo
+
+**Fix (`fac1803`):** Después de guardar la ciudad y antes de retornar "Ciudad configurada...", verificar si el texto actual todavía parece una consulta de medicamento (`looksLikeMedicineNow`). Si es así, llamar `routeMessage(phone, text, session, context)` recursivamente para que el flujo de búsqueda se ejecute con la ciudad ya configurada.
+
+```javascript
+// Después de guardar userCity:
+const looksLikeMedicineNow = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
+if (looksLikeMedicineNow) {
+  touchSession(session);
+  return await routeMessage(phone, text, session, context || {});
+}
+```
+
+**Línea afectada:** `server.js:2027-2040` — se agregó retry de `looksLikeMedicineNow` después de guardar ciudad en el city gate.
 
 
 ### El bug de la receta OCR (encontrado 2026-07-26)
