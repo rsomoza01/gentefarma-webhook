@@ -2051,12 +2051,19 @@ async function routeMessage(phone, text, session, context = {}) {
     // Non-medicine queries (small talk, etc.) pass through without city gate
   }
 
+  // ── PRE-LLM BYPASS: medicine availability queries must NEVER be classified
+  // by the LLM as 'human' — 'disponen de X' is a medicine search, not a human
+  // request. Skip LLM intent classification for these queries so the regex
+  // pipeline (which correctly recognizes them) handles them instead.
+  const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad)\b/i;
+  const shouldBypassLLM = LLM_BYPASS_AVAILABILITY_RE.test(text);
+
   // ── LLM INTENT ROUTER ──────────────────────────────────────────────────
   // Phase 1 of the intelligent agent: use LLM to classify intent BEFORE regex.
   // If the LLM returns a high-confidence classification, handle it directly.
   // Otherwise, fall through to the regex pipeline (the existing system).
   // This runs AFTER the ULTRA-GUARD (selection handling) but BEFORE extractMedicineQuery.
-  if (LLM_INTENT_ENABLED && OPENAI_API_KEY) {
+  if (!shouldBypassLLM && LLM_INTENT_ENABLED && OPENAI_API_KEY) {
     try {
       const llmResult = await classifyIntentWithLLM(text, { mode: session.mode });
       if (llmResult) {
@@ -2073,6 +2080,8 @@ async function routeMessage(phone, text, session, context = {}) {
       // Never let LLM errors crash the bot — always fallback to regex
       console.log('🧠 [LLM-INTENT] Exception — falling through to regex:', llmErr.message?.slice(0, 100));
     }
+  } else if (shouldBypassLLM) {
+    console.log('🧠 [LLM-BYPASS] Medicine availability keyword detected — skipping LLM intent, using regex pipeline');
   }
 
   const directMedicineQuery = extractMedicineQuery(text);
