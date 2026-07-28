@@ -1946,7 +1946,11 @@ async function routeMessage(phone, text, session, context = {}) {
     session._routeDepth = 0;
   }
   session._routeDepth += 1;
-  const isFirstUserMessage = session.messageCount === 1;
+  // isFirstUserMessage: only count the FIRST ACTUAL USER MESSAGE, not recursive
+  // city-gate retries (those have _routeDepth > 1 because they re-enter routeMessage).
+  // The _routeDepth <= 1 check excludes recursive calls where we just re-entered
+  // with _routeDepth going from 0 → 1 for the recursive call's frame.
+  const isFirstUserMessage = session.messageCount === 1 && session._routeDepth <= 1;
   // Cleanup: decrement _routeDepth on every exit (including recursive returns).
   // Top-level calls decrement back to null; recursive calls decrement parent.
   const cleanupRouteDepth = () => {
