@@ -410,9 +410,14 @@ Antes de hacer commit de cualquier fix en `server.js`:
 - [ ] `session.pendingRecipeMedicines` se guarda ANTES del return del OCR block
 - [ ] `context.hasOcrText = false` consume el flag al inicio de `routeMessage`
 - [ ] `buildMultiCatalogResponse` / `buildCatalogResponse` no se rompieron
+- [ ] `heuristicCheck` sigue recibiendo `{ isMultiMedicine: true }` en `buildMultiCatalogResponse` (línea ~5031)
+- [ ] El bypass `if (options.isMultiMedicine)` está antes del `else if` de exceso-medicines (línea ~2944)
+- [ ] `botEnabled` gate (línea ~1029) está DESPUÉS del control command check (línea ~961)
 - [ ] Probar flujo completo con receta OCR (imagen + "Ciudad Bolívar")
 - [ ] Probar flujo de consulta normal ("Candesartan 32mg")
+- [ ] Probar flujo multi-medicina ("tienen clopidrogel de 75 Losartan potásico de 50")
 - [ ] Probar selección de opciones ("1", "2 x 2")
+- [ ] Probar `bot off` → `bot status` → `bot on` desde admin
 - [ ] Verificar que `MODIFIER-PENALTY` no inunde los logs
 
 ---
@@ -1541,4 +1546,135 @@ db.collection('products-market').where('productTitleArray', 'array-contains', qT
 > **`normalizeText()` de Gentefarma NO lowercasing.** Cualquier comparación de tokens con `===` sin `.toLowerCase()` va a fallar si el input viene en mayúscula (OCR, WhatsApp) y Firebase guarda en minúscula.
 
 **Regla:** Cuando compares tokens contra `productTitleArray` o cualquier campo de Firebase, SIEMPRE usar `.toLowerCase()` en ambas partes del comparison.
+
+---
+
+## 24. Validador heurístico (`heuristicCheck`, línea ~2917)
+
+### 24.1 Propósito
+
+Protección contra respuestas alucinadas del LLM o resultados de búsqueda corruptos. Se ejecuta **antes** de enviar cualquier respuesta de catálogo al usuario. Si el heurístico rechaza, el usuario ve el fallback: `"👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve."`
+
+### 24.2 Checks en orden
+
+```
+heuristicCheck(response, originalQuery, options = {})
+│
+├─ 1. KNOWN_GOOD_PREFIXES → { ok: true } (shortcut)
+├─ 2. RESPONSE_RED_FLAGS → { ok: false, reason } (scam, precios absurdos, una sola línea)
+├─ 3. EXCESO DE MEDICINES → Solo si !isMultiMedicine
+│     Condición: !queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode
+│     ⚠️ Si options.isMultiMedicine=true → SE SALTA COMPLETAMENTE
+├─ 4. Símbolos sospechosos (monedas raras) → reject
+└─ 5. Respuesta demasiado larga → reject
+```
+
+### 24.3 Bug: "exceso de medicines sin relación" rechaza consultas multi-medicina legítimas (fix 2026-07-29, commits `d8b5a7c` + `cd77d91`)
+
+**Síntoma:** Consulta "tienen clopidrogel de 75 Losartan potásico de 50 atorvastatina de 30 nifedipina de 10 mg" → el bot responde con el fallback "Uno de nuestros colaboradores..." en lugar del catálogo con 4 grupos de medicinas.
+
+**Root cause (doble):**
+
+1. **`representativeQuery` es solo el primer medicine name** — `buildMultiCatalogResponse` pasa `results?.[0]?.query` como query representativo, que es "clopidrogel" (no el texto original "tienen clopidrogel..."). Esto hace que `queryHasMedicine` sea siempre `false` (no hay verbos de consulta en un solo nombre de medicina).
+
+2. **El flag `isMultiMedicine` no se respetaba en producción** — El fix inicial (`d8b5a7c`) agregó `&& !options.isMultiMedicine` a la condición AND, lo cual es teóricamente correcto (`!true = false` → la condición falla → no rechaza). Pero Render servía código viejo por Docker cache.
+
+**Fix definitivo (`cd77d91`):** Reestructurar el check — si `options.isMultiMedicine === true`, saltar el check de exceso completamente con log explícito, en lugar de depender de un AND con `!options.isMultiMedicine`:
+
+```javascript
+// ANTES (d8b5a7c — AND que fallaba en producción por Docker cache):
+if (!queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode && !options.isMultiMedicine) {
+  // reject
+}
+
+// DESPUÉS (cd77d91 — bypass explícito):
+if (options.isMultiMedicine) {
+  console.log('🧪 [HEURISTIC-DBG] isMultiMedicine=true → skipping exceso-medicines check');
+} else if (!queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode) {
+  // reject
+}
+```
+
+**Lección:** No depender de condiciones AND complejas para proteger features críticas. Si un caso es legítimo (multi-medicine), hacer bypass explícito con log. Las condiciones AND se rompen cuando un solo operando no se evalúa como esperas (Docker cache, undefined vs false, etc.).
+
+### 24.4 Puntos de llamada
+
+| Función | Línea | `options` | Contexto |
+|---|---|---|---|
+| `buildCatalogResponse` | ~4850 | `{}` (sin isMultiMedicine) | Búsqueda individual |
+| `buildMultiCatalogResponse` | ~5031 | `{ isMultiMedicine: true }` | Búsqueda multi-medicina |
+| `validateResponseHybrid` | ~3048 | `{}` (sin isMultiMedicine) | Validación LLM (NO se usa actualmente) |
+
+**⚠️ Regla:** Si se agrega un nuevo punto de llamada a `heuristicCheck` para respuestas multi-medicine, SIEMPRE pasar `{ isMultiMedicine: true }`. Si no, el heurístico rechazará respuestas legítimas con más de 8 💊 emojis.
+
+### 24.5 Variables clave para debug
+
+- `isRecipeMode` — detecta recetas por keywords (`rx`, `rp`, `receta`, etc.) O 2+ patrones `\d+ mg` en el query
+- `queryHasMedicine` — detecta verbos de consulta (`tienen`, `hay`, `busco`, `necesito`, etc.) en el query
+- `medicineEmojiCount` — cuenta `💊` en la respuesta
+- `options.isMultiMedicine` — bypass del check de exceso
+
+---
+
+## 25. Comandos de control del bot (`bot on` / `bot off` / `bot status`)
+
+### 25.1 Propósito
+
+Permitir a los admins activar/desactivar el bot remotamente por WhatsApp.
+
+### 25.2 Variables
+
+```javascript
+let botEnabled = true;  // línea 168, global mutable
+const ADMIN_NUMBERS = ['584128840350', '584128009482'];  // línea 169
+```
+
+### 25.3 Flujo de procesamiento
+
+El control del bot se procesa **ANTES** de cualquier gate en `processIncomingMessage`:
+
+```
+processIncomingMessage(payload)
+│
+├─ 1. Extract from, body, media, etc.
+├─ 2. isControlCommand check (línea 961) ← ANTES de fromMe y !botEnabled
+│     isControlCommand = isBotControlMessage(body) && isAdminSender(from)
+│     ├── "bot off"  → botEnabled = false + limpiar handoffs + confirmar
+│     ├── "bot on"   → botEnabled = true + confirmar
+│     └── "bot status" → reportar estado + confirmar
+│
+├─ 3. fromMe gate (línea 1024) → ignora mensajes del teléfono del bot
+├─ 4. !botEnabled gate (línea 1029) → ignora todos los demás mensajes
+└─ 5. ... resto del flujo normal
+```
+
+**⚠️ Orden crítico:** Los comandos de control (bot on/off/status) SE PROCESAN ANTES del gate `!botEnabled`. Esto garantiza que un admin siempre puede reactivar el bot con `bot on`, incluso si el bot está apagado. **NUNCA** mover el control command check después del `!botEnabled` gate.
+
+### 25.4 Comportamiento de `bot off`
+
+- Pone `botEnabled = false`
+- Limpia TODOS los handoffs activos: `session.humanHandoff = false`, `session.mode = 'idle'` para sesiones en `human_handoff`
+- Envía "⛔ Bot desactivado." al admin (si `fromMe=false`)
+- Los mensajes de usuarios NO-admin se ignoran silenciosamente
+
+### 25.5 Seguridad
+
+- Solo números en `ADMIN_NUMBERS` pueden ejecutar comandos
+- Un NO-admin que envía "bot off" → el mensaje cae al flujo normal de búsqueda (no se identifica como medicina, no causa efecto)
+- `looksLikeMedicineName` (línea 6923) rechaza explícitamente "bot on", "bot off", "bot status" → no se confunden con nombres de medicina
+- `fromMe=true` (mensaje del teléfono del bot) → el comando se ejecuta (cambia `botEnabled`) pero NO se envía confirmación
+
+### 25.6 Bug conocido: Docker cache en Render
+
+**Síntoma:** Se hace commit con fix, push a main, Render muestra el commit correcto en `/health`, pero el código ejecutado es viejo.
+
+**Root cause:** Render usa Docker cache para `node_modules/` y potencialmente el build. El `server.js` en la imagen Docker puede ser de un deploy anterior.
+
+**Workaround:** Hacer un empty commit + push para forzar rebuild:
+```bash
+git commit --allow-empty -m "deploy: force rebuild to clear Docker cache"
+git push origin main
+```
+
+**Verificación:** Después del deploy, confirmar que el commit SHA en `/health` coincide con el último commit. Si coincide pero el comportamiento es viejo → forzar redeploy con caché limpio.
 
