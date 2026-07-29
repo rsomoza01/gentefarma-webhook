@@ -2094,13 +2094,15 @@ async function routeMessage(phone, text, session, context = {}) {
   }
 
   // PRE-LLM BYPASS: certain queries must NEVER reach the LLM because it
-  // misclassifies them. The LLM tends to classify availability queries as
-  // 'human' intent (causing "colaboradores" fallback) and simple greetings
-  // as 'human' too (causing handoff or null response). The regex pipeline
-  // handles both correctly: availability → city gate → catalog, greeting → menu.
-  const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad)\b/i;
-  const LLM_BYPASS_GREETING_RE = /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/i;
-  const shouldBypassLLM = LLM_BYPASS_AVAILABILITY_RE.test(text) || LLM_BYPASS_GREETING_RE.test(normalized);
+  // misclassifies them as 'human' intent (causing "colaboradores" fallback).
+  // 1) Availability keywords (disponen, tienen, hay, venden, etc.)
+  // 2) Simple greetings (hola, buenas, etc.)
+  // 3) Messages with medicine+dosage patterns — these are ALWAYS medicine searches
+  //    regardless of the verb used. The regex pipeline handles them correctly.
+  const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad|tienen|tiene|hay|venden|vende|consiguen|consigue|conseguir|vendéis|ventas)\\b/i;
+  const LLM_BYPASS_GREETING_RE = /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\\b/i;
+  const LLM_BYPASS_DOSAGE_RE = /\b\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|unguento|sobres?|retard)\b/i;
+  const shouldBypassLLM = LLM_BYPASS_AVAILABILITY_RE.test(text) || LLM_BYPASS_GREETING_RE.test(normalized) || LLM_BYPASS_DOSAGE_RE.test(text);
 
   // ── LLM INTENT ROUTER ──────────────────────────────────────────────────
   // Phase 1 of the intelligent agent: use LLM to classify intent BEFORE regex.
