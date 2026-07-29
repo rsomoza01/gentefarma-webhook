@@ -3434,6 +3434,10 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
   const numberRe = /^\d+(?:[.,]\d+)?$/;
   const candidateMedicines = candidateMedicinesRaw.filter((item) => {
     const normalizedItem = normalizeText(item);
+    // Reject stopwords and very short tokens (e.g. "de", "la", "en") — they'd match ALL products
+    if (STOPWORDS.has(normalizedItem) || normalizedItem.length <= 2) {
+      return false;
+    }
     // Reject pure numbers (e.g. "40", "50") — they'd match ALL products and corrupt results
     if (numberRe.test(normalizedItem)) {
       console.log('🧹 [NUMERIC-REJECT] rejected pure number candidate=\'%s\' normalized=\'%s\'', item, normalizedItem);
@@ -4134,7 +4138,7 @@ const userCoords = options.userCoords || null;
 
   // Skip consultationGate in recipeMode — extracted recipe medicine names may not be
   // exact substrings of the product title (e.g. "bumetin" vs "BUMETIN RETADAR 300 MG")
-  if (consultationMode && primaryTokens.length > 0 && !recipeMode) {
+  if (consultationMode && primaryTokens.length > 0) {
     const q = primaryTokens[0];
     const beforeCount = scoredProducts.length;
     console.log(`[CONSULTATION-GATE] mode=${consultationMode} primaryTokens=${JSON.stringify(primaryTokens)} q='${q}' beforeCount=${beforeCount}`);
@@ -4160,7 +4164,7 @@ const userCoords = options.userCoords || null;
       }
       // 2) Fallback fuzzy: algún token del producto se parece ≥92% al query
       for (const t of item.tokenSet) {
-        if (tokenSimilarity(q, t) >= 0.92) return true;
+        if (tokenSimilarity(q, t) >= 0.85) return true;
       }
       return false;
     });
