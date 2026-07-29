@@ -2070,7 +2070,7 @@ async function routeMessage(phone, text, session, context = {}) {
       // (it might be a medicine query that bypassed pendingCityRetry due to a
       // looksLikeMedicine false-positive, e.g. "quiero saber si disponen de X").
       // Only retry if the text actually looks like a medicine query.
-      const looksLikeMedicineNow = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
+      const looksLikeMedicineNow = isMedicineConsultationPhrase(text) || extractStrictConsultationMedicineQuery(text);
       if (looksLikeMedicineNow) {
         touchSession(session);
         // Do NOT cleanupRouteDepth — re-entry increments _routeDepth naturally.
@@ -2080,7 +2080,7 @@ async function routeMessage(phone, text, session, context = {}) {
     }
 
     // Not a city response — check if it looks like a medicine search
-    const looksLikeMedicine = extractMedicineQuery(text) || extractStrictConsultationMedicineQuery(text);
+    const looksLikeMedicine = isMedicineConsultationPhrase(text) || extractStrictConsultationMedicineQuery(text);
     console.log('🧪 [CITY-GATE] text="%s" looksLikeMedicine="%s" pendingCityRetry=%s', text, looksLikeMedicine, session.pendingCityRetry ? 'set' : 'null');
     if (looksLikeMedicine) {
       // Ask user to set their city first
@@ -6842,7 +6842,7 @@ function isMedicineConsultationPhrase(value) {
   const text = normalizeText(value);
   if (!text) return false;
 
-  const consultIntent = /\b(comprar|comprarlo|consigo|consigue|conseguir|encuentro|encuentra|precio|costo|cuanto|cuánto|donde|dónde|disponen|disponibilidad)\b/.test(text);
+  const consultIntent = /\b(comprar|comprarlo|consigo|consigue|conseguir|encuentro|encuentra|precio|costo|cuanto|cuánto|donde|dónde|disponen|disponibilidad|tienen|tiene|hay|venden|vende|vendéis|necesito|busco|quiero|quisiera|conseguirlo)\b/.test(text);
   if (!consultIntent) return false;
 
   const extraction = extractMedicineQuery(text);
