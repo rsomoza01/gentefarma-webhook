@@ -2103,6 +2103,9 @@ async function routeMessage(phone, text, session, context = {}) {
   const LLM_BYPASS_GREETING_RE = /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/i;
   const LLM_BYPASS_DOSAGE_RE = /\b\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|unguento|sobres?|retard)\b/i;
   const shouldBypassLLM = LLM_BYPASS_AVAILABILITY_RE.test(text) || LLM_BYPASS_GREETING_RE.test(normalized) || LLM_BYPASS_DOSAGE_RE.test(text);
+  console.log('🧪 [LLM-BYPASS-CHECK] avail=%s greet=%s dose=%s shouldBypass=%s text="%s"',
+    LLM_BYPASS_AVAILABILITY_RE.test(text), LLM_BYPASS_GREETING_RE.test(normalized),
+    LLM_BYPASS_DOSAGE_RE.test(text), shouldBypassLLM, text.substring(0,60));
 
   // ── LLM INTENT ROUTER ──────────────────────────────────────────────────
   // Phase 1 of the intelligent agent: use LLM to classify intent BEFORE regex.
