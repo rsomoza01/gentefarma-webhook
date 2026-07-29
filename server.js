@@ -817,6 +817,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'gentefarma-webhook',
+    commit: process.env.RENDER_GIT_COMMIT || process.env.COMMIT_SHA || 'unknown',
     timestamp: new Date().toISOString()
   });
 });
@@ -1958,7 +1959,7 @@ async function routeMessage(phone, text, session, context = {}) {
   // CONSUME it from context immediately to prevent re-entry on follow-up text messages.
   const hasOcrText = Boolean(context?.hasOcrText);
   if (context) context.hasOcrText = false;
-  console.log('🧪 [ROUTE] text="%s" userCity="%s" mode="%s" isNewOrder=%s hasOcrText=%s', text.substring(0,80), session.userCity, session.mode, isNewOrderNotification(normalized), hasOcrText);
+  console.log('🧪 [ROUTE] text="%s" userCity="%s" mode="%s" isNewOrder=%s hasOcrText=%s isFirstUserMsg=%s', text.substring(0,80), session.userCity, session.mode, isNewOrderNotification(normalized), hasOcrText, isFirstUserMessage);
   // ── ULTRA-EARLY-SELECTION-GUARD ────────────────────────────────────────
   // Before ANY extraction, detect if the message is purely a selection phrase.
   // If session has pending selection results (from a prior catalog), handle it
