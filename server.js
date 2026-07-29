@@ -2914,7 +2914,7 @@ const MAX_MEDICINE_ITEMS = 20;
 // Numero maximo de lineas en una respuesta de catalogo normal
 const MAX_CATALOG_LINES = 80;
 
-function heuristicCheck(response, originalQuery) {
+function heuristicCheck(response, originalQuery, options = {}) {
   const text = response || '';
 
   // 1. Si es una respuesta fija conocida → APPROVE
@@ -2936,12 +2936,12 @@ function heuristicCheck(response, originalQuery) {
   // y la respuesta tiene más de 5 💊 → sospecha de hallucination
   // EXCEPCIÓN: modo receta (OCR de receta médica) puede tener muchos medicines legítimos
   const originalQ = originalQuery || '';
-  const isRecipeMode = /\b(rx|rp|receta|paciente|belen|arcia|esoz|leprit|bumetin|evigax|moderan|milax|daflon|bargonil)\b/i.test(originalQ);
+  const isRecipeMode = /\b(rx|rp|receta|paciente|belen|arcia|esoz|leprit|bumetin|evigax|moderan|milax|daflon|bargonil)\b/i.test(originalQ) || (/\d+\s*mg/i.test(originalQ) && (originalQ.match(/\d+\s*mg/gi) || []).length >= 2);
   const medicineEmojiCount = (text.match(/💊/g) || []).length;
-  const queryHasMedicine = /\\\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación)\\\b/i.test(originalQ);
+  const queryHasMedicine = /\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación|tienen|tiene|hay|disponen|disponible|busco|necesito|vend|conseguir)\b/i.test(originalQ);
   console.log('🧪 [HEURISTIC-DBG] isRecipeMode=%s medicineEmojiCount=%d queryHasMedicine=%s query="%s" rawHex=%s',
     isRecipeMode, medicineEmojiCount, queryHasMedicine, originalQ, Buffer.from(originalQ).toString('hex'));
-  if (!queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode) {
+  if (!queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode && !options.isMultiMedicine) {
     console.log(`🚨 [VALIDATOR-HEURISTIC] SUSPECT reason="exceso de medicines sin relación al query"`);
     return { ok: false, reason: 'exceso medicines sin relación' };
   }
@@ -5028,7 +5028,7 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
   // ── HEURISTIC GUARD (zero cost) ─────────────────────────────────────────
   // Use first result's query as representative for multi-catalog validation
   const representativeQuery = results?.[0]?.query || flatOptions?.[0]?.title || '';
-  const h = heuristicCheck(response, representativeQuery);
+  const h = heuristicCheck(response, representativeQuery, { isMultiMedicine: true });
   if (!h.ok) {
     console.log(`🚨 [VALIDATOR] buildMultiCatalogResponse HEURISTIC REJECT reason="${h.reason}" query="${representativeQuery}"`);
     return '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.';
