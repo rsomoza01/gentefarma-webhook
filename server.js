@@ -2099,8 +2099,8 @@ async function routeMessage(phone, text, session, context = {}) {
   // 2) Simple greetings (hola, buenas, etc.)
   // 3) Messages with medicine+dosage patterns — these are ALWAYS medicine searches
   //    regardless of the verb used. The regex pipeline handles them correctly.
-  const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad|tienen|tiene|hay|venden|vende|consiguen|consigue|conseguir|vendéis|ventas)\\b/i;
-  const LLM_BYPASS_GREETING_RE = /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\\b/i;
+  const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad|tienen|tiene|hay|venden|vende|consiguen|consigue|conseguir|vendéis|ventas)\b/i;
+  const LLM_BYPASS_GREETING_RE = /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/i;
   const LLM_BYPASS_DOSAGE_RE = /\b\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|unguento|sobres?|retard)\b/i;
   const shouldBypassLLM = LLM_BYPASS_AVAILABILITY_RE.test(text) || LLM_BYPASS_GREETING_RE.test(normalized) || LLM_BYPASS_DOSAGE_RE.test(text);
 
