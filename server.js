@@ -2939,9 +2939,12 @@ function heuristicCheck(response, originalQuery, options = {}) {
   const isRecipeMode = /\b(rx|rp|receta|paciente|belen|arcia|esoz|leprit|bumetin|evigax|moderan|milax|daflon|bargonil)\b/i.test(originalQ) || (/\d+\s*mg/i.test(originalQ) && (originalQ.match(/\d+\s*mg/gi) || []).length >= 2);
   const medicineEmojiCount = (text.match(/💊/g) || []).length;
   const queryHasMedicine = /\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación|tienen|tiene|hay|disponen|disponible|busco|necesito|vend|conseguir)\b/i.test(originalQ);
-  console.log('🧪 [HEURISTIC-DBG] isRecipeMode=%s medicineEmojiCount=%d queryHasMedicine=%s query="%s" rawHex=%s',
-    isRecipeMode, medicineEmojiCount, queryHasMedicine, originalQ, Buffer.from(originalQ).toString('hex'));
-  if (!queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode && !options.isMultiMedicine) {
+  console.log('🧪 [HEURISTIC-DBG] isRecipeMode=%s medicineEmojiCount=%d queryHasMedicine=%s isMultiMedicine=%s query="%s" rawHex=%s',
+    isRecipeMode, medicineEmojiCount, queryHasMedicine, options.isMultiMedicine, originalQ, Buffer.from(originalQ).toString('hex'));
+  // Multi-medicine catalog responses LEGITIMATELY have many 💊 items — skip this check
+  if (options.isMultiMedicine) {
+    console.log('🧪 [HEURISTIC-DBG] isMultiMedicine=true → skipping exceso-medicines check');
+  } else if (!queryHasMedicine && medicineEmojiCount > 8 && !isRecipeMode) {
     console.log(`🚨 [VALIDATOR-HEURISTIC] SUSPECT reason="exceso de medicines sin relación al query"`);
     return { ok: false, reason: 'exceso medicines sin relación' };
   }
