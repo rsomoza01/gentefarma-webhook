@@ -7125,7 +7125,9 @@ const MED_FORM_TOKENS=new Set([
     'quiero', 'quisiera', 'necesito', 'busco', 'busque',
     'caja', 'cajas', 'unidad', 'unidades', 'opcion', 'opciones',
     // Verbs / conversational fragments that should never be medicine names
-    'disponen', 'disponer', 'tengo', 'tienes', 'tiene', 'hacer', 'hace', 'haces'
+    'disponen', 'disponer', 'tengo', 'tienes', 'tiene', 'hacer', 'hace', 'haces',
+    // Conversational openers — never medicine names, but pass as "strong tokens" without these entries
+    'estoy', 'interesado', 'interesada', 'interesados', 'interesadas', 'ayuda'
   ]);
   const WEAK_OPENER_PREFIXES = ['me', 'te', 'le', 'nos', 'les', 'en', 'cuesta', 'cuanto', 'cuánto', 'necesito', 'busc', 'quier', 'quisier', 'dis'];
   function isWeakOpener(token) {
