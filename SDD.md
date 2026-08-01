@@ -191,6 +191,21 @@ if (looksLikeMedicineNow) {
 
 **Línea afectada:** `server.js:2027-2040` — se agregó retry de `looksLikeMedicineNow` después de guardar ciudad en el city gate.
 
+### Bug: City gate dispara en mensajes sin medicamento real — "estoy interesado" como strong token (fix 2026-08-01, `3e3de60`)
+
+**Síntoma:** El mensaje "Hola!, Estoy interesado en un Medicamento:" (sin nombre de medicamento) disparaba el city gate — el bot respondía "Para buscar farmacias cerca de ti, indícame tu ciudad..." como respuesta a TODO primer mensaje del usuario, incluso cuando no había token real de consulta de medicamentos.
+
+**Root cause:** `extractMedicineQuery` tokenizaba el texto y filtraba stopwords, pero "estoy" e "interesado" NO estaban en `MED_QUERY_WEAK_TOKENS` (línea 7119). Al no ser weak tokens, eran tratados como *strong tokens* — la función los devolvía como candidate no-vacío → `extractStrictConsultationMedicineQuery` retornaba no-vacío → el city gate interpretaba que era una consulta de medicamento y disparaba el mensaje de ciudad.
+
+**Fix (`3e3de60`):** Agregar `estoy`, `interesado`, `interesada`, `interesados`, `interesadas`, `ayuda` al Set `MED_QUERY_WEAK_TOKENS`. Ahora estos tokens conversacionales se filtran → no hay strong token → `extractMedicineQuery` retorna `''` → city gate no dispara.
+
+**Verificado:**
+- "Hola!, Estoy interesado en un Medicamento:" → ❌ no dispara
+- "hola estoy interesado en comprar Losartan" → ✅ dispara (extrae "Losartan")
+- "Losartan" → ✅ dispara
+- "quiero comprar Atamel Forte" → ✅ dispara
+
+**Línea afectada:** `server.js:7128` — se agregaron tokens conversacionales a `MED_QUERY_WEAK_TOKENS`.
 
 ### El bug de la receta OCR (encontrado 2026-07-26)
 
