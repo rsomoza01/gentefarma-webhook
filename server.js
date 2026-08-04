@@ -6716,9 +6716,9 @@ function isGreetingOrMenu(value) {
   const text = normalizeText(value);
   if (!text) return false;
 
-  if (GREETING_PHRASES.has(text)) return true;
+  if (GREETING_PHRASES.has(text.toLowerCase())) return true;
 
-  return /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/.test(text);
+  return /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/i.test(text);
 }
 
 function isMedicineInterestStatement(value) {
