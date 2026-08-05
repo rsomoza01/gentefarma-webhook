@@ -2099,7 +2099,7 @@ async function routeMessage(phone, text, session, context = {}) {
   // 2) Simple greetings (hola, buenas, etc.)
   // 3) Messages with medicine+dosage patterns — these are ALWAYS medicine searches
   //    regardless of the verb used. The regex pipeline handles them correctly.
-  const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad|tienen|tiene|hay|venden|vende|consiguen|consigue|conseguir|vendéis|ventas)\b/i;
+  const LLM_BYPASS_AVAILABILITY_RE = /\b(?:disponen|disponibilidad|tienen|tiene|tienes|hay|venden|vende|consiguen|consigue|conseguir|vendéis|ventas)\b/i;
   const LLM_BYPASS_GREETING_RE = /^(hola|hola bot|buen dia|buenos dias|buenas|buenas tardes|buenas noches|ey|alo|menu|menú|ayuda)\b/i;
   const LLM_BYPASS_DOSAGE_RE = /\b\d+\s*(?:mg|mcg|g|gr|ml|ui|iu|mL|tabletas?|capsulas?|capsules?|cap|caps|ampollas?|suspension|susp|jarabe|gotas|crema|gel|polvo|unguento|sobres?|retard)\b/i;
   const shouldBypassLLM = LLM_BYPASS_AVAILABILITY_RE.test(text) || LLM_BYPASS_GREETING_RE.test(normalized) || LLM_BYPASS_DOSAGE_RE.test(text);
@@ -2945,7 +2945,7 @@ function heuristicCheck(response, originalQuery, options = {}) {
   const originalQ = originalQuery || '';
   const isRecipeMode = /\b(rx|rp|receta|paciente|belen|arcia|esoz|leprit|bumetin|evigax|moderan|milax|daflon|bargonil)\b/i.test(originalQ) || (/\d+\s*mg/i.test(originalQ) && (originalQ.match(/\d+\s*mg/gi) || []).length >= 2);
   const medicineEmojiCount = (text.match(/💊/g) || []).length;
-  const queryHasMedicine = /\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación|tienen|tiene|hay|disponen|disponible|busco|necesito|vend|conseguir)\b/i.test(originalQ);
+  const queryHasMedicine = /\b(para que sirve|para qué sirve|cómo se usa|cual es|cuál es|indicacion|indicación|tienen|tiene|tienes|hay|disponen|disponible|busco|necesito|vend|conseguir)\b/i.test(originalQ);
   console.log('🧪 [HEURISTIC-DBG] isRecipeMode=%s medicineEmojiCount=%d queryHasMedicine=%s isMultiMedicine=%s query="%s" rawHex=%s',
     isRecipeMode, medicineEmojiCount, queryHasMedicine, options.isMultiMedicine, originalQ, Buffer.from(originalQ).toString('hex'));
   // Multi-medicine catalog responses LEGITIMATELY have many 💊 items — skip this check
@@ -6862,7 +6862,7 @@ function isMedicineConsultationPhrase(value) {
   const text = normalizeText(value);
   if (!text) return false;
 
-  const consultIntent = /\b(comprar|comprarlo|consigo|consigue|conseguir|encuentro|encuentra|precio|costo|cuanto|cuánto|donde|dónde|disponen|disponibilidad|tienen|tiene|hay|venden|vende|vendéis|necesito|busco|quiero|quisiera|conseguirlo)\b/.test(text);
+  const consultIntent = /\b(comprar|comprarlo|consigo|consigue|conseguir|encuentro|encuentra|precio|costo|cuanto|cuánto|donde|dónde|disponen|disponibilidad|tienen|tiene|tienes|hay|venden|vende|vendéis|necesito|busco|quiero|quisiera|conseguirlo)\b/.test(text);
   if (!consultIntent) return false;
 
   const extraction = extractMedicineQuery(text);
