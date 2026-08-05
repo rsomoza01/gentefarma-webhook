@@ -3556,20 +3556,22 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
       for (const opt of flattenedOptions) {
         console.log('🧪 [FLAT-ITEM] title="%s" doc.id="%s" groupTitle="%s"', opt.title || '', opt.doc?.id || 'NO-ID', opt.groupTitle || '');
       }
+      const multiResponse = buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines);
+      const displayOptions = multiResponse.sortedOptions.length ? multiResponse.sortedOptions : flattenedOptions;
       session.lastSearch = groups[0] || null;
-      session.pendingSelectionResults = flattenedOptions.length ? flattenedOptions : null;
+      session.pendingSelectionResults = displayOptions.length ? displayOptions : null;
       session.pendingSelectionResultsAt = Date.now();
-      session.mode = flattenedOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
+      session.mode = displayOptions.length ? 'awaiting_choice_global' : 'awaiting_product_name';
       // Only save a catalog snapshot when there are actual selectable options.
       // Saving when flattenedOptions is empty (all medicines unavailable) would persist
       // combined multi-medicine OCR strings as selectable options in future sessions.
-      if (flattenedOptions.length > 0) {
-        rememberCatalogSnapshot(session, flattenedOptions, dedupedCandidates.join(' • '), buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines));
+      if (displayOptions.length > 0) {
+        rememberCatalogSnapshot(session, displayOptions, dedupedCandidates.join(' • '), multiResponse.response);
       }
       touchSession(session);
       const logProducts1 = dedupedCandidates.length > 0 ? dedupedCandidates : flattenedOptions.map(o => o.productName || o.name || singleQuery);
       appendConsultationToSheet({ products: logProducts1, exists: 1, phone: userInfo.phone, userName: userInfo.pushName });
-      return buildMultiCatalogResponse(groups, flattenedOptions, missingMedicines);
+      return multiResponse.response;
     }
 
     session.mode = 'awaiting_product_name';
@@ -4873,6 +4875,7 @@ function buildCatalogResponse(result) {
 }
 
 function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines = []) {
+  const sortedOptions = [];
   if (!Array.isArray(results) || !results.length) {
     const missingLines = Array.isArray(missingMedicines) && missingMedicines.length
       ? [
@@ -4883,7 +4886,7 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
         ]
       : ['⚠️ Necesito un poco más de detalle para ayudarte.'];
 
-    return missingLines.join('\n').trim();
+    return { response: missingLines.join('\n').trim(), sortedOptions: [] };
   }
 
   // Get BCV rate from first result that has it
@@ -5018,6 +5021,7 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
     });
 
     sortedMatches.forEach((item) => {
+      sortedOptions.push(item);
       const name = shortenText(item.title || 'Medicamento', 52);
       const usdText = item.priceUsd !== null ? `$${formatPrice(item.priceUsd)}` : 'No disponible';
       const bsText = item.priceBs !== null ? `Bs ${formatPrice(item.priceBs)}` : 'No disponible';
@@ -5047,10 +5051,10 @@ function buildMultiCatalogResponse(results, flatOptions = [], missingMedicines =
   const h = heuristicCheck(response, representativeQuery, { isMultiMedicine: true });
   if (!h.ok) {
     console.log(`🚨 [VALIDATOR] buildMultiCatalogResponse HEURISTIC REJECT reason="${h.reason}" query="${representativeQuery}"`);
-    return '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.';
+    return { response: '👤 *Atención de Gentefarma*\n\nUno de nuestros colaboradores te atenderá en breve.', sortedOptions: [] };
   }
 
-  return response;
+  return { response, sortedOptions };
 }
 
 function extractMedicineRequests(text) {
