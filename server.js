@@ -2394,12 +2394,19 @@ async function routeMessage(phone, text, session, context = {}) {
     console.log('🧾 prescriptionClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
     const prescriptionClean = sanitizePrescriptionText(rawOcr);
     console.log('🧾 prescriptionClean RESULT:', JSON.stringify(prescriptionClean?.slice(0, 300)));
-    console.log('🧾 boxClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
-    const boxClean = sanitizeMedicineBoxText(rawOcr);
-    console.log('🧾 boxClean RESULT:', JSON.stringify(boxClean?.slice(0, 300)));
-    console.log('🧾 recipeClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
-    const recipeClean = sanitizeRecipeText(rawOcr);
-    console.log('🧾 recipeClean RESULT:', JSON.stringify(recipeClean?.slice(0, 300)));
+    // OPTIMIZATION: only run box/recipe sanitizers if prescription didn't find medicines
+    let boxClean = '';
+    let recipeClean = '';
+    if (!prescriptionClean) {
+      console.log('🧾 boxClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
+      boxClean = sanitizeMedicineBoxText(rawOcr);
+      console.log('🧾 boxClean RESULT:', JSON.stringify(boxClean?.slice(0, 300)));
+    }
+    if (!prescriptionClean && !boxClean) {
+      console.log('🧾 recipeClean CALLING with:', JSON.stringify(rawOcr?.slice(0, 300)));
+      recipeClean = sanitizeRecipeText(rawOcr);
+      console.log('🧾 recipeClean RESULT:', JSON.stringify(recipeClean?.slice(0, 300)));
+    }
 
     // Prefer prescription if it extracted multiple lines, else box if single drug, else recipe
     const allRecipeMedicines = prescriptionClean || boxClean || recipeClean;
@@ -3506,16 +3513,22 @@ async function searchAndBuildCatalogResponse(text, session, options = {}, userIn
       console.log('🧪 [FEXOF-DEDUP] dedupedCandidates=%s rawCandidates=%s', JSON.stringify(dedupedCandidates), JSON.stringify(rawCandidates));
     }
 
-    for (const medicineQuery of dedupedCandidates) {
-      const result = await searchMedicinesByName(medicineQuery, {
-        products,
-        exchangeRate,
-        strictListMode: !ocrOnly,
-        recipeMode,
-        strictConsultationMode: consultationMode,
-        forceExactConsultationToken: consultationMode && !recipeMode,
-        userCoords: session.userCoords,
-      });
+    // OPTIMIZATION: parallelize Firebase queries for all medicines at once
+    // instead of sequential await in a loop. For 8 medicines this cuts time ~8x.
+    const searchResults = await Promise.all(
+      dedupedCandidates.map((medicineQuery) =>
+        searchMedicinesByName(medicineQuery, {
+          products,
+          exchangeRate,
+          strictListMode: !ocrOnly,
+          recipeMode,
+          strictConsultationMode: consultationMode,
+          forceExactConsultationToken: consultationMode && !recipeMode,
+          userCoords: session.userCoords,
+        }).then((result) => ({ medicineQuery, result }))
+      )
+    );
+    for (const { medicineQuery, result } of searchResults) {
       console.log('🧪 [MEDICINE-RESULT] query="%s" matches=%d groupTitle="%s"',
         medicineQuery, result?.matches?.length || 0, result?.groupTitle || '');
       if (result && result.matches && result.matches.length) {
