@@ -1693,3 +1693,164 @@ git push origin main
 
 **Verificación:** Después del deploy, confirmar que el commit SHA en `/health` coincide con el último commit. Si coincide pero el comportamiento es viejo → forzar redeploy con caché limpio.
 
+---
+
+## 26. Intervención del modelo de IA en la conversación
+
+> **Modelo por defecto:** `gpt-4o-mini` (OpenAI)
+> **Provider:** configurable via `OPENAI_BASE_URL` (soporta OpenRouter)
+> **Variables de entorno:** `OPENAI_API_KEY`, `LLM_INTENT_MODEL`, `OPENAI_VISION_MODEL`, `LLM_INTENT_ENABLED`, `LLM_INTENT_TIMEOUT_MS`, `LLM_INTENT_CONFIDENCE_THRESHOLD`
+
+El bot utiliza el modelo de IA en **4 momentos distintos** del flujo de conversación usuario ↔ bot.
+
+### 26.1 LLM Intent Router — Clasificación de intención
+
+**Función:** `classifyIntentWithLLM(text, sessionContext)` (línea 1569)
+**Invocación:** dentro de `routeMessage`, paso 5 (línea 2115), **ANTES del pipeline de regex**.
+
+Recibe el texto del usuario y devuelve un JSON con `{intent, medicines, confidence}`. Si la confianza ≥ 0.70 (`LLM_INTENT_CONFIDENCE_THRESHOLD`), el bot ejecuta la acción correspondiente y retorna la respuesta. Si no la alcanza, cae al pipeline de regex.
+
+**Sistema prompt** (línea 1525): clasifica en 16 intenciones posibles:
+
+- `medicine_search` → extrae medicamentos y busca en Firebase
+- `location` → respuesta estática (dirección)
+- `hours` → respuesta estática (horario)
+- `payment` → respuesta estática (formas de pago)
+- `delivery` → respuesta estática (costo de envío)
+- `how_to_order` → respuesta estáta (cómo hacer un pedido)
+- `app` → respuesta estática (app de Gentefarma)
+- `greeting` → menú de bienvenida
+- `thanks` → respuesta cortés
+- `human` → deriva a colaborador (`enableHumanHandoff`)
+- `summary` → genera resumen de pedido ("LISTO")
+- `order_sent` → confirmación de envío
+- `selection` → pasa al pipeline de selección existente (`return null`)
+- `confirmation` → fallback default
+- `info` → información general sobre Gentefarma
+- `unknown` → pasa al pipeline de regex (`return null`)
+
+**Reglas del prompt:**
+- Saludos CON medicamentos (ej: "hola, busco losartan") → `medicine_search`
+- Saludos SIN medicamentos (ej: "hola buenos días") → `greeting`
+- "retadar"/"retad" se normalizan a "retard"
+- "potasico", "sodico", "clorhidrato" se incluyen como parte del nombre
+- Formas farmacéuticas ("cap", "susp", "crema", "polvo", "gotas") son parte del nombre
+
+**Bypass (NO llama al LLM)** — línea 2096:
+La función `shouldBypassLLM` evita llamar al LLM cuando el mensaje contiene:
+1. Palabras de disponibilidad: `disponen, disponibilidad, tienen, tiene, hay, venden, vende, consiguen, consigue, conseguir, vendéis, ventas`
+2. Saludos simples: `hola, hola bot, buen dia, buenos dias, buenas, buenas tardes, buenas noches, ey, alo, menu, menú, ayuda`
+3. Patrón de dosificación: `\\d+\\s*(?:mg|mcg|g|gr|ml|ui|iu|mL|tabletas?|capsulas?|...)`
+
+Estos casos se resuelven por regex directamente porque el LLM los misclasifica como `human` (causando fallback a "colaboradores").
+
+**Condiciones de skip adicionales:**
+- Mensaje < 3 caracteres
+- Selección numérica pura (`1`, `2 x 3`)
+- `LLM_INTENT_ENABLED = false` o sin API key
+- Timeout de 3000ms (`LLM_INTENT_TIMEOUT_MS`) → fallback a regex
+- Rate limited (HTTP 429) → fallback a regex
+
+### 26.2 LLM Medicine Extraction Fallback — Extracción de medicamentos
+
+**Función:** `extractMedicinesWithLLMFallback(text, session)` (línea 1681)
+**Invocación:** después del Intent Router, en múltiples puntos del flujo.
+
+Estrategia de 2 fases:
+1. **Fase 1 — Regex:** intenta extraer medicamentos con patrones conocidos
+2. **Fase 2 — LLM (solo si regex devuelve 0):** llama a `classifyIntentWithLLM` para extraer nombres
+
+**Puntos de invocación:**
+- `routeMessage` línea 2138 — búsqueda directa de texto
+- `searchAndBuildCatalogResponse` línea 3421 — consulta dentro del catálogo
+- `routeMessage` línea 2802 — mensajes multi-medicina
+
+**Post-procesamiento:** `dedupLLMMedicines()` (línea 1745) filtra:
+- Formas farmacéuticas sueltas (`cap`, `susp`, `crema`)
+- Números puros (`500`, `40`)
+- Patrones de cantidad (`2 x 3`, `caja por 10`)
+- Subconjuntos de prefijos (`dolo` cuando ya existe `dolo gritico`)
+
+**Ejemplo:**
+```
+Usuario: "bumetin retadar evigax moderan"
+→ Regex: 0 medicamentos
+→ LLM: ["bumetin retard", "evigax", "moderan"] (confidence 0.88)
+→ dedup: ["bumetin retard", "evigax", "moderan"]
+→ Firebase search
+```
+
+### 26.3 OCR con Vision API — Lectura de imágenes/recetas
+
+**Función:** `callOpenAIVision(imageBase64, mimeType)` (línea 1376)
+**Modelo:** `OPENAI_VISION_MODEL` (gpt-4o-mini por defecto)
+**Provider:** `OCR_PROVIDER` (`openai` si hay API key, `none` si no)
+
+Cuando el usuario envía una **foto** (receta médica, empaque de medicamento):
+1. `processIncomingMessage` descarga la imagen de WhatsApp
+2. Convierte a base64
+3. Envía a `gpt-4o-mini` con el prompt (línea 30):
+   > "Eres un asistente de farmacia. De esta imagen, extrae TODOS los nombres de medicamentos que aparezcan."
+4. El texto extraído se procesa como `recipeMode` en `searchAndBuildCatalogResponse`
+5. Se guarda en `session.pendingRecipeMedicines` para reutilizarse en follow-up
+
+**Prompt configurable:** `OPENAI_VISION_PROMPT` (env var, línea 30)
+
+### 26.4 Transcripción de audio (Whisper)
+
+**Función:** `transcribeAudio(buffer, mimeType)` (línea 1152)
+**Endpoint:** `${OPENAI_BASE_URL}/audio/transcriptions` (línea 1189)
+
+Cuando el usuario envía un **mensaje de voz**:
+1. `processIncomingMessage` detecta `mimeType` audio (ogg/opus)
+2. Descarga el buffer de audio
+3. Lo envía al endpoint de transcripción (Whisper API)
+4. El texto transcrito se procesa como un mensaje de texto normal
+5. **Reentra al flujo:** puede activar Intent Router o Medicine Extraction
+
+**Condición:** `AUDIO_TRANSCRIPTION_ENABLED = true` y `OPENAI_API_KEY` configurada
+
+### 26.5 Diagrama del flujo de IA
+
+```
+Usuario envía mensaje
+  │
+  ├─ ¿Es audio? ──→ Whisper transcribe → texto
+  ├─ ¿Es imagen? ──→ Vision API extrae medicamentos → texto (recipeMode)
+  └─ ¿Es texto? ──→ directo
+       │
+       ├─ ¿Bypass LLM? (saludo/dosis/disponibilidad) → regex pipeline
+       │
+       ├─ LLM Intent Router (confianza ≥0.70, timeout 3s)
+       │    ├─ medicine_search → Firebase search
+       │    ├─ location/hours/payment/delivery/how_to_order/app → respuesta estática
+       │    ├─ greeting → menú
+       │    ├─ thanks → respuesta cortés
+       │    ├─ human → handoff a colaborador
+       │    ├─ summary → resumen de pedido
+       │    ├─ order_sent → confirmación
+       │    ├─ selection/confirmation → null (regex pipeline)
+       │    ├─ unknown → null (regex pipeline)
+       │    └─ default → null (regex pipeline)
+       │
+       └─ Regex pipeline
+            │
+            └─ ¿Regex no encontró medicamentos? → LLM Fallback extraction
+                 └─ dedupLLMMedicines → Firebase search → respuesta del catálogo
+```
+
+### 26.6 Configuración actual
+
+| Variable | Valor por defecto | Descripción |
+|---|---|---|
+| `OPENAI_API_KEY` | (env) | API key de OpenAI o provider compatible |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL (soporta OpenRouter) |
+| `OCR_PROVIDER` | `openai` si hay key | Provider de OCR |
+| `OPENAI_VISION_MODEL` | `gpt-4o-mini` | Modelo para OCR de imágenes |
+| `LLM_INTENT_MODEL` | `gpt-4o-mini` | Modelo para Intent Router y Fallback |
+| `LLM_INTENT_ENABLED` | `true` | Habilita/deshabilita Intent Router |
+| `LLM_INTENT_TIMEOUT_MS` | `3000` | Timeout para clasificación de intent |
+| `LLM_INTENT_CONFIDENCE_THRESHOLD` | `0.70` | Confianza mínima para aceptar intent |
+| `AUDIO_TRANSCRIPTION_ENABLED` | (env) | Habilita transcripción de audio |
+| `OPENAI_VISION_PROMPT` | prompt farmacia | Prompt configurable para OCR |
+
